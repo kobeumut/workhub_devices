@@ -31,7 +31,7 @@ npm run check     # ikisi birden (CI bunu çalıştırır)
 | `routing` | Notifications inbox normalizasyonu, `shouldNotify`, push payload yorumlama (delete kontrolleri), app/object dispatcher, pretty + `/index.php` + alt dizin deep link parser, kilit ekranı gizli önizleme |
 | `workhub` | Workhub OCS API v1 istemcisi (proje/board/task/comment), bildirimden task açarken güncel ACL ile yeniden getirme |
 
-Testler gerçek sunucu yerine kaydedilmiş `fetch` yanıtlarıyla çalışır; gerçek sunucu/cihaz doğrulaması değildir.
+`npm test` kaydedilmiş `fetch` yanıtlarıyla çalışır. Gerçek sunucuya karşı uçtan uca kontrol için `npm run smoke:live -w @workhub-devices/core` var; yerel test sunucusu ve ortam değişkenleri: [docs/dev-server.md](docs/dev-server.md). Bunlar cihaz/push doğrulaması değildir.
 
 ## Sınırlar
 

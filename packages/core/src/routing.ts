@@ -112,10 +112,16 @@ export function interpretPush(decrypted: unknown): PushAction {
 export function parseServerLink(serverBase: ServerBase, link: string): AppRoute | null {
   if (!isWithinServer(serverBase, link)) return null;
   const root = new URL(serverBase).pathname.replace(/\/+$/, '');
-  let path = new URL(link).pathname.slice(root.length);
+  const url = new URL(link);
+  let path = url.pathname.slice(root.length);
   path = path.replace(/^\/index\.php(?=\/)/, '').replace(/\/+$/, '');
+  // Notification link form.
   let m = /^\/apps\/workhub\/projects\/task\/(\d+)$/.exec(path);
   if (m && POSITIVE_INT.test(m[1] as string)) return { name: 'task', cardId: Number(m[1]) };
+  // Task DTO `url` form: /apps/workhub/projects/{boardId}/{view}?card={cardId}
+  m = /^\/apps\/workhub\/projects\/\d+\/(board|list|gantt|activity)$/.exec(path);
+  const card = url.searchParams.get('card');
+  if (m && card && POSITIVE_INT.test(card)) return { name: 'task', cardId: Number(card) };
   m = /^\/call\/([a-z0-9]+)$/i.exec(path);
   if (m?.[1] && ROOM_TOKEN.test(m[1])) return { name: 'room', token: m[1] };
   return null;

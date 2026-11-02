@@ -45,6 +45,10 @@ test('server links: pretty, index.php and sub-directory forms; foreign origins r
   assert.equal(parseServerLink(root, 'https://evil.example/apps/workhub/projects/task/7'), null);
   assert.equal(parseServerLink(root, 'javascript:alert(1)'), null);
   assert.equal(parseServerLink(root, 'https://example.com/apps/workhub/projects/task/0'), null);
+  // task DTO url form (seen live on Workhub 0.5.0)
+  assert.deepEqual(parseServerLink(sub, 'https://example.com/nc/index.php/apps/workhub/projects/2/board?card=9'), { name: 'task', cardId: 9 });
+  assert.equal(parseServerLink(root, 'https://example.com/apps/workhub/projects/2/board?card=x'), null);
+  assert.equal(parseServerLink(root, 'https://example.com/apps/workhub/projects/2/evil?card=9'), null);
 });
 
 test('lock screen default hides content; foreground suppression is account-aware', () => {

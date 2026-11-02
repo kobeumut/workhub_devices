@@ -20,8 +20,8 @@ Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış o
 
 | Faz | Durum | Kanıt |
 |---|---|---|
-| 0 — sürüm/push kapısı | **Bloke**: test sunucusu, hesaplar, bundle ID, APNs/FCM, relay sahibi ve fiziksel cihaz verilmedi | `docs/phase0-status.md` |
-| 1 — temel/auth | Kısmi: `packages/core` (URL doğrulama, OCS istemcisi/hata normalizasyonu, Login Flow v2, hesap izolasyonu, logout, capability gate) + CI. RN/Electron kabukları, OS secret store, beş OS build'i yok | `npm run check` (35 test) |
+| 0 — sürüm/push kapısı | Sunucu tarafı doğrulandı (NC 35.0.2 / Talk 25.0.6 / Notifications 8.0.1 / Workhub 0.5.0; canlı smoke 14/14). Push teslimatı **bloke**: bundle ID, APNs/FCM, relay sahibi, fiziksel cihaz, `webpush_enabled` onayı | `docs/phase0-status.md`, `docs/dev-server.md` |
+| 1 — temel/auth | Kısmi: `packages/core` (URL doğrulama, OCS istemcisi/hata normalizasyonu, Login Flow v2, hesap izolasyonu, logout, capability gate) + CI. RN/Electron kabukları, OS secret store, beş OS build'i yok | `npm run check` (35 test), `npm run smoke:live` |
 | 2 — Talk | Kısmi: core oda/sohbet/gönderim/merge/rich-render mantığı; UI ve gerçek sunucu testi yok | `packages/core/src/talk.ts` |
 | 3 — bildirim | Kısmi: saf dispatcher, push payload yorumlama, deep link, gizli önizleme; native push/quick reply yok (Faz 0'a bağlı) | `packages/core/src/routing.ts` |
 | 4 — Workhub | Kısmi: API v1 istemcisinin task/proje/yorum alt kümesi, bildirimden ACL'li açılış; UI yok | `packages/core/src/workhub.ts` |
@@ -74,9 +74,9 @@ Bütün özellik için ayrı npm paketi, yeni backend veya yeni sunucu tablosu g
 
 Gereken dış girdiler: test sunucusu URL'si/kurulu sürümleri, iki normal kullanıcı + bir sınırlı kullanıcı, Workhub/Talk/Notifications erişimi; marka bundle/application ID; Apple Developer/APNs, Firebase/FCM yetkileri; gerekirse relay hosting/onay; beş OS test ortamı ve dağıtım imzalama sahipleri. Secret'lar issue/Git'e yazılmaz. Bunlar henüz bu planlama işinde verilmedi.
 
-- [ ] Core ve kullanıcı Workhub capabilities çıktısını redakte ederek kaydet; Nextcloud/Talk/Notifications/Workhub ve native/Deck sürüm matrisi oluştur.
-- [ ] Workhub Nextcloud 34–35 ve Talk adapter `>=20,<26` kısıtını gerçek kurulumla karşılaştır; incelemede kullanılan Talk 26/Notifications 9 geliştirme snapshot'ı NC36 içindir. Uyumlu kararlı sürümleri seç.
-- [ ] Login Flow v2/app password ile Talk room + Workhub project + Notifications GET smoke testi yap. Ayrıca browser cookie/requesttoken olmadan `OCS-APIRequest: true` ile geri alınabilir Workhub POST/PATCH yapıp kalıcı state'i okuyarak OCS auth/CSRF davranışını doğrula; yalnız GET bunu kanıtlamaz.
+- [x] Core ve kullanıcı Workhub capabilities çıktısını redakte ederek kaydet; Nextcloud/Talk/Notifications/Workhub ve native/Deck sürüm matrisi oluştur.
+- [x] Workhub Nextcloud 34–35 ve Talk adapter `>=20,<26` kısıtını gerçek kurulumla karşılaştır; incelemede kullanılan Talk 26/Notifications 9 geliştirme snapshot'ı NC36 içindir. Uyumlu kararlı sürümleri seç.
+- [x] Login Flow v2/app password ile Talk room + Workhub project + Notifications GET smoke testi yap. Ayrıca browser cookie/requesttoken olmadan `OCS-APIRequest: true` ile geri alınabilir Workhub POST/PATCH yapıp kalıcı state'i okuyarak OCS auth/CSRF davranışını doğrula; yalnız GET bunu kanıtlamaz.
 - [ ] Mobil minimal native push PoC kur; branding'e uygun delivery provider ve secret ownership belirle.
 - [ ] Hem normal hem urgent atama ve Talk mesajını **aynı hesapta**, başka resmî Talk client'ı yokken/varken ve stale kayıt varken test et. UA sınıflandırma/native token hash tekilliğini doğrula.
 - [ ] Hedefin Web Push API/activation/appTypes desteğini kontrol et; `talk,workhub` aboneliğinin native iOS/Android teslimat + crypto/NSE fizibilitesini kanıtla. Web Push varlığını RN native delivery kanıtı sanma.
