@@ -179,6 +179,73 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('Projeler');
       return `${t.headers} columns × ${t.rows} rows; cell "${t.cell.slice(0, 90)}…"`;
     });
+    await step('dashboards: create (project summary) → KPI + distribution tables → drill-down → task; widget add/edit/CSV/remove; delete', async () => {
+      const dashTitle = `Masaüstü dashboard ${new Date().toISOString().slice(11, 19)}`;
+      const until = async (fn: () => Promise<boolean>, what: string, ms = 15_000) => {
+        const end = Date.now() + ms;
+        while (Date.now() < end) {
+          if (await fn()) return;
+          await sleep(300);
+        }
+        throw new Error(what);
+      };
+      await click('İşler');
+      await sleep(500);
+      if (!(await click('Dashboard'))) throw new Error('dashboard tab');
+      await waitText('Yeni dashboard', 20_000);
+      if (!(await type('input[aria-label="Dashboard başlığı"]', dashTitle))) throw new Error('title input');
+      if (!(await click('Dashboard oluştur'))) throw new Error('create');
+      await waitText('Distribution by column', 20_000);
+      await until(() => js<boolean>(`document.querySelectorAll('[role=table]').length >= 2`), 'widget results (tables)', 30_000);
+      const t = await js<{ tables: number; headers: string[]; kpi: string | null }>(`(() => {
+        const tables = [...document.querySelectorAll('[role=table]')];
+        const kpi = [...document.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')).find(l => /^Total work: \\d/.test(l || ''));
+        return { tables: tables.length, headers: tables[0] ? [...tables[0].querySelectorAll('[role=columnheader]')].map(e => e.innerText.trim()).filter(Boolean) : [], kpi: kpi || null }; })()`);
+      if (t.tables < 2 || t.headers.join('|') !== 'Grup|Değer|Pay' || !t.kpi) throw new Error(`dashboard tables ${JSON.stringify(t)}`);
+      await shot('22-dashboard');
+      await js(`document.querySelector('[role=table]')?.scrollIntoView()`);
+      await shot('22b-dashboard-distribution');
+      // Distribution group → cards of that group only.
+      const group = await js<string | null>(`(() => { const b = [...document.querySelectorAll('[role=table] [role=button]')].find(e => (e.getAttribute('aria-label') || '').endsWith('. Kartları aç')); return b ? b.getAttribute('aria-label') : null; })()`);
+      if (!group || !(await click(group))) throw new Error('distribution group button');
+      await waitText('kart gösteriliyor', 20_000);
+      if (!(await click('‹ Dashboard'))) throw new Error('back from group');
+      // KPI drill-down → card list → task detail.
+      await until(() => click('Total work: kartları aç'), 'kpi drill-down');
+      await waitText('kart gösteriliyor', 20_000);
+      const shown = await js<string>(`document.body.innerText.match(/(\\d+) kart gösteriliyor/)?.[1] ?? '0'`);
+      const task = await js<string | null>(`(() => { const b = [...document.querySelectorAll('[role=table] [role=button]')].find(e => (e.getAttribute('aria-label') || '').endsWith('. Görevi aç')); return b ? b.getAttribute('aria-label') : null; })()`);
+      if (!task || !(await click(task))) throw new Error('task row in drill-down');
+      await waitText('Yorumlar', 20_000);
+      await shot('23-dashboard-drilldown');
+      if (!(await click('‹ Dashboard'))) throw new Error('back from drill-down');
+      // Widget CRUD + CSV.
+      await until(() => click('Widget ekle'), 'add widget');
+      await until(() => click('Card list (Kart listesi)'), 'card list type');
+      await until(() => type('input[aria-label="Başlık (boş = Card list)"]', 'Smoke listesi'), 'widget title');
+      if (!(await click('Completed'))) throw new Error('preset chip');
+      if (!(await click('Ekle'))) throw new Error('add');
+      await waitText('Widget eklendi.', 15_000);
+      await until(() => click('Smoke listesi: CSV indir'), 'widget csv');
+      await waitText('Kaydedildi: workhub-dashboard-', 15_000);
+      if (!(await click("Smoke listesi: widget'ı düzenle"))) throw new Error('edit widget');
+      await until(() => type('input[aria-label="Başlık (boş = Card list)"]', 'Smoke listesi 2'), 'edit title');
+      if (!(await click('Kaydet'))) throw new Error('save widget');
+      await waitText('Widget kaydedildi.', 15_000);
+      if (!(await click("Smoke listesi 2: widget'ı kaldır"))) throw new Error('remove widget');
+      if (!(await click('Evet, kaldır'))) throw new Error('confirm remove');
+      await waitText('Widget kaldırıldı.', 15_000);
+      if (!(await click('Sil'))) throw new Error('delete dashboard');
+      if (!(await click('Evet, sil'))) throw new Error('confirm delete');
+      await waitText('Yeni dashboard', 15_000);
+      await sleep(1000);
+      if (await js<boolean>(`document.body.innerText.includes(${JSON.stringify(dashTitle)})`)) throw new Error('dashboard still listed');
+      if (!(await click('Diğer'))) throw new Error('more tab');
+      await sleep(800);
+      if (await js<boolean>(`document.body.innerText.includes("Dashboard'lar ve widget'lar")`)) throw new Error('dashboard web link still listed');
+      await click('Projeler');
+      return `${t.tables} tables, "${t.kpi}", drill-down ${shown} cards → task; widget add/edit/CSV/remove; deleted`;
+    });
     await step('time module: start → stop timer', async () => {
       await click('İşler');
       await sleep(500);

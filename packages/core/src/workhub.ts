@@ -1322,3 +1322,507 @@ export function workloadWeek(day: string, weekStart = 1): { from: string; to: st
   const from = addDays(day, -back);
   return { from, to: addDays(from, 6) };
 }
+
+// ---- Dashboards: dashboard/widget CRUD, query, drill-down, CSV ------------------------------
+// Contract: Workhub DashboardController (DashboardService, DashboardQueryService, FilterSpec,
+// ConfigSchema, WidgetRegistry + Deck/Goal/Time/AI widget providers) and CsvController::widget.
+
+export const DASHBOARD_ROLES = ['view', 'edit', 'manage'] as const;
+export type DashboardRole = (typeof DASHBOARD_ROLES)[number];
+/** Server limits (DashboardService). */
+export const DASHBOARD_MAX_WIDGETS = 20;
+export const DASHBOARD_MAX_SOURCES = 100;
+export const DASHBOARD_GRID_COLUMNS = 12;
+export const DASHBOARD_TEMPLATES = ['blank', 'project_summary'] as const;
+export type DashboardTemplate = (typeof DASHBOARD_TEMPLATES)[number];
+export const WIDGET_KINDS = ['kpi', 'distribution', 'trend', 'progress', 'list', 'text'] as const;
+export type WidgetKind = (typeof WIDGET_KINDS)[number];
+
+/** FilterSpec fields (all optional; dates are `YYYY-MM-DD` days in the dashboard zone). */
+export const DASHBOARD_FILTER_FIELDS = ['boardIds', 'stackIds', 'assigneeUids', 'labelIds', 'doneState', 'dueFrom', 'dueTo', 'createdFrom', 'createdTo', 'includeArchived'] as const;
+export type DashboardFilterField = (typeof DASHBOARD_FILTER_FIELDS)[number];
+export const DASHBOARD_FILTER_LIMITS = { boardIds: 100, stackIds: 200, assigneeUids: 100, labelIds: 200 } as const;
+export interface DashboardFilter {
+  boardIds?: number[];
+  stackIds?: number[];
+  assigneeUids?: string[];
+  labelIds?: number[];
+  doneState?: 'any' | 'open' | 'done';
+  dueFrom?: string;
+  dueTo?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  includeArchived?: boolean;
+}
+
+export interface DashboardSummary {
+  id: number;
+  title: string;
+  description: string;
+  owner: { uid: string; displayName: string };
+  role: DashboardRole;
+  widgetCount: number;
+  version: number;
+  updatedAt: string;
+}
+
+export interface DashboardWidget {
+  id: number;
+  type: string;
+  /** Custom title; null → use `label`. */
+  title: string | null;
+  label: string;
+  module: string | null;
+  kind: WidgetKind | null;
+  /** False when the type is unknown or its module is off for the viewer. */
+  available: boolean;
+  config: Record<string, unknown>;
+  filter: DashboardFilter;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  sortOrder: number;
+  schemaVer: number;
+  version: number;
+}
+
+export interface Dashboard {
+  id: number;
+  title: string;
+  description: string;
+  owner: { uid: string; displayName: string };
+  role: DashboardRole;
+  filters: DashboardFilter;
+  zone: string;
+  /** 0 = auto refresh off, else 60…86400 seconds. */
+  refreshSec: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  /** Only the source boards the viewer can read. */
+  sources: Array<{ id: number; title: string; color: string }>;
+  /** Some sources are hidden from the viewer (no names/counts are given). */
+  sourcesPartial: boolean;
+  /** None of the sources is readable: Deck widgets return `restricted`. */
+  sourcesRestricted: boolean;
+  widgets: DashboardWidget[];
+  limits: { widgets: number; sources: number };
+}
+
+export type ConfigFieldSchema =
+  | { type: 'int'; label: string; min: number; max: number; default: number | null }
+  | { type: 'enum'; label: string; options: Array<{ value: string; label: string }>; default: string | null }
+  | { type: 'bool'; label: string; default: boolean | null }
+  | { type: 'idList'; label: string; max: number; required?: boolean };
+
+export interface WidgetTypeDef {
+  type: string;
+  label: string;
+  module: string;
+  kind: WidgetKind;
+  /** Filter fields the widget supports (others are rejected on the widget, ignored from globals). */
+  filters: DashboardFilterField[];
+  config: Record<string, ConfigFieldSchema>;
+}
+
+export interface DashboardInput {
+  title: string;
+  description?: string;
+  zone?: string;
+  refreshSec?: number;
+  sources?: number[];
+  filters?: DashboardFilter;
+  template?: DashboardTemplate;
+}
+export interface DashboardPatch {
+  version: number;
+  title?: string;
+  description?: string;
+  zone?: string;
+  refreshSec?: number;
+  sources?: number[];
+  filters?: DashboardFilter;
+}
+
+export interface WidgetInput {
+  type: string;
+  title?: string;
+  config?: Record<string, unknown>;
+  filter?: DashboardFilter;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+export interface WidgetPatch {
+  version: number;
+  title?: string;
+  config?: Record<string, unknown>;
+  filter?: DashboardFilter;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+
+/** One card row of a list widget / drill-down page / CSV (`AbstractBoardGateway::fact`). */
+export interface DashboardCard {
+  id: number;
+  boardId: number;
+  boardTitle: string;
+  stackId: number;
+  stackTitle: string;
+  title: string;
+  done: string | null;
+  due: string | null;
+  createdAt: string | null;
+  archived: boolean;
+  url: string;
+}
+
+export type WidgetUnit = 'count' | 'bp' | 'seconds';
+
+/** Per-widget query result. Shape depends on `kind`; `error` replaces the data on failure. */
+export interface WidgetResult {
+  widgetId: number;
+  type: string;
+  kind?: WidgetKind;
+  error?: string;
+  message?: string;
+  restricted?: boolean;
+  partial?: boolean;
+  ignoredFilters?: string[];
+  generatedAt?: string;
+  cached?: boolean;
+  note?: string | null;
+  unit?: WidgetUnit;
+  /** kpi (null = not calculable, e.g. completion rate without cards). */
+  value?: number | null;
+  detail?: { done: number; total: number };
+  billableSec?: number;
+  /** distribution */
+  groups?: Array<{ key: string; label: string; value: number; color?: string }>;
+  drilldown?: boolean;
+  /** trend (value null = no snapshot that day) */
+  points?: Array<{ date: string; value: number | null }>;
+  coverage?: { from: string | null; to: string | null; gaps: string[]; capturedAt: string | null };
+  /** progress (goals) */
+  items?: Array<{ id: number; title: string; progressBp: number | null; state: string; due: string | null; owner: string; url: string }>;
+  /** list */
+  columns?: Array<{ key: string; label: string }>;
+  rows?: DashboardCard[];
+  nextCursor?: string | null;
+  /** text (AI summary; shown as plain text, never rendered as HTML) */
+  markdown?: string;
+}
+
+export interface DashboardQueryResult {
+  dashboardId: number;
+  generatedAt: string;
+  asOf: string;
+  scopedToViewer: boolean;
+  restricted: boolean;
+  partial: boolean;
+  results: Record<string, WidgetResult>;
+}
+
+export interface DashboardQueryOptions {
+  widgetIds?: number[];
+  /** Bypass the 45 s cache; the server allows one per user every 10 s (429 `REFRESH_RATE_LIMITED`). */
+  refresh?: boolean;
+  /** Viewer filters: only narrow the dashboard's own filters. */
+  filters?: DashboardFilter;
+}
+
+export interface DrilldownPage {
+  widgetId: number;
+  generatedAt: string;
+  asOf: string;
+  restricted: boolean;
+  partial: boolean;
+  columns: Array<{ key: string; label: string }>;
+  items: DashboardCard[];
+  /** Opaque (url-safe base64), valid ~1 h; null = last page. */
+  nextCursor: string | null;
+}
+export interface DrilldownOptions {
+  /** Distribution group key (e.g. stack id, `user:bob`, `none`). */
+  groupKey?: string;
+  cursor?: string;
+  filters?: DashboardFilter;
+}
+
+const filterParam = (f?: DashboardFilter) => (f && Object.keys(f).length ? { filters: JSON.stringify(f) } : {});
+
+export const dashboardsApi = {
+  widgetTypes: async (c: OcsClient) => (await c.get<{ types: WidgetTypeDef[] }>(`${BASE}/widget-types`)).types,
+  list: (c: OcsClient, cursor: string | null = null, limit = 50) =>
+    c.get<{ items: DashboardSummary[]; nextCursor: string | null }>(`${BASE}/dashboards`, { query: { limit, ...(cursor ? { cursor } : {}) } }),
+  get: (c: OcsClient, dashboardId: number) => c.get<Dashboard>(`${BASE}/dashboards/${id(dashboardId)}`),
+  create: async (c: OcsClient, input: DashboardInput, idempotencyKey: string = uuid()) =>
+    (await c.request<Dashboard>(`${BASE}/dashboards`, { method: 'POST', body: input, headers: keyHeader(idempotencyKey) })).data,
+  update: async (c: OcsClient, dashboardId: number, patch: DashboardPatch) =>
+    (await c.request<Dashboard>(`${BASE}/dashboards/${id(dashboardId)}`, { method: 'PATCH', body: patch })).data,
+  remove: async (c: OcsClient, dashboardId: number, version: number) =>
+    (await c.request<{ id: number; deleted: boolean }>(`${BASE}/dashboards/${id(dashboardId)}`, { method: 'DELETE', body: { version } })).data,
+  addWidget: async (c: OcsClient, dashboardId: number, input: WidgetInput) =>
+    (await c.request<DashboardWidget>(`${BASE}/dashboards/${id(dashboardId)}/widgets`, { method: 'POST', body: input })).data,
+  updateWidget: async (c: OcsClient, dashboardId: number, widgetId: number, patch: WidgetPatch) =>
+    (await c.request<DashboardWidget>(`${BASE}/dashboards/${id(dashboardId)}/widgets/${id(widgetId)}`, { method: 'PATCH', body: patch })).data,
+  removeWidget: async (c: OcsClient, dashboardId: number, widgetId: number) =>
+    (await c.request<{ id: number; deleted: boolean }>(`${BASE}/dashboards/${id(dashboardId)}/widgets/${id(widgetId)}`, { method: 'DELETE' })).data,
+  query: async (c: OcsClient, dashboardId: number, q: DashboardQueryOptions = {}) => {
+    const body: Record<string, unknown> = {};
+    if (q.widgetIds?.length) body.widgetIds = q.widgetIds.map(posId);
+    if (q.refresh) body.refresh = true;
+    if (q.filters && Object.keys(q.filters).length) body.filters = q.filters;
+    const r = (await c.request<DashboardQueryResult>(`${BASE}/dashboards/${id(dashboardId)}/query`, { method: 'POST', body })).data;
+    if (!r) throw new OcsError('invalid_response');
+    // An empty result set comes back as `{}` (PHP stdClass); keep it a map.
+    return { ...r, results: r.results && typeof r.results === 'object' && !Array.isArray(r.results) ? r.results : {} };
+  },
+  drilldown: (c: OcsClient, dashboardId: number, widgetId: number, o: DrilldownOptions = {}) =>
+    c.get<DrilldownPage>(`${BASE}/dashboards/${id(dashboardId)}/widgets/${id(widgetId)}/drilldown`, {
+      query: { ...(o.groupKey !== undefined ? { groupKey: o.groupKey } : {}), ...(o.cursor ? { cursor: o.cursor } : {}), ...filterParam(o.filters) },
+    }),
+  /** Non-OCS route (`CsvController::widget`): same ACL/QuerySpec as the query; list widgets up to 5000 rows. */
+  csv: async (c: OcsClient, dashboardId: number, widgetId: number, filters?: DashboardFilter) => {
+    const r = await c.download(`/index.php/apps/workhub/csv/dashboards/${id(dashboardId)}/widgets/${id(widgetId)}`, { query: filterParam(filters) });
+    return { filename: dashboardCsvFilename(dashboardId, widgetId), csv: r.text.startsWith('﻿') ? r.text : `﻿${r.text}` };
+  },
+};
+
+/** Filename built locally from validated ids (never from a server header). */
+export const dashboardCsvFilename = (dashboardId: number, widgetId: number) => `workhub-dashboard-${dashboardId}-widget-${widgetId}.csv`;
+
+// ---- Dashboard helpers (pure) --------------------------------------------------------------
+
+/** Role order: view < edit < manage. */
+export const dashboardRoleAtLeast = (role: DashboardRole | undefined, need: DashboardRole) =>
+  !!role && DASHBOARD_ROLES.indexOf(role) >= DASHBOARD_ROLES.indexOf(need);
+
+/** Reading order: grid row, then column, then server order. */
+export const sortWidgets = <T extends Pick<DashboardWidget, 'x' | 'y' | 'sortOrder' | 'id'>>(ws: T[]) =>
+  [...ws].sort((a, b) => a.y - b.y || a.x - b.x || a.sortOrder - b.sortOrder || a.id - b.id);
+
+export const widgetTitle = (w: Pick<DashboardWidget, 'title' | 'label'>) => (w.title && w.title.trim() ? w.title : w.label);
+
+/**
+ * Drill-down exists only for Deck card widgets with a card preset (KPIs, distributions, the
+ * card list); trends, goals, time and AI widgets answer 422 `DRILLDOWN_UNSUPPORTED`.
+ */
+export const canDrilldown = (w: Pick<DashboardWidget, 'module' | 'kind' | 'available'>) =>
+  w.available && w.module === 'dashboard' && (w.kind === 'kpi' || w.kind === 'distribution' || w.kind === 'list');
+
+/** Every kind has a CSV form on the server. */
+export const canExportCsv = (w: Pick<DashboardWidget, 'available' | 'kind'>) => w.available && w.kind !== null;
+
+/** Formats a value in its unit (Turkish): count `12`, basis points `%45,5`, seconds `3,5 sa`. */
+export function formatWidgetValue(value: number | null | undefined, unit: WidgetUnit | undefined = 'count'): string {
+  if (value === null || value === undefined) return '—';
+  if (unit === 'bp') return `%${(value / 100).toLocaleString('tr-TR', { maximumFractionDigits: 1 })}`;
+  if (unit === 'seconds') {
+    const h = Math.round((value / 3600) * 10) / 10;
+    return `${value > 0 && h === 0 ? '<0,1' : h.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} sa`;
+  }
+  return value.toLocaleString('tr-TR');
+}
+
+export interface BarDatum {
+  key: string;
+  label: string;
+  value: number;
+  /** 0…1 relative to the largest value (bar length); 0 when all values are 0. */
+  fraction: number;
+  /** Share of the total, 0…1 (distributions may count a card more than once). */
+  share: number;
+}
+
+/** Bars for a distribution / trend: length relative to the maximum, share of the sum. Nulls are skipped by the caller. */
+export function barData(items: Array<{ key: string; label: string; value: number }>): BarDatum[] {
+  const max = items.reduce((m, x) => Math.max(m, x.value), 0);
+  const sum = items.reduce((s, x) => s + Math.max(0, x.value), 0);
+  return items.map((x) => ({ ...x, fraction: max > 0 ? Math.max(0, x.value) / max : 0, share: sum > 0 ? Math.max(0, x.value) / sum : 0 }));
+}
+
+export type WidgetState = 'error' | 'unavailable' | 'restricted' | 'empty' | 'ok';
+/** What to show for a result: an error code, "no access", "no data" or the data itself. */
+export function widgetState(r: WidgetResult | undefined): WidgetState {
+  if (!r) return 'empty';
+  if (r.error === 'WIDGET_UNAVAILABLE') return 'unavailable';
+  if (r.error) return 'error';
+  if (r.restricted && (r.kind !== 'progress' || !(r.items?.length))) return 'restricted';
+  switch (r.kind) {
+    case 'kpi':
+      return 'ok';
+    case 'distribution':
+      return r.groups?.length ? 'ok' : 'empty';
+    case 'trend':
+      return r.points?.length ? 'ok' : 'empty';
+    case 'progress':
+      return r.items?.length ? 'ok' : 'empty';
+    case 'list':
+      return r.rows?.length ? 'ok' : 'empty';
+    case 'text':
+      return r.markdown?.trim() ? 'ok' : 'empty';
+    default:
+      return 'empty';
+  }
+}
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Text form of a filter for editing (empty strings for unset fields). */
+export interface DashboardFilterForm {
+  boardIds: number[];
+  doneState: 'any' | 'open' | 'done';
+  dueFrom: string;
+  dueTo: string;
+  createdFrom: string;
+  createdTo: string;
+  includeArchived: boolean;
+  /** Fields the form does not edit are carried over unchanged. */
+  keep?: Pick<DashboardFilter, 'stackIds' | 'labelIds' | 'assigneeUids'>;
+}
+export const filterToForm = (f: DashboardFilter): DashboardFilterForm => ({
+  boardIds: f.boardIds ?? [],
+  doneState: f.doneState ?? 'any',
+  dueFrom: f.dueFrom ?? '',
+  dueTo: f.dueTo ?? '',
+  createdFrom: f.createdFrom ?? '',
+  createdTo: f.createdTo ?? '',
+  includeArchived: f.includeArchived ?? false,
+  keep: {
+    ...(f.stackIds?.length ? { stackIds: f.stackIds } : {}),
+    ...(f.labelIds?.length ? { labelIds: f.labelIds } : {}),
+    ...(f.assigneeUids?.length ? { assigneeUids: f.assigneeUids } : {}),
+  },
+});
+export type FilterFormError = 'date_invalid' | 'date_order' | 'unsupported';
+
+/**
+ * Form → normalized filter like the server's FilterSpec::normalize (defaults dropped, ids sorted
+ * and unique). `allowed` = the widget's supported fields; anything else is an error, because the
+ * server rejects it with 422 `UNSUPPORTED_FILTER`.
+ */
+export function buildDashboardFilter(form: DashboardFilterForm, allowed: readonly string[] = DASHBOARD_FILTER_FIELDS): { filter: DashboardFilter } | { error: FilterFormError; field: string } {
+  const out: DashboardFilter = { ...(form.keep ?? {}) };
+  const ids = [...new Set(form.boardIds)].sort((a, b) => a - b);
+  if (ids.length) out.boardIds = ids;
+  if (form.doneState !== 'any') out.doneState = form.doneState;
+  for (const k of ['dueFrom', 'dueTo', 'createdFrom', 'createdTo'] as const) {
+    const v = form[k].trim();
+    if (!v) continue;
+    if (!DAY_RE.test(v) || !isValidLocalDate(v)) return { error: 'date_invalid', field: k };
+    out[k] = v;
+  }
+  if (out.dueFrom && out.dueTo && out.dueFrom > out.dueTo) return { error: 'date_order', field: 'dueFrom' };
+  if (out.createdFrom && out.createdTo && out.createdFrom > out.createdTo) return { error: 'date_order', field: 'createdFrom' };
+  if (form.includeArchived) out.includeArchived = true;
+  const bad = Object.keys(out).find((k) => !allowed.includes(k));
+  if (bad) return { error: 'unsupported', field: bad };
+  return { filter: sortKeys(out) };
+}
+const sortKeys = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b))) as T;
+
+/** Text values of a config form, keyed like the schema. */
+export type ConfigForm = Record<string, string | boolean>;
+export const configToForm = (schema: Record<string, ConfigFieldSchema>, config: Record<string, unknown>): ConfigForm =>
+  Object.fromEntries(Object.entries(schema).map(([k, f]) => {
+    const v = config[k] ?? ('default' in f ? f.default : null);
+    if (f.type === 'bool') return [k, v === true];
+    if (f.type === 'idList') return [k, Array.isArray(v) ? v.join(', ') : ''];
+    return [k, v === null || v === undefined ? '' : String(v)];
+  }));
+export type ConfigFormError = { field: string; error: 'int_range' | 'enum' | 'id_list' | 'too_many' };
+
+/** Config form → config object by the schema (ConfigSchema::normalize rules); empty → server default. */
+export function buildWidgetConfig(schema: Record<string, ConfigFieldSchema>, form: ConfigForm): { config: Record<string, unknown> } | ConfigFormError {
+  const out: Record<string, unknown> = {};
+  for (const [k, f] of Object.entries(schema)) {
+    const raw = form[k];
+    if (f.type === 'bool') {
+      if (typeof raw === 'boolean') out[k] = raw;
+      continue;
+    }
+    const s = typeof raw === 'string' ? raw.trim() : '';
+    if (!s) continue;
+    if (f.type === 'int') {
+      if (!/^-?\d{1,9}$/.test(s) || Number(s) < f.min || Number(s) > f.max) return { field: k, error: 'int_range' };
+      out[k] = Number(s);
+    } else if (f.type === 'enum') {
+      if (!f.options.some((o) => o.value === s)) return { field: k, error: 'enum' };
+      out[k] = s;
+    } else {
+      const parts = s.split(/[\s,;]+/).filter(Boolean);
+      if (!parts.every((p) => /^\d{1,9}$/.test(p) && Number(p) > 0)) return { field: k, error: 'id_list' };
+      const ids = [...new Set(parts.map(Number))];
+      if (ids.length > f.max) return { field: k, error: 'too_many' };
+      out[k] = ids;
+    }
+  }
+  return { config: out };
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+const sameIds = (a: number[], b: number[]) => a.length === b.length && [...a].sort((x, y) => x - y).every((v, i) => v === [...b].sort((x, y) => x - y)[i]);
+
+export interface DashboardForm {
+  title: string;
+  description: string;
+  zone: string;
+  /** '0' = off, else seconds 60…86400. */
+  refreshSec: string;
+  sources: number[];
+  filters: DashboardFilter;
+}
+export type DashboardFormError = 'title_required' | 'title_too_long' | 'description_too_long' | 'refresh_range' | 'zone_invalid' | 'too_many_sources';
+
+/**
+ * Edited header → PATCH with only the changed fields (+ version). Sources the viewer cannot see
+ * are kept by the server, so `sources` is the set of VISIBLE sources only.
+ */
+export function buildDashboardPatch(d: Pick<Dashboard, 'version' | 'title' | 'description' | 'zone' | 'refreshSec' | 'sources' | 'filters'>, form: DashboardForm): { patch: DashboardPatch | null } | { error: DashboardFormError } {
+  const title = form.title.trim();
+  if (!title) return { error: 'title_required' };
+  if (title.length > 200) return { error: 'title_too_long' };
+  const description = form.description.trim();
+  if (description.length > 2000) return { error: 'description_too_long' };
+  const refresh = form.refreshSec.trim();
+  if (!/^\d{1,6}$/.test(refresh) || (Number(refresh) !== 0 && (Number(refresh) < 60 || Number(refresh) > 86400))) return { error: 'refresh_range' };
+  const zone = form.zone.trim();
+  if (!/^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/.test(zone)) return { error: 'zone_invalid' };
+  if (form.sources.length > DASHBOARD_MAX_SOURCES) return { error: 'too_many_sources' };
+  const patch: DashboardPatch = { version: d.version };
+  if (title !== d.title) patch.title = title;
+  if (description !== d.description) patch.description = description;
+  if (zone !== d.zone) patch.zone = zone;
+  if (Number(refresh) !== d.refreshSec) patch.refreshSec = Number(refresh);
+  const sources = [...new Set(form.sources)].sort((a, b) => a - b);
+  if (!sameIds(sources, d.sources.map((s) => s.id))) patch.sources = sources;
+  if (!sameJson(sortKeys(form.filters), sortKeys(d.filters))) patch.filters = form.filters;
+  return { patch: Object.keys(patch).length > 1 ? patch : null };
+}
+
+/** Widget edit → PATCH with only changed fields (+ version); null when nothing changed. */
+export function buildWidgetPatch(w: Pick<DashboardWidget, 'version' | 'title' | 'config' | 'filter' | 'x' | 'w' | 'h'>, next: { title: string; config: Record<string, unknown>; filter: DashboardFilter; w: number; h: number }): WidgetPatch | null {
+  const patch: WidgetPatch = { version: w.version };
+  const title = next.title.trim();
+  if (title !== (w.title ?? '')) patch.title = title;
+  // The server stores the normalized config with defaults; compare only fields the form sets.
+  if (Object.entries(next.config).some(([k, v]) => !sameJson(v, w.config[k]))) patch.config = next.config;
+  if (!sameJson(sortKeys(next.filter), sortKeys(w.filter))) patch.filter = next.filter;
+  if (next.w !== w.w) {
+    patch.w = next.w;
+    // Keep the widget inside the 12-column grid (server: 422 INVALID_LAYOUT).
+    if (w.x + next.w > DASHBOARD_GRID_COLUMNS) patch.x = DASHBOARD_GRID_COLUMNS - next.w;
+  }
+  if (next.h !== w.h) patch.h = next.h;
+  return Object.keys(patch).length > 1 ? patch : null;
+}
+
+/** Append a drill-down page; card ids already shown are dropped. */
+export function mergeCards(shown: DashboardCard[], page: DashboardCard[]): DashboardCard[] {
+  const seen = new Set(shown.map((c) => c.id));
+  return [...shown, ...page.filter((c) => !seen.has(c.id))];
+}
