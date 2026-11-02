@@ -1,15 +1,13 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { type AccountId, type ProjectSummary, type ServerBase, type WorkhubBootstrap } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { ProjectsScreen } from './workhub';
 import { SharesEditor } from './projectAdmin';
-import { Button, Empty, ErrorBanner, Loading, Row, card, styles as ui } from './ui';
+import { Button, Empty, ErrorBanner, Loading, Row, card } from './ui';
 import { colors, font, space } from './theme';
-import { formatDate } from './i18n';
 import { TimeScreen } from './time';
-
-const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+import { RequestsScreen } from './requests';
 
 type Section = 'projects' | 'time' | 'requests' | 'goals' | 'more';
 
@@ -43,79 +41,10 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
       </ScrollView>
       {section === 'projects' ? <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} onOpen={onOpenProject} /> : null}
       {section === 'time' ? <TimeScreen accountId={accountId} canReview={workhub.permissions.canViewTeamReport} /> : null}
-      {section === 'requests' ? <RequestsScreen accountId={accountId} /> : null}
+      {section === 'requests' ? <RequestsScreen accountId={accountId} timeEnabled={workhub.modules.time} /> : null}
       {section === 'goals' ? <GoalsScreen accountId={accountId} /> : null}
       {section === 'more' ? <MoreScreen serverBase={serverBase} workhub={workhub} /> : null}
     </View>
-  );
-}
-
-const REQUEST_STATE: Record<string, string> = { pending: 'Onay bekliyor', open: 'Açık', rejected: 'Reddedildi', converted: 'Göreve dönüştü', resolved: 'Çözüldü' };
-
-export function RequestsScreen({ accountId }: { accountId: AccountId }) {
-  const { backend } = useServices();
-  const [scope, setScope] = useState<'mine' | 'received'>('mine');
-  const list = useAsync(() => backend.requests(accountId, scope), [accountId, scope]);
-  const ctx = useAsync(() => backend.requestContext(accountId), [accountId]);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>();
-  const create = async () => {
-    setBusy(true);
-    setErr(undefined);
-    try {
-      await backend.createRequest(accountId, title.trim(), description.trim(), null, uuid());
-      setTitle('');
-      setDescription('');
-      list.reload();
-    } catch (e) {
-      setErr(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <ScrollView contentContainerStyle={{ padding: space(3) }}>
-      <View style={{ flexDirection: 'row', gap: space(2), marginBottom: space(2) }}>
-        {(['mine', 'received'] as const).map((s) => (
-          <Pressable key={s} accessibilityRole="tab" accessibilityState={{ selected: scope === s }} onPress={() => setScope(s)} style={{ paddingVertical: space(1), paddingHorizontal: space(3), borderRadius: 16, backgroundColor: scope === s ? colors.primary : colors.surface }}>
-            <Text style={{ color: scope === s ? colors.primaryText : colors.text }}>{s === 'mine' ? 'Gönderdiklerim' : 'Bana gelenler'}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <ErrorBanner error={list.error ?? err} onRetry={list.reload} />
-      {list.loading && !list.data ? <Loading /> : null}
-      {(list.data ?? []).length === 0 && !list.loading ? <Text style={{ color: colors.muted, marginBottom: space(3) }}>Talep yok.</Text> : null}
-      {(list.data ?? []).map((r) => (
-        <View key={r.id} style={card}>
-          <Text style={{ fontWeight: '700', color: colors.text }}>{r.title}</Text>
-          <Text style={{ color: colors.muted }}>
-            {REQUEST_STATE[r.state] ?? r.state} · {scope === 'mine' ? `→ ${r.recipientName}` : `← ${r.requesterName}`} · {formatDate(r.createdAt)}
-          </Text>
-          {r.description ? <Text style={{ marginTop: space(1), color: colors.text }}>{r.description}</Text> : null}
-        </View>
-      ))}
-      {scope === 'mine' ? (
-        <View style={card}>
-          <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
-            Yeni talep
-          </Text>
-          {ctx.data && !ctx.data.manager ? (
-            <Text style={{ color: colors.muted }}>Yöneticiniz tanımlı değil; talep gönderebilmek için yöneticinizin tanımlanması gerekir.</Text>
-          ) : (
-            <>
-              <Text style={{ color: colors.muted, marginBottom: space(2) }}>Alıcı: {ctx.data?.manager?.displayName ?? '…'}</Text>
-              <TextInput accessibilityLabel="Başlık" placeholder="Başlık" placeholderTextColor={colors.muted} value={title} onChangeText={setTitle} style={[ui.input, { marginBottom: space(2) }]} />
-              <TextInput accessibilityLabel="Açıklama" placeholder="Açıklama" placeholderTextColor={colors.muted} value={description} onChangeText={setDescription} multiline style={[ui.input, { minHeight: 80, paddingTop: 10 }]} />
-              <Button title="Gönder" busy={busy} disabled={!title.trim()} onPress={() => void create()} />
-            </>
-          )}
-        </View>
-      ) : (
-        <Text style={{ color: colors.muted, fontSize: font.small }}>Onay/red ve göreve dönüştürme şimdilik web'de (Diğer → Talepler).</Text>
-      )}
-    </ScrollView>
   );
 }
 
@@ -159,7 +88,6 @@ export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; wo
     ['Gantt ve etkinlik', 'projects', 'Proje Gantt ve etkinlik akışı', workhub.modules.projects],
     ['İş akışları', 'workflows', 'Şablonlar, çalıştırmalar, devir', workhub.modules.projects],
     ['Zaman: görev bağlama ve panolar', 'time', 'Kayda görev bağlama, zaman widget\'ları', workhub.modules.time],
-    ['Talepler: yanıt ve dönüştürme', 'requests', 'Onay/red, göreve dönüştürme, rapor', workhub.modules.requests],
     ['Hedefler: düzenleme', 'goals', 'Hedef/target, check-in, kart bağlantısı', workhub.modules.goals],
     ['AI', 'ai', 'Öneri ve taslaklar', workhub.modules.ai],
     ['Yönetim', 'settings', 'Modül, iş yükü, zaman politikası, AI sağlayıcı', workhub.user.isAdmin],

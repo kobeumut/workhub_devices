@@ -610,17 +610,140 @@ export function periodActions(week: Pick<TimeWeek, 'period' | 'submissions'>): {
 /** An entry may be edited/deleted only when the server says neither it nor its period is locked. */
 export const entryEditable = (week: Pick<TimeWeek, 'period'>, e: TimeEntry) => week.period.open && !e.locked && e.periodId === week.period.id;
 
+export type RequestState = 'pending' | 'rejected' | 'open' | 'converted' | 'resolved';
+export type RequestTaskState = 'open' | 'closed' | 'missing' | null;
+
+/** Linked task as the server resolves it for the caller (null when not readable → `cardRestricted`). */
+export interface RequestCard {
+  id: number;
+  boardId: number;
+  boardTitle: string;
+  stackId: number;
+  stackTitle: string;
+  title: string;
+  done: string | null;
+  due: string | null;
+  archived: boolean;
+  url: string;
+}
+
 export interface WorkRequest {
   id: number;
+  /** Optimistic lock for respond / resolve / convert. */
   version: number;
   title: string;
   description: string;
+  requesterUid: string;
   requesterName: string;
   recipientName: string;
-  state: string;
+  managerName: string | null;
+  /** Caller is in the approval subject's management chain (only meaningful once consented). */
+  canManage: boolean;
+  /** Caller is the recipient of a pending request. */
   canRespond: boolean;
+  rejectionReason: string | null;
+  respondedAt: string | null;
+  state: RequestState;
+  taskState: RequestTaskState;
   createdAt: string;
+  convertedAt: string | null;
+  resolvedAt: string | null;
+  taskClosedAt: string | null;
+  checkedAt: string | null;
+  /** Only in detail / mutation responses. */
+  card: RequestCard | null;
+  cardRestricted: boolean;
 }
+
+export interface RequestEvent {
+  id: number;
+  actorUid: string;
+  action: string;
+  reason: string | null;
+  changes: { doneAt?: string | null; source?: string; recipientUid?: string; state?: string } | null;
+  occurredAt: string;
+}
+
+export interface RequestPage<T> {
+  items: T[];
+  nextCursor: number | null;
+}
+
+export type ReportScope = 'all' | 'mine' | 'received' | 'team';
+export type ReportType = 'all' | 'request' | 'timesheet';
+export const REPORT_STATES = ['any', 'pending', 'rejected', 'open', 'converted', 'resolved', 'approved', 'changes_requested', 'withdrawn', 'superseded'] as const;
+export type ReportState = (typeof REPORT_STATES)[number];
+
+export interface RequestReportFilters {
+  scope: ReportScope;
+  type: ReportType;
+  state: ReportState;
+  /** `YYYY-MM-DD` (UTC days); the server caps the range at 366 days. */
+  from: string;
+  to: string;
+}
+
+export interface RequestReportRow {
+  id: number;
+  type: 'request' | 'timesheet';
+  title: string;
+  requesterUid: string;
+  requesterName: string;
+  recipientUid: string | null;
+  recipientName: string | null;
+  state: string;
+  taskState: RequestTaskState;
+  createdAt: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  revision: number | null;
+  totalSec: number | null;
+}
+
+export interface RequestReport {
+  items: RequestReportRow[];
+  total: number;
+  byType: { request: number; timesheet: number };
+  byState: Record<string, number>;
+  from: string;
+  to: string;
+  scope: ReportScope;
+  type: ReportType;
+  state: ReportState;
+  zone: string;
+  timeEnabled: boolean;
+  generatedAt: string;
+}
+
+export type RequestDecision = 'approve' | 'reject';
+
+/**
+ * Actions the UI may offer, derived only from server flags. The server's state machine:
+ * respond only `pending` → recipient; resolve/convert only `open` → management chain.
+ */
+export function requestActions(r: Pick<WorkRequest, 'state' | 'canRespond' | 'canManage'>): { respond: boolean; resolve: boolean; convert: boolean } {
+  const manage = r.canManage && r.state === 'open';
+  return { respond: r.canRespond && r.state === 'pending', resolve: manage, convert: manage };
+}
+
+export const requestsApi = {
+  list: (c: OcsClient, scope: 'mine' | 'received' | 'team', state: 'any' | RequestState = 'any', before?: number) =>
+    c.get<RequestPage<WorkRequest>>(`${BASE}/requests`, { query: { scope, state, ...(before ? { before: posId(before) } : {}) } }),
+  get: (c: OcsClient, id: number) => c.get<WorkRequest>(`${BASE}/requests/${posId(id)}`),
+  history: (c: OcsClient, id: number, before?: number) =>
+    c.get<RequestPage<RequestEvent>>(`${BASE}/requests/${posId(id)}/history`, before ? { query: { before: posId(before) } } : {}),
+  /** `reason` is required for reject, optional for approve. */
+  respond: async (c: OcsClient, id: number, version: number, decision: RequestDecision, reason: string | null, idempotencyKey: string) => {
+    const body: Record<string, unknown> = { version, decision };
+    if (reason) body.reason = reason;
+    return (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/respond`, { method: 'POST', body, headers: keyHeader(idempotencyKey) })).data;
+  },
+  resolve: async (c: OcsClient, id: number, version: number, reason: string, idempotencyKey: string) =>
+    (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/resolve`, { method: 'POST', body: { version, reason }, headers: keyHeader(idempotencyKey) })).data,
+  convert: async (c: OcsClient, id: number, version: number, boardId: number, stackId: number, idempotencyKey: string) =>
+    (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/convert`, { method: 'POST', body: { version, boardId: posId(boardId), stackId: posId(stackId) }, headers: keyHeader(idempotencyKey) })).data,
+  report: (c: OcsClient, f: RequestReportFilters) => c.get<RequestReport>(`${BASE}/requests/report`, { query: { scope: f.scope, type: f.type, state: f.state, from: f.from, to: f.to } }),
+};
 
 export interface RequestContext {
   uid: string;

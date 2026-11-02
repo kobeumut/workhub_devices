@@ -6,9 +6,9 @@ import { dismissNotification, listNotifications, type InboxNotification } from '
 import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './serverUrl';
 import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
 import {
-  openTaskFromNotification, timeApi, workhubApi, workhubModulesApi,
+  openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, REPORT_STATES,
   SHARE_OBJECT_TYPES, SHARE_ROLES,
-  type CsvScope, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
+  type CsvScope, type RequestDecision, type RequestEvent, type RequestPage, type RequestReport, type RequestReportFilters, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
   type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
 
@@ -105,6 +105,15 @@ export interface Backend {
   requests(accountId: AccountId, scope: 'mine' | 'received' | 'team'): Promise<WorkRequest[]>;
   requestContext(accountId: AccountId): Promise<RequestContext>;
   createRequest(accountId: AccountId, title: string, description: string, recipientUid: string | null, idempotencyKey: string): Promise<{ id: number } | null>;
+  /** Detail incl. the linked task (re-reconciled by the server). */
+  requestDetail(accountId: AccountId, requestId: number): Promise<WorkRequest>;
+  requestHistory(accountId: AccountId, requestId: number, before: number | null): Promise<RequestPage<RequestEvent>>;
+  /** Recipient of a pending request only (server: 404 otherwise); `reason` required for reject. */
+  requestRespond(accountId: AccountId, requestId: number, version: number, decision: RequestDecision, reason: string | null, idempotencyKey: string): Promise<WorkRequest | null>;
+  /** Manager only (gate: `requestContext.isManager`, fail closed); the server re-checks the chain. */
+  requestResolve(accountId: AccountId, requestId: number, version: number, reason: string, idempotencyKey: string): Promise<WorkRequest | null>;
+  requestConvert(accountId: AccountId, requestId: number, version: number, boardId: number, stackId: number, idempotencyKey: string): Promise<WorkRequest | null>;
+  requestReport(accountId: AccountId, filters: RequestReportFilters): Promise<RequestReport>;
   goals(accountId: AccountId): Promise<GoalSummary[]>;
 }
 
@@ -181,6 +190,25 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     const b = await bootstrap(id, c);
     if (!b.modules.time) throw new OcsError('forbidden', 403, undefined, undefined, 'TIME_DISABLED');
     if (reviewer && !b.permissions.canViewTeamReport) throw new OcsError('forbidden', 403, undefined, undefined, 'TEAM_REPORT_FORBIDDEN');
+    return c;
+  };
+
+  /** Request context (manager flag), cached like the bootstrap. */
+  const requestContexts = new Map<AccountId, { at: number; value: RequestContext }>();
+  /**
+   * Requests gate (fail closed): the module must be on for this user; resolve/convert need a
+   * management relation (`isManager`). The server re-checks the actual chain per request.
+   */
+  const requestClient = async (id: AccountId, manager = false): Promise<OcsClient> => {
+    const c = await client(id);
+    const b = await bootstrap(id, c);
+    if (!b.modules.requests) throw new OcsError('forbidden', 403, undefined, undefined, 'REQUESTS_DISABLED');
+    if (manager) {
+      const hit = requestContexts.get(id);
+      const ctx = hit && Date.now() - hit.at < 30_000 ? hit.value : await workhubModulesApi.requestContext(c);
+      requestContexts.set(id, { at: hit && hit.value === ctx ? hit.at : Date.now(), value: ctx });
+      if (!ctx.isManager) throw new OcsError('forbidden', 403, undefined, undefined, 'REQUEST_MANAGER_REQUIRED');
+    }
     return c;
   };
 
@@ -423,13 +451,38 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       return timeApi.csv(await timeClient(accountId, scope === 'team'), scope, from, to);
     },
     async requests(accountId, scope) {
-      return workhubModulesApi.requests(await client(accountId), scope);
+      return workhubModulesApi.requests(await requestClient(accountId), scope);
     },
     async requestContext(accountId) {
-      return workhubModulesApi.requestContext(await client(accountId));
+      const c = await requestClient(accountId);
+      const value = await workhubModulesApi.requestContext(c);
+      requestContexts.set(accountId, { at: Date.now(), value });
+      return value;
     },
     async createRequest(accountId, title, description, recipientUid, idempotencyKey) {
-      return workhubModulesApi.createRequest(await client(accountId), { title, description, ...(recipientUid ? { recipientUid } : {}) }, idempotencyKey);
+      return workhubModulesApi.createRequest(await requestClient(accountId), { title, description, ...(recipientUid ? { recipientUid } : {}) }, idempotencyKey);
+    },
+    async requestDetail(accountId, requestId) {
+      return requestsApi.get(await requestClient(accountId), requestId);
+    },
+    async requestHistory(accountId, requestId, before) {
+      return requestsApi.history(await requestClient(accountId), requestId, before ?? undefined);
+    },
+    async requestRespond(accountId, requestId, version, decision, reason, idempotencyKey) {
+      const r = reason?.trim() || null;
+      if (decision === 'reject' && !r) throw new OcsError('client', undefined, 'reason required', undefined, 'REASON_REQUIRED');
+      return requestsApi.respond(await requestClient(accountId), requestId, version, decision, r, idempotencyKey);
+    },
+    async requestResolve(accountId, requestId, version, reason, idempotencyKey) {
+      const r = reason.trim();
+      if (!r) throw new OcsError('client', undefined, 'reason required', undefined, 'REASON_REQUIRED');
+      return requestsApi.resolve(await requestClient(accountId, true), requestId, version, r, idempotencyKey);
+    },
+    async requestConvert(accountId, requestId, version, boardId, stackId, idempotencyKey) {
+      return requestsApi.convert(await requestClient(accountId, true), requestId, version, boardId, stackId, idempotencyKey);
+    },
+    async requestReport(accountId, filters) {
+      return requestsApi.report(await requestClient(accountId), filters);
     },
     async goals(accountId) {
       return workhubModulesApi.goals(await client(accountId));
@@ -449,7 +502,7 @@ export const BACKEND_METHODS = [
   'createProject', 'renameProject', 'addProjectMember', 'createStack', 'renameStack', 'principals', 'objectShares', 'setObjectShares',
   'timer', 'timerStart', 'timerStop', 'timeWeek',
   'timeEntryCreate', 'timeEntryUpdate', 'timeEntryDelete', 'timeSubmit', 'timeWithdraw', 'timeReviews', 'timeDecide', 'timeTeam', 'timeCsv',
-  'requests', 'requestContext', 'createRequest', 'goals',
+  'requests', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert', 'requestReport', 'goals',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -539,6 +592,13 @@ export const isValidTimeEntryPatch = (v: unknown): v is TimeEntryPatch => {
 const isDayRange = (from: unknown, to: unknown, maxDays: number) =>
   isDay(from) && isDay(to) && (from as string) <= (to as string) && (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 < maxDays;
 
+export const isValidReportFilters = (v: unknown): v is RequestReportFilters => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return hasOnly(o, ['scope', 'type', 'state', 'from', 'to']) && ['all', 'mine', 'received', 'team'].includes(o.scope as string)
+    && ['all', 'request', 'timesheet'].includes(o.type as string) && (REPORT_STATES as readonly unknown[]).includes(o.state) && isDayRange(o.from, o.to, 366);
+};
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -592,6 +652,13 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   requests: (a) => a.length === 2 && isAccountId(a[0]) && ['mine', 'received', 'team'].includes(a[1] as string),
   requestContext: (a) => a.length === 1 && isAccountId(a[0]),
   createRequest: (a) => a.length === 5 && isAccountId(a[0]) && isStr(255)(a[1]) && isStr(10000)(a[2]) && (a[3] === null || isStr(64)(a[3])) && isStr(128)(a[4]),
+  requestDetail: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  requestHistory: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && (a[2] === null || isInt(a[2])),
+  requestRespond: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && (a[3] === 'approve' || a[3] === 'reject')
+    && (a[4] === null || isStr(2000)(a[4])) && (a[3] === 'approve' || (typeof a[4] === 'string' && a[4].trim().length > 0)) && isKey(a[5]),
+  requestResolve: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isTitle(2000)(a[3]) && isKey(a[4]),
+  requestConvert: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isInt(a[3]) && isInt(a[4]) && isKey(a[5]),
+  requestReport: (a) => a.length === 2 && isAccountId(a[0]) && isValidReportFilters(a[1]),
   goals: (a) => a.length === 1 && isAccountId(a[0]),
 };
 

@@ -2,7 +2,9 @@
 // Env: WH_SERVER, WH_A_USER, WH_A_PASS (app password used to approve the login flow),
 //      WH_SMOKE_ROOM (display name of a room the user has). Writes screenshots to WH_SMOKE_OUT.
 //      Optional WH_C_USER/WH_C_PASS: a user whose Nextcloud manager is WH_A_USER — seeds a pending
-//      timesheet for the review step (display name WH_SMOKE_SUBJECT, default "Carol").
+//      timesheet for the review step (display name WH_SMOKE_SUBJECT, default "Carol") and two
+//      pending requests to WH_A_USER. Optional WH_B_USER/WH_B_PASS (manager of WH_A_USER): seeds two
+//      open requests to WH_C_USER that WH_A_USER manages (convert / resolve).
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,6 +58,25 @@ if (process.env.WH_C_USER && process.env.WH_C_PASS) {
     if (sub?.submission) subjectName = process.env.WH_SMOKE_SUBJECT ?? 'Carol';
   }
 }
+// Requests step: two pending requests C → A (A is the recipient: approve / reject) and two open
+// requests B → C (A manages C: convert / resolve from "Ekibim"). Workhub has no delete; every
+// seeded request ends in a terminal state through the UI.
+const reqStamp = new Date().toISOString().slice(11, 19);
+const reqTitles = { approve: '', reject: '', convert: '', resolve: '' };
+if (process.env.WH_C_USER && process.env.WH_C_PASS) {
+  for (const k of ['approve', 'reject']) {
+    const t = `Masaüstü talebi ${k} ${reqStamp}`;
+    const r = await ocsAs(process.env.WH_C_USER, process.env.WH_C_PASS, 'POST', '/requests', { title: t, description: 'smoke' }, { 'Idempotency-Key': crypto.randomUUID() }).catch(() => null);
+    if (r?.state === 'pending') reqTitles[k] = t;
+  }
+}
+if (process.env.WH_B_USER && process.env.WH_B_PASS && process.env.WH_C_USER) {
+  for (const k of ['convert', 'resolve']) {
+    const t = `Ekip talebi ${k} ${reqStamp}`;
+    const r = await ocsAs(process.env.WH_B_USER, process.env.WH_B_PASS, 'POST', '/requests', { title: t, description: 'smoke', recipientUid: process.env.WH_C_USER }, { 'Idempotency-Key': crypto.randomUUID() }).catch(() => null);
+    if (r?.state === 'open') reqTitles[k] = t;
+  }
+}
 const profile = mkdtempSync(join(tmpdir(), 'workhub-smoke-'));
 const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platform=headless', '--disable-gpu', '--no-sandbox'], {
   env: {
@@ -69,6 +90,10 @@ const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platf
     WORKHUB_SMOKE_GROUP: process.env.WH_SMOKE_GROUP ?? 'staff',
     WORKHUB_SMOKE_GOAL: goal?.id ? goalTitle : '',
     WORKHUB_SMOKE_SUBJECT: subjectName,
+    WORKHUB_SMOKE_REQ_APPROVE: reqTitles.approve,
+    WORKHUB_SMOKE_REQ_REJECT: reqTitles.reject,
+    WORKHUB_SMOKE_REQ_CONVERT: reqTitles.convert,
+    WORKHUB_SMOKE_REQ_RESOLVE: reqTitles.resolve,
   },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
@@ -97,6 +122,12 @@ if (process.env.WH_C_USER && process.env.WH_C_PASS) {
   if (pending) await C('POST', `/time/submissions/${pending.id}/withdraw`, { version: week.period.version }, { 'Idempotency-Key': crypto.randomUUID() });
   const now = await C('GET', '/time/week');
   for (const e of now?.entries ?? []) if (e.description === 'Smoke review entry') await C('DELETE', `/time/entries/${e.id}`, { version: e.version });
+}
+if (reqTitles.convert || reqTitles.approve) {
+  const mine = await ocsAs(process.env.WH_C_USER, process.env.WH_C_PASS, 'GET', '/requests?scope=mine&state=any').catch(() => null);
+  const team = process.env.WH_B_USER ? await ocsAs(process.env.WH_B_USER, process.env.WH_B_PASS, 'GET', '/requests?scope=mine&state=any').catch(() => null) : null;
+  const stateOf = (list, t) => list?.items?.find((x) => x.title === t)?.state ?? '—';
+  console.log(`requests on server after UI: approve=${stateOf(mine, reqTitles.approve)} reject=${stateOf(mine, reqTitles.reject)} convert=${stateOf(team, reqTitles.convert)} resolve=${stateOf(team, reqTitles.resolve)}`);
 }
 // CSV files saved by the UI: BOM + header, and never any credential.
 const { readdirSync } = await import('node:fs');
