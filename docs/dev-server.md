@@ -63,6 +63,8 @@ Talk (GENE-57): `npm run smoke:talk -w @workhub-devices/core` (aynı `WH_*`; A g
 
 Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
+Talk dosyaları (GENE-58): `npm run smoke:files -w @workhub-devices/core` (aynı `WH_*`; kota adımı için isteğe bağlı `WH_ADMIN_USER`/`WH_ADMIN_PASS` — yönetici **giriş parolası**, repo dışı secret dosyasından; adım C'nin kotasını geçici 1 MB yapıp eski değere döndürür). Dev sunucuda `spreed.config.attachments` = `allowed: true`, `folder: /Talk`, `conversation-subfolders: true`. Masaüstü smoke `WH_B_*` ile dosya/ses notu adımlarını da çalıştırır (Electron sahte mikrofonu).
+
 ## Push relay uçtan uca testi (dev)
 
 Host güvenlik duvarı Docker ağından host'a gelen bağlantıları düşürdüğü için relay, Nextcloud ile aynı Docker ağında geçici bir `node:22-alpine` container'ında (`relay-e2e`) çalıştırılır:

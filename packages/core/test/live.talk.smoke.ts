@@ -70,7 +70,7 @@ async function main() {
 
   await step('capabilities: needed Talk features present', async () => {
     const caps = await fetchServerCapabilities(A);
-    f = talkFeaturesOf(caps.talk.features);
+    f = talkFeaturesOf(caps.talk.features, { attachmentsAllowed: caps.talk.attachments.allowed });
     const missing = Object.entries(f).filter(([, v]) => !v).map(([k]) => k);
     assert.deepEqual(missing, []);
     assert.equal(caps.talk.canCreate, true);

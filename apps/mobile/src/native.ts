@@ -21,6 +21,20 @@ interface WorkhubNativeSpec {
   requestNotificationPermission(): Promise<boolean>;
   /** System share sheet for a generated export; resolves 'saved' once handed to the OS. */
   shareFile(filename: string, content: string, mime: string): Promise<'saved' | 'cancelled'>;
+  // Talk attachments (Android, TalkFiles.kt). Optional: absent on platforms without them → UI hides.
+  filePick?(): Promise<Array<{ id: string; name: string; size: number; mime: string }>>;
+  fileStat?(id: string): Promise<{ id: string; name: string; size: number; mime: string } | null>;
+  fileRead?(id: string, offset: number, length: number): Promise<string>;
+  fileRelease?(id: string): void;
+  sinkOpen?(name: string): Promise<string>;
+  sinkWrite?(id: string, base64: string): Promise<void>;
+  sinkFinish?(id: string, mime: string, mode: 'save' | 'open'): Promise<'saved' | 'opened' | 'cancelled'>;
+  sinkAbort?(id: string): void;
+  voiceStart?(): Promise<void>;
+  voiceStop?(name: string): Promise<{ id: string; name: string; size: number; mime: string } | null>;
+  voiceCancel?(): void;
+  audioPlay?(base64: string): Promise<void>;
+  audioStop?(): void;
 }
 
 const mod = NativeModules.WorkhubNative as WorkhubNativeSpec | undefined;

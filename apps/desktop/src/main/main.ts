@@ -6,6 +6,7 @@ import { createDirectBackend, dispatchWire, isWithinServer, unregisterWebPush, t
 import { createPlainStore, createSecretStore } from './stores';
 import { DesktopNotifier } from './notifier';
 import { runSmoke } from './smoke';
+import { createDesktopFiles } from './files';
 
 const smokeOut = process.env.WORKHUB_SMOKE_OUT;
 const allowHttp = process.env.WORKHUB_ALLOW_HTTP === '1' && (!app.isPackaged || !!smokeOut);
@@ -15,9 +16,17 @@ if (!app.requestSingleInstanceLock()) app.quit();
 const dataDir = app.getPath('userData');
 const secrets = createSecretStore(dataDir);
 const plain = createPlainStore(dataDir);
+// Smoke: a fake microphone (beep) and auto-accepted capture, so the voice-note step runs headless.
+if (smokeOut) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+  app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+}
+let win: BrowserWindow | null = null;
+const files = createDesktopFiles(() => win, smokeOut);
 const backend = createDirectBackend({
   secrets,
   plain,
+  files: files.host,
   userAgent: `WorkhubDesktop/${app.getVersion()} (${process.platform})`,
   ...(allowHttp ? { urlOptions: { allowInsecureHttp: true } } : {}),
   onLogout: async (_a, client) => {
@@ -32,7 +41,6 @@ const backend = createDirectBackend({
 
 /** Login pages the renderer may ask to open: only URLs main itself received from beginLogin. */
 const allowedExternal = new Set<string>();
-let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 const rendererIndex = join(__dirname, 'renderer', 'index.html');
@@ -153,6 +161,19 @@ ipcMain.handle('workhub:saveFile', async (e, filename: unknown, content: unknown
   return 'saved';
 });
 
+/** Talk attachments: the renderer only ever receives opaque handles + name/size/type. */
+ipcMain.handle('workhub:pickFiles', async (e) => {
+  if (!isOurFrame(e.sender, e.senderFrame?.url)) return [];
+  return files.pick();
+});
+ipcMain.handle('workhub:stageRecording', async (e, bytes: unknown) => {
+  if (!isOurFrame(e.sender, e.senderFrame?.url)) return null;
+  return files.stageRecording(bytes);
+});
+ipcMain.handle('workhub:releaseFile', async (e, handle: unknown) => {
+  if (isOurFrame(e.sender, e.senderFrame?.url)) files.release(handle);
+});
+
 ipcMain.on('workhub:foreground', (e, target: unknown) => {
   if (!isOurFrame(e.sender, e.senderFrame?.url)) return;
   const t = target as RoutedTarget | null;
@@ -165,14 +186,20 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
-  // Deny every permission (camera, mic, notifications-from-web, geolocation…) to the renderer.
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
+  // Deny every permission (camera, notifications-from-web, geolocation…) to the renderer. The
+  // only exception is the MICROPHONE for voice notes, requested by our own top frame.
+  const audioOnly = (types: readonly string[] | undefined) => !!types && types.length > 0 && types.every((t) => t === 'audio');
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
+    const d = details as { mediaTypes?: string[]; requestingUrl?: string };
+    cb(perm === 'media' && wc === win?.webContents && audioOnly(d.mediaTypes) && isOurFrame(wc, d.requestingUrl));
+  });
+  session.defaultSession.setPermissionCheckHandler((wc, perm, _origin, details) =>
+    perm === 'media' && !!wc && wc === win?.webContents && (details as { mediaType?: string }).mediaType === 'audio');
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
     cb({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'"],
+        'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'"],
       },
     });
   });

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, FlatList, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
-  activeMentionQuery, classifySendFailure, editableText, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeRooms, mergeTimeline, messageActions,
+  activeMentionQuery, classifySendFailure, editableText, fileOf, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeRooms, mergeTimeline, messageActions,
   newReferenceId, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
   type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type TalkFeatures, type TalkMessage, type TalkRoom,
 } from '@workhub-devices/core';
@@ -10,6 +10,7 @@ import { Button, Empty, ErrorBanner, Header, Loading, Row, styles as ui } from '
 import { colors, font, space } from './theme';
 import { formatTime, t } from './i18n';
 import { MessageSearch, NewRoomForm, RoomSettings, SearchResults } from './talkRoom';
+import { FileCard, UploadTray, useUploads, VoiceBar } from './talkFiles';
 
 /** Quick reactions offered in the picker (any emoji is accepted by the server). */
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '😮', '😢', '🙏'];
@@ -208,6 +209,8 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
   const [panel, setPanel] = useState<'search' | 'info' | null>(null);
   const [suggestions, setSuggestions] = useState<MentionSuggestion[]>([]);
   const [notice, setNotice] = useState('');
+  const [recording, setRecording] = useState(false);
+  const uploads = useUploads(accountId, roomRef.token);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const token = roomRef.token;
@@ -381,6 +384,27 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
     void sendText(msg, ref, replyTo);
   };
 
+  /** Pick files → upload + share each; the composer text becomes the caption of a single file. */
+  const attach = async () => {
+    setActionError(undefined);
+    try {
+      const picked = (await platform.files?.pick()) ?? [];
+      if (!picked.length) return;
+      const caption = features.caption && picked.length === 1 && mode?.kind !== 'edit' && text.trim() ? text.trim() : undefined;
+      const replyTo = mode?.kind === 'reply' ? mode.message.id : undefined;
+      if (caption) {
+        setText('');
+        setCaret(0);
+      }
+      if (replyTo) setMode(null);
+      picked.forEach((f, i) => uploads.start(f, { ...(i === 0 && caption ? { caption } : {}), ...(i === 0 && replyTo ? { replyTo } : {}) }));
+    } catch (e) {
+      setActionError(e);
+    }
+  };
+  const canAttach = !!acts?.chat && features.files && !!platform.files;
+  const canRecord = !!acts?.chat && features.voice && !!platform.voice && !!platform.files;
+
   const toggleReaction = (m: TalkMessage, emoji: string, mine: boolean) =>
     runAction(async () => {
       const map = await backend.react(accountId, token, m.id, emoji, !mine);
@@ -475,6 +499,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
             }
             const mine = m.actorType === 'users' && m.actorId === selfId;
             const deleted = m.messageType === 'comment_deleted';
+            const file = deleted ? null : fileOf(m);
             const can = room ? messageActions(m, room, self, features, nowSec) : { reply: false, edit: false, delete: false, react: false };
             const isSel = selected === m.id;
             const reacts = reactionSummary(m);
@@ -502,7 +527,16 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                       {'message' in m.parent ? `${m.parent.actorDisplayName}: ${m.parent.messageType === 'comment_deleted' ? 'Silinmiş mesaj' : plain(m.parent)}` : 'Silinmiş mesaj'}
                     </Text>
                   ) : null}
-                  {deleted ? <Text style={{ color: colors.muted, fontStyle: 'italic' }}>🗑 Bu mesaj silindi</Text> : <MessageText m={m} selfId={selfId} />}
+                  {deleted ? (
+                    <Text style={{ color: colors.muted, fontStyle: 'italic' }}>🗑 Bu mesaj silindi</Text>
+                  ) : file ? (
+                    <>
+                      {file.caption ? <MessageText m={m} selfId={selfId} /> : null}
+                      <FileCard accountId={accountId} token={token} messageId={m.id} file={file} />
+                    </>
+                  ) : (
+                    <MessageText m={m} selfId={selfId} />
+                  )}
                   <Text style={{ fontSize: 11, color: colors.muted, alignSelf: 'flex-end' }}>
                     {formatTime(m.timestamp)}
                     {m.lastEditTimestamp && !deleted ? ' · düzenlendi' : ''}
@@ -596,10 +630,27 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
           </ScrollView>
         </View>
       ) : null}
-      {acts && !acts.chat ? (
+      <UploadTray uploads={uploads} />
+      {recording ? (
+        <VoiceBar
+          onRecorded={(f) => uploads.start(f, { voice: true, ...(mode?.kind === 'reply' ? { replyTo: mode.message.id } : {}) })}
+          onError={setActionError}
+          onClose={() => setRecording(false)}
+        />
+      ) : acts && !acts.chat ? (
         <Text style={{ padding: space(3), color: colors.muted, borderTopWidth: 1, borderColor: colors.border }}>Bu sohbette mesaj yazma izniniz yok (salt okunur veya kısıtlı).</Text>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', padding: space(2), borderTopWidth: mode ? 0 : 1, borderColor: colors.border, gap: space(2) }}>
+          {canAttach ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Dosya ekle" accessibilityHint={features.caption ? 'Yazdığınız metin tek dosyada açıklama olarak gönderilir' : undefined} onPress={() => void attach()} style={[ui.button, ui.secondary, { paddingHorizontal: space(3) }]}>
+              <Text style={{ fontSize: font.title }}>📎</Text>
+            </Pressable>
+          ) : null}
+          {canRecord ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Sesli not kaydet" onPress={() => { setActionError(undefined); setRecording(true); }} style={[ui.button, ui.secondary, { paddingHorizontal: space(3) }]}>
+              <Text style={{ fontSize: font.title }}>🎤</Text>
+            </Pressable>
+          ) : null}
           <TextInput
             accessibilityLabel={t.messagePlaceholder}
             placeholder={t.messagePlaceholder}

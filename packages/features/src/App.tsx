@@ -142,7 +142,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   }
   const s = session.data!;
   const selfId = s.workhub?.user.uid ?? account.loginName;
-  const talkFeatures = talkFeaturesOf(s.talkFeatures);
+  const talkFeatures = talkFeaturesOf(s.talkFeatures, { attachmentsAllowed: s.talkAttachmentsAllowed });
 
   const listPane = (() => {
     switch (tab) {

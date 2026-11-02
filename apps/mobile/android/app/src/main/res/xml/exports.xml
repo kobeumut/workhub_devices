@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only the CSV export cache dir is shareable (WorkhubNativeModule.shareFile). -->
+<!-- Shareable: the CSV export cache dir (shareFile) and downloaded Talk files handed to a viewer (TalkFiles.sinkFinish "open"). -->
 <paths>
   <cache-path name="exports" path="exports/" />
+  <cache-path name="downloads" path="downloads/" />
 </paths>

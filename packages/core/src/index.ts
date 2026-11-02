@@ -10,3 +10,4 @@ export * from './webpush';
 export * from './backend';
 export * from './workflows';
 export * from './ai';
+export * from './files';

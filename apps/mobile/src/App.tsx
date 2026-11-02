@@ -5,6 +5,7 @@ import { createDirectBackend, type AccountSummary, type RoutedTarget } from '@wo
 import { WorkhubApp, type PlatformServices } from '@workhub-devices/features';
 import { native, nativeEvents, parseNativeRoute, plainStore, secretStore } from './native';
 import { accountTag, ensurePush, removePush } from './push';
+import { filesSupported, mobileFileHost, mobileFileServices } from './files';
 
 const backend = createDirectBackend({
   secrets: secretStore,
@@ -13,6 +14,7 @@ const backend = createDirectBackend({
   // Plain http only for local development builds (emulator → dev server).
   ...(__DEV__ ? { urlOptions: { allowInsecureHttp: true } } : {}),
   onLogout: (a, client) => removePush(a, client),
+  ...(filesSupported ? { files: mobileFileHost } : {}),
 });
 
 async function tagToAccount(tag: string): Promise<AccountSummary | undefined> {
@@ -29,6 +31,7 @@ export default function App() {
       },
       appVersion: '0.1.0',
       saveFile: (filename, content, mime) => native.shareFile(filename, content, mime),
+      ...mobileFileServices(),
       onAccountsChanged: (accounts) => {
         for (const a of accounts) {
           backend

@@ -28,6 +28,11 @@ import {
   type WorkflowSample, type WorkflowStartInput, type WorkflowSummary,
 } from './workflows';
 import {
+  uploadFile, shareToRoom, downloadFile as downloadToSink, fetchFileBytes, fetchMessage, fileOf, quotaFree, canOpenSafely, bytesToBase64,
+  FILE_HANDLE_RE, FILE_LIMITS, TRANSFER_ID_RE, VOICE_MIME_TYPES,
+  type FileHandle, type FileHost, type SinkMode, type TransferProgress, type UploadResult,
+} from './files';
+import {
   aiApi, aiInputError, proposalActions, isAiActive, AI_ACTIONS, AI_LIMITS, AI_REQUEST_ID_RE,
   type AiAcceptResult, type AiProposal, type AiRequestBase, type AiRequestDetail, type AiRequestInput, type AiRequestSummary, type AiStatus,
 } from './ai';
@@ -51,6 +56,8 @@ export interface SessionInfo {
   talkFeatures: string[];
   /** `spreed.config.conversations.can-create` for this user. */
   talkCanCreate: boolean;
+  /** `spreed.config.attachments.allowed` (and a folder is configured). */
+  talkAttachmentsAllowed: boolean;
   issues: CompatibilityIssue[];
   workhub: WorkhubBootstrap | null;
   /** Notifications Web Push available (`webpush` capability). */
@@ -67,6 +74,14 @@ export interface ChatRequest {
 }
 
 export type TaskUpdate = TaskPatch;
+
+export interface ShareFileOptions {
+  transferId: string;
+  referenceId: string;
+  caption?: string;
+  replyTo?: number;
+  voice?: boolean;
+}
 
 export interface Backend {
   listAccounts(): Promise<AccountSummary[]>;
@@ -105,6 +120,20 @@ export interface Backend {
   setModerator(accountId: AccountId, token: string, attendeeId: number, moderator: boolean): Promise<TalkParticipant[]>;
   leaveRoom(accountId: AccountId, token: string): Promise<void>;
   deleteRoom(accountId: AccountId, token: string): Promise<void>;
+
+  /**
+   * Talk files. Gate: `attachments.allowed` + chat permission on the CURRENT room (voice notes:
+   * `voice-message-sharing` and WAV/MP3 only; caption: `media-caption`). Quota is checked before
+   * the upload; the server re-checks everything. The handle comes from the platform picker /
+   * recorder and is released after a successful share. Progress: `transfer(transferId)`;
+   * cancel: `cancel(transferId)`.
+   */
+  shareFile(accountId: AccountId, token: string, handle: FileHandle, opts: ShareFileOptions): Promise<UploadResult>;
+  /** Fresh message read (`chat-get-context`); refused when the owner hid downloads, `open` only for safe types. */
+  downloadFile(accountId: AccountId, token: string, messageId: number, mode: SinkMode, transferId: string): Promise<'saved' | 'opened' | 'cancelled'>;
+  /** A voice note's bytes (base64, bounded) for in-app playback. */
+  voiceClip(accountId: AccountId, token: string, messageId: number): Promise<{ mime: string; base64: string }>;
+  transfer(transferId: string): Promise<TransferProgress | null>;
 
   notifications(accountId: AccountId): Promise<InboxNotification[]>;
   dismissNotification(accountId: AccountId, id: number): Promise<void>;
@@ -263,6 +292,8 @@ export interface DirectBackendDeps {
   fetch?: FetchLike;
   userAgent?: string;
   urlOptions?: NormalizeOptions;
+  /** Platform file access for Talk attachments; absent → file calls fail closed (`FILES_UNSUPPORTED`). */
+  files?: FileHost;
   /** Platform hook, e.g. web push unregister + local notification cleanup. */
   onLogout?: (account: Account, client: OcsClient) => Promise<boolean>;
 }
@@ -434,17 +465,22 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
   const clientError = (code: string) => new OcsError('client', 422, undefined, undefined, code);
 
   /** Talk capabilities per account, cached briefly (they change only on server upgrades/config). */
-  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean }>();
+  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean; folder: string | null }>();
   const talkFor = async (id: AccountId, need?: keyof TalkFeatures) => {
     const c = await client(id);
     let hit = talkCaps.get(id);
     if (!hit || Date.now() - hit.at > 60_000) {
       const caps = await fetchServerCapabilities(c);
-      hit = { at: Date.now(), features: talkFeaturesOf(caps.talk.features), canCreate: caps.talk.canCreate };
+      hit = {
+        at: Date.now(),
+        features: talkFeaturesOf(caps.talk.features, { attachmentsAllowed: caps.talk.attachments.allowed }),
+        canCreate: caps.talk.canCreate,
+        folder: caps.talk.attachments.folder,
+      };
       talkCaps.set(id, hit);
     }
     if (need && !hit.features[need]) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
-    return { c, f: hit.features, canCreate: hit.canCreate };
+    return { c, f: hit.features, canCreate: hit.canCreate, folder: hit.folder };
   };
   /** Room gate on the CURRENT room (fresh read). */
   const roomFor = async (id: AccountId, token: string, need: keyof RoomActions, feature?: keyof TalkFeatures) => {
@@ -452,6 +488,46 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     const room = await talkRoomApi.get(c, token);
     if (!roomActions(room, f)[need]) throw new OcsError('forbidden', 403, undefined, undefined, `TALK_${need.replace(/[A-Z]/g, (x) => `_${x}`).toUpperCase()}_FORBIDDEN`);
     return { c, f, room };
+  };
+
+  /** Running uploads/downloads: progress for polling + abort for `cancel(transferId)`. */
+  const transfers = new Map<string, { abort: AbortController; progress: TransferProgress; doneAt: number | undefined }>();
+  const startTransfer = (transferId: string) => {
+    if (transfers.get(transferId) && !transfers.get(transferId)!.doneAt) throw new OcsError('conflict', 409, undefined, undefined, 'TRANSFER_RUNNING');
+    for (const [k, v] of transfers) if (v.doneAt && Date.now() - v.doneAt > 60_000) transfers.delete(k);
+    const t = { abort: new AbortController(), progress: { sent: 0, total: 0, phase: 'preparing' } as TransferProgress, doneAt: undefined as number | undefined };
+    transfers.set(transferId, t);
+    return {
+      signal: t.abort.signal,
+      onProgress: (p: TransferProgress) => {
+        t.progress = p;
+      },
+      end: () => {
+        t.doneAt = Date.now();
+      },
+    };
+  };
+  const fileHost = (): FileHost => {
+    if (!deps.files) throw new OcsError('forbidden', 403, undefined, undefined, 'FILES_UNSUPPORTED');
+    return deps.files;
+  };
+  /** Viewer uid for WebDAV paths (may differ from the login name), cached per account. */
+  const uids = new Map<AccountId, string>();
+  const uidFor = async (id: AccountId, c: OcsClient) => {
+    let uid = uids.get(id);
+    if (!uid) {
+      uid = (await quotaFree(c)).uid;
+      uids.set(id, uid);
+    }
+    return uid;
+  };
+  /** Fresh message → its file, with the download gates applied. */
+  const fileFor = async (id: AccountId, token: string, messageId: number) => {
+    const { c } = await talkFor(id, 'context');
+    const file = fileOf(await fetchMessage(c, token, messageId));
+    if (!file || !file.path) throw new OcsError('not_found', 404, undefined, undefined, 'NOT_A_FILE');
+    if (file.hideDownload) throw new OcsError('forbidden', 403, undefined, undefined, 'DOWNLOAD_HIDDEN');
+    return { c, file, uid: await uidFor(id, c) };
   };
 
   const widgetOf = (d: Dashboard, widgetId: number) => {
@@ -495,6 +571,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async cancel(id) {
       flows.get(id)?.abort.abort();
       polls.get(id)?.abort();
+      transfers.get(id)?.abort.abort();
     },
 
     async logout(accountId) {
@@ -528,6 +605,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
         talkVersion: caps.talk.version,
         talkFeatures: [...caps.talk.features],
         talkCanCreate: caps.talk.canCreate,
+        talkAttachmentsAllowed: caps.talk.attachments.allowed,
         issues: checkCompatibility(caps),
         workhub,
         webPush: caps.notifications.push.has('webpush'),
@@ -649,6 +727,63 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       const { c, room } = await roomFor(accountId, token, 'delete');
       if (room.type === ROOM_TYPE.oneToOne || room.type === ROOM_TYPE.formerOneToOne) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_DELETE_FORBIDDEN');
       await talkRoomApi.remove(c, token);
+    },
+
+    async shareFile(accountId, token, handle, opts) {
+      const host = fileHost();
+      const { c, f } = await roomFor(accountId, token, 'chat', 'files');
+      const { folder } = await talkFor(accountId, 'files');
+      if (!folder) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
+      if (opts.voice && !f.voice) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
+      if (opts.caption?.trim() && !f.caption) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
+      if (opts.replyTo && !f.reply) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
+      const st = await host.stat(handle);
+      if (!st) throw new OcsError('not_found', 404, undefined, undefined, 'FILE_GONE');
+      if (opts.voice && (!VOICE_MIME_TYPES.has(st.mime) || st.size > FILE_LIMITS.maxVoice)) throw clientError('INVALID_VOICE_MESSAGE');
+      const tx = startTransfer(opts.transferId);
+      try {
+        // Quota pre-check (the PUT would fail with 507 anyway, but only after sending the bytes).
+        const q = await quotaFree(c);
+        uids.set(accountId, q.uid);
+        if (q.free !== null && st.size > q.free) throw new OcsError('client', 507, undefined, undefined, 'QUOTA_EXCEEDED');
+        const up = await uploadFile(c, host, handle, { uid: q.uid, folder }, { signal: tx.signal, onProgress: tx.onProgress });
+        tx.onProgress({ sent: st.size, total: st.size, phase: 'sharing' });
+        if (tx.signal.aborted) throw new OcsError('aborted');
+        const shareId = await shareToRoom(c, token, up.path, {
+          referenceId: opts.referenceId,
+          ...(opts.caption?.trim() ? { caption: opts.caption } : {}),
+          ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+          ...(opts.voice ? { voice: true } : {}),
+        });
+        tx.onProgress({ sent: st.size, total: st.size, phase: 'done' });
+        await host.release(handle).catch(() => undefined);
+        return { ...up, shareId };
+      } finally {
+        tx.end();
+      }
+    },
+    async downloadFile(accountId, token, messageId, mode, transferId) {
+      const host = fileHost();
+      const { c, file, uid } = await fileFor(accountId, token, messageId);
+      if (mode === 'open' && !canOpenSafely(file.name)) throw new OcsError('forbidden', 403, undefined, undefined, 'OPEN_NOT_ALLOWED');
+      const sink = await host.openSink(file.name, file.mimetype, file.size, mode);
+      if (!sink) return 'cancelled';
+      const tx = startTransfer(transferId);
+      try {
+        return await downloadToSink(c, uid, file, sink, { signal: tx.signal, onProgress: tx.onProgress });
+      } finally {
+        tx.end();
+      }
+    },
+    async voiceClip(accountId, token, messageId) {
+      const { c, file, uid } = await fileFor(accountId, token, messageId);
+      if (!file.voice && !file.mimetype.startsWith('audio/')) throw clientError('NOT_AUDIO');
+      const bytes = await fetchFileBytes(c, uid, file, FILE_LIMITS.maxPlayback);
+      return { mime: file.mimetype, base64: bytesToBase64(bytes) };
+    },
+    async transfer(transferId) {
+      const t = transfers.get(transferId);
+      return t ? { ...t.progress } : null;
     },
 
     async notifications(accountId) {
@@ -1044,6 +1179,7 @@ export const BACKEND_METHODS = [
   'rooms', 'chat', 'send', 'markRead', 'createOneToOne',
   'talkRoom', 'editMessage', 'deleteMessage', 'react', 'reactions', 'mentions', 'searchMessages', 'createRoom', 'updateRoom',
   'participants', 'inviteCandidates', 'addParticipant', 'removeParticipant', 'setModerator', 'leaveRoom', 'deleteRoom',
+  'shareFile', 'downloadFile', 'voiceClip', 'transfer',
   'notifications', 'dismissNotification',
   'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
   'addSubtask', 'updateSubtask', 'deleteSubtask', 'addDependency', 'removeDependency',
@@ -1346,6 +1482,13 @@ export const isValidRoomPatch = (v: unknown): v is RoomPatch =>
   isObj(v) && Object.keys(v as object).length > 0
   && fieldsOk(v as Record<string, unknown>, { name: isTitle(TALK_LIMITS.roomName), description: isStr(TALK_LIMITS.description) }, []);
 
+const isTransferId = (v: unknown) => typeof v === 'string' && TRANSFER_ID_RE.test(v);
+const isReferenceId = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
+export const isValidShareFileOptions = (v: unknown): v is ShareFileOptions =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, {
+    transferId: isTransferId, referenceId: isReferenceId, caption: isStr(FILE_LIMITS.caption), replyTo: isInt, voice: (x) => typeof x === 'boolean',
+  }, ['transferId', 'referenceId']);
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -1375,6 +1518,10 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   setModerator: (a) => a.length === 4 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]) && typeof a[3] === 'boolean',
   leaveRoom: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
   deleteRoom: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
+  shareFile: (a) => a.length === 4 && isAccountId(a[0]) && isToken(a[1]) && typeof a[2] === 'string' && FILE_HANDLE_RE.test(a[2]) && isValidShareFileOptions(a[3]),
+  downloadFile: (a) => a.length === 5 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]) && (a[3] === 'save' || a[3] === 'open') && isTransferId(a[4]),
+  voiceClip: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]),
+  transfer: (a) => a.length === 1 && isTransferId(a[0]),
   notifications: (a) => a.length === 1 && isAccountId(a[0]),
   dismissNotification: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   projects: (a) => a.length === 1 && isAccountId(a[0]),

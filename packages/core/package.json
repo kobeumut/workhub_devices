@@ -18,7 +18,8 @@
     "smoke:dashboards": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.dashboards.smoke.js",
     "smoke:workflows": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.workflows.smoke.js",
     "smoke:ai": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.ai.smoke.js",
-    "smoke:talk": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.talk.smoke.js"
+    "smoke:talk": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.talk.smoke.js",
+    "smoke:files": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.files.smoke.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
