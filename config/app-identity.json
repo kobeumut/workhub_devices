@@ -1,0 +1,24 @@
+{
+  "$comment": "Single, human-approved source for app identity (GENE-48, approved 2026-11-02). Build configs must read from here.",
+  "displayName": "Workhub",
+  "bundleId": "com.next.workhub",
+  "android": {
+    "applicationId": "com.next.workhub",
+    "notificationChannels": ["chat", "workhub", "other"]
+  },
+  "ios": {
+    "bundleId": "com.next.workhub",
+    "notificationServiceExtensionBundleId": "com.next.workhub.NotificationService",
+    "appGroup": "group.com.next.workhub",
+    "keychainAccessGroup": "com.next.workhub.shared"
+  },
+  "desktop": {
+    "appId": "com.next.workhub.desktop"
+  },
+  "push": {
+    "transport": "webpush-via-fcm-relay",
+    "webPushAppTypes": "talk,workhub",
+    "relayFunction": "webpush",
+    "relayRegion": "europe-west1"
+  }
+}

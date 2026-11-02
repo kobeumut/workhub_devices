@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "rootDir": "../..",
+    "outDir": ".e2e-dist",
+    "noEmit": false,
+    "esModuleInterop": true
+  },
+  "include": [
+    "test/e2e.live.ts"
+  ]
+}

@@ -1,6 +1,6 @@
 # Faz 0 — sürüm ve birleşik push karar kapısı: durum
 
-Tarih: 2026-11-02 · Görev: GENE-48 · Durum: **Sunucu tarafı doğrulandı; push teslimatı bloke (marka/APNs/FCM/relay/cihaz bekleniyor)**
+Tarih: 2026-11-02 · Görev: GENE-48 · Durum: **Sunucu + taşıma kararı tamam (ADR 0001); gerçek FCM/APNs ve cihaz testi bekleniyor**
 
 Faz 0 testleri gerçek sunucu ve cihaz olmadan yapılamaz. Bu çalıştırmada aşağıdakiler **yoktu**, bu nedenle hiçbir Faz 0 maddesi "geçti" sayılmaz:
 
@@ -8,9 +8,9 @@ Faz 0 testleri gerçek sunucu ve cihaz olmadan yapılamaz. Bu çalıştırmada a
 |---|---|---|
 | Test Nextcloud + sürümler | **çözüldü**: yerel Docker geliştirme sunucusu (`docs/dev-server.md`) | Aşağıdaki matris |
 | 2 normal + 1 kısıtlı test kullanıcısı | **çözüldü**: `alice`, `bob`, `carol` (kısıtlı) | Smoke testleri |
-| Marka bundle/app ID (iOS + Android) | verilmedi | APNs/FCM yetkisi, NSE App Group, deep-link şeması |
-| Apple Developer/APNs anahtarı sahibi, Firebase/FCM projesi sahibi | verilmedi | Native push teslimatı; secret'lar repo/issue dışında, korumalı ortamda |
-| Push proxy/relay barındırma kararı ve sahibi | verilmedi | Resmî Nextcloud proxy'si markalı uygulamaya teslim etmez |
+| Marka bundle/app ID | **çözüldü**: `com.next.workhub` (`config/app-identity.json`) | APNs/FCM, NSE App Group |
+| Relay barındırma | **çözüldü**: Firebase Cloud Function (`services/push-relay`), ayrı sunucu yok | ADR 0001 |
+| Firebase projesi + APNs `.p8` anahtarı | **sonra eklenecek** (README "Push bildirimleri: Firebase kurulumu") | Gerçek teslimat |
 | Fiziksel iOS ve Android cihaz | bu makinede bağlı değil (`adb devices` boş; macOS/Xcode yok) | Faz 0 çıkış ölçütü yalnız fiziksel cihazla kabul edilir |
 | Windows ve macOS test makineleri | yok (yalnız Linux host) | Desktop bildirim/reply ölçümü, imzalı build |
 
@@ -42,14 +42,25 @@ Bulgu: task DTO `url` alanı bildirim linkinden farklı biçimde: `/apps/workhub
 - Web Push v2 aynı sürümde mevcut ve `appTypes` filtresi `talk`/`all` destekliyor (`Push.php:207-215`). Ancak admin ayarı `webpush_enabled` varsayılan kapalı: `occ config:app:set notifications webpush_enabled --value=true --type=boolean`. Bu ayarı henüz açmadım; açılması altyapı kararıdır.
 - Dolayısıyla A yolu (Web Push `appTypes=talk,workhub`) bu sunucuda **uygulanabilir**. Kalan iş istemci tarafında: marka relay'i (Web Push endpoint → APNs/FCM), iOS NSE ve Android worker'da RFC8291 decrypt.
 
-## Kararı bekleyen sorular (ürün sahibi)
+## Web Push → relay uçtan uca (2026-11-02)
+
+`webpush_enabled` açıldı. Gerçek Nextcloud 35.0.2 / Notifications 8.0.1 → yerel relay (`services/push-relay`, aynı kod Firebase'de çalışacak) → taklit FCM → `core` ile cihaz tarafı RFC 8291 decrypt:
+
+- `appTypes=talk,workhub` kaydı → aktivasyon push'u çözüldü → aktive edildi.
+- Talk mesajı **ve** normal Workhub ataması **aynı aboneliğe** geldi; route doğru (`room` / `task`).
+- Unassign → `nid` topic'li delete push'u geldi.
+- 6 push'un hepsine relay 201 döndü. Talk şifreli gövdesi base64url 3896 B; FCM/APNs 4 KB sınırına sığıyor.
+
+Bulgu: Nextcloud'un web-push kütüphanesi VAPID `aud` değerini port olmadan üretiyor (`scheme://host`). Relay buna göre düzeltildi ve test eklendi; production'da 443 portunda fark etmez.
+
+## Kararı bekleyen sorular (ürün sahibi) — 2026-11-02 itibarıyla yanıtlandı
 
 1. Test sunucusu: URL ve sürümler. Workhub 0.5.0 NC34–35 destekliyor; sunucu NC36 ise Workhub uyumu ayrı karar.
 2. Push transport tercihi. Kod incelemesine göre iki aday var:
    - **A — Web Push `appTypes=talk,workhub`** (hedef Notifications sürümü destekliyorsa). Tek abonelik iki aileyi kapsar; ama markaya ait Web-Push→APNs/FCM relay ve native RFC8291 decrypt (iOS NSE / Android worker) gerekir.
    - **B — Native push v2 + marka proxy**. Sunucu UA sınıflandırması nedeniyle tek kayıt Talk + Workhub'ı birlikte garanti etmez; Talk/Notifications tarafında değişiklik/onay gerekebilir.
-   Önerimiz önce hedef sunucuda A'yı doğrulamak. Bu yol için sunucu tarafında Workhub değişikliği gerekmez; relay barındırma onayı gerekir.
-3. Relay'i kim barındıracak ve işletecek? Minimum retention, payload yalnız şifreli kalır.
+   **Karar: A**, Firebase içinde relay ile (ADR 0001).
+3. Relay barındırma: **Firebase Cloud Functions**; durumsuz, hiçbir şey saklamaz.
 
 ## Bu arada yapılanlar (push kabulü yerine geçmez)
 

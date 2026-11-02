@@ -6,3 +6,4 @@ export * from './capabilities';
 export * from './talk';
 export * from './routing';
 export * from './workhub';
+export * from './webpush';

@@ -9,6 +9,7 @@ Bu makinedeki Nextcloud AIO master container'ı (`:8080`) hiç yapılandırılma
 | Adres | `http://192.168.0.64:18081` (trusted: `localhost`, `192.168.0.64`, `grisoft-server.local`, Android emulator `10.0.2.2`, hepsi `:18081`) |
 | Uygulamalar | Talk (spreed) 25.0.6, Notifications 8.0.1, Deck 1.19.1, Tasks 0.18.1, Workhub 0.5.0 (backend `native`) |
 | Test kullanıcıları | `admin`, `alice` + `bob` (grup `staff`), `carol` (kısıtlı: `module_projects_groups=["staff"]`) |
+| Web Push | `webpush_enabled=true` (onaylı). Yalnız dev: `allow_local_remote_servers=true` ve yerel relay'in self-signed sertifikası `occ security:certificates:import` ile güvenilir |
 | Secret'lar | Repo dışında, yerel `0600` dosyada; issue/Git/log'a yazılmaz |
 
 Sunucu HTTPS değil (yerel geliştirme). Uygulama `allowInsecureHttp` seçeneği yalnız geliştirme derlemesinde açılır; üretimde HTTPS zorunludur.
@@ -42,3 +43,19 @@ npm run smoke:live -w @workhub-devices/core
 ```
 
 `WH_A_REVOKE_PASS` test sırasında revoke edilir; her koşu için yenisi gerekir.
+
+## Push relay uçtan uca testi (dev)
+
+Host güvenlik duvarı Docker ağından host'a gelen bağlantıları düşürdüğü için relay, Nextcloud ile aynı Docker ağında geçici bir `node:22-alpine` container'ında (`relay-e2e`) çalıştırılır:
+
+```bash
+# bir kez: relay-e2e için sertifika (SAN DNS:relay-e2e), Nextcloud'a import, trusted_domains += nextcloud
+npx tsc -p services/push-relay/tsconfig.e2e.json && echo '{"type":"commonjs"}' > services/push-relay/.e2e-dist/package.json
+docker run --rm --name relay-e2e --network workhub-dev_default --network-alias relay-e2e \
+  --env-file <secrets>/e2e.env -e RELAY_BIND=relay-e2e:8789 \
+  -e RELAY_CERT=/secrets/relay/cert.pem -e RELAY_KEY=/secrets/relay/key.pem \
+  -v $PWD:/repo:ro -v <secrets>:/secrets:ro -w /repo/services/push-relay \
+  node:22-alpine node .e2e-dist/services/push-relay/test/e2e.live.js
+```
+
+`e2e.env`, `smoke.env` ile aynıdır, yalnız `WH_SERVER=http://nextcloud`.

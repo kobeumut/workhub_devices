@@ -20,7 +20,7 @@ Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış o
 
 | Faz | Durum | Kanıt |
 |---|---|---|
-| 0 — sürüm/push kapısı | Sunucu tarafı doğrulandı (NC 35.0.2 / Talk 25.0.6 / Notifications 8.0.1 / Workhub 0.5.0; canlı smoke 14/14). Push teslimatı **bloke**: bundle ID, APNs/FCM, relay sahibi, fiziksel cihaz, `webpush_enabled` onayı | `docs/phase0-status.md`, `docs/dev-server.md` |
+| 0 — sürüm/push kapısı | Sunucu doğrulandı (canlı smoke 14/14). Taşıma kararı: Web Push `talk,workhub` → Firebase relay (ADR 0001); bundle `com.next.workhub`; Web Push açık. Gerçek Nextcloud → relay → decrypt e2e geçti. **Kalan:** Firebase projesi + APNs anahtarı, native push kodu ve fiziksel cihaz kabulü | `docs/phase0-status.md`, `docs/adr/0001-push-transport.md`, `services/push-relay` |
 | 1 — temel/auth | Kısmi: `packages/core` (URL doğrulama, OCS istemcisi/hata normalizasyonu, Login Flow v2, hesap izolasyonu, logout, capability gate) + CI. RN/Electron kabukları, OS secret store, beş OS build'i yok | `npm run check` (35 test), `npm run smoke:live` |
 | 2 — Talk | Kısmi: core oda/sohbet/gönderim/merge/rich-render mantığı; UI ve gerçek sunucu testi yok | `packages/core/src/talk.ts` |
 | 3 — bildirim | Kısmi: saf dispatcher, push payload yorumlama, deep link, gizli önizleme; native push/quick reply yok (Faz 0'a bağlı) | `packages/core/src/routing.ts` |
@@ -80,9 +80,9 @@ Gereken dış girdiler: test sunucusu URL'si/kurulu sürümleri, iki normal kull
 - [ ] Mobil minimal native push PoC kur; branding'e uygun delivery provider ve secret ownership belirle.
 - [ ] Hem normal hem urgent atama ve Talk mesajını **aynı hesapta**, başka resmî Talk client'ı yokken/varken ve stale kayıt varken test et. UA sınıflandırma/native token hash tekilliğini doğrula.
 - [ ] Hedefin Web Push API/activation/appTypes desteğini kontrol et; `talk,workhub` aboneliğinin native iOS/Android teslimat + crypto/NSE fizibilitesini kanıtla. Web Push varlığını RN native delivery kanıtı sanma.
-- [ ] Hedef için tek transport veya gerekçeli sınırlı transport kombinasyonunu ADR'ye yaz: mobile provider, server registration, relay ihtiyacı, token identities, routing, crypto, rotation, maliyet ve işletim sahibi.
-- [ ] İki push türünün zorunlu olarak upstream Talk/Notifications ayarı/değişikliği gerektirdiği kanıtlanırsa açık onay iste; Workhub koduna dokunma. İnternetten rastgele proxy/UA workaround ekleme.
-- [ ] Karar sonucunu ve hâlâ eksik credential/altyapı/OS ortamlarını uygulama issue'sunda blocker olarak yaz.
+- [x] Hedef için tek transport veya gerekçeli sınırlı transport kombinasyonunu ADR'ye yaz: mobile provider, server registration, relay ihtiyacı, token identities, routing, crypto, rotation, maliyet ve işletim sahibi.
+- [x] İki push türünün zorunlu olarak upstream Talk/Notifications ayarı/değişikliği gerektirdiği kanıtlanırsa açık onay iste; Workhub koduna dokunma. İnternetten rastgele proxy/UA workaround ekleme.
+- [x] Karar sonucunu ve hâlâ eksik credential/altyapı/OS ortamlarını uygulama issue'sunda blocker olarak yaz.
 
 **Çıkış ölçütü:** en az bir fiziksel iOS ve Android'de JS süreci çalışmıyorken Talk mesajı ve normal Workhub ataması ayrı ayrı teslim edilir, doğru hesaba açılır; resmî Talk ile birlikte kayıtlıyken kayıp görülmez. Doğrulanamıyorsa Faz 0 geçmedi; foreground bildirim inbox'ı arka plan push yerine gösterilemez. Fiziksel cihaz bağlı değilse mevcut sim/emulator geliştirme için kullanılabilir ama bu kabulü karşılamaz; test için yeni simulator/emulator yaratma.
 
