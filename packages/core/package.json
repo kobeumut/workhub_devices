@@ -13,7 +13,8 @@
     "smoke:time": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.time.smoke.js",
     "smoke:projects": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.projects.smoke.js",
     "smoke:requests": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.requests.smoke.js",
-    "smoke:goals": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.goals.smoke.js"
+    "smoke:goals": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.goals.smoke.js",
+    "smoke:views": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.views.smoke.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

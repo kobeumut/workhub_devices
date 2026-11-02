@@ -9,6 +9,8 @@ import {
   openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, goalsApi, cardSetWithout, REPORT_STATES, GOAL_MAX_SCALE,
   SHARE_OBJECT_TYPES, SHARE_ROLES,
   type CsvScope, type RequestDecision, type RequestEvent, type RequestPage, type RequestReport, type RequestReportFilters, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
+  projectViewsApi, ACTIVITY_TYPES, WORKLOAD_MAX_DAYS,
+  type ActivityFilter, type ActivityPage, type GanttPayload, type WorkloadMatrix, type WorkloadQuery,
   type CardGoal, type GoalCheckin, type GoalCheckinInput, type GoalCheckinResult, type GoalDetail, type GoalInput, type GoalListFilter, type GoalPatch, type GoalTarget, type GoalTargetInput, type GoalTargetPatch,
   type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
@@ -137,6 +139,13 @@ export interface Backend {
   cardLinkGoal(accountId: AccountId, cardId: number, goalId: number): Promise<GoalDetail | null>;
   /** Removes the card from that task target using the target's current version. */
   cardUnlinkGoal(accountId: AccountId, cardId: number, goalId: number, targetId: number): Promise<GoalTarget | null>;
+
+  /** Project views (gate: `modules.projects`, fail closed; the server checks board read access). */
+  projectGantt(accountId: AccountId, boardId: number): Promise<GanttPayload>;
+  /** One page, newest first; pass the previous page's `nextCursor` for older events. */
+  projectActivity(accountId: AccountId, boardId: number, filter: ActivityFilter, cursor: string | null): Promise<ActivityPage>;
+  /** Member × day matrix over the readable boards (optionally restricted). */
+  workload(accountId: AccountId, query: WorkloadQuery): Promise<WorkloadMatrix>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -253,6 +262,14 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     if (need === 'edit' && !goal.canEdit) throw new OcsError('forbidden', 403, undefined, undefined, 'GOAL_EDIT_REQUIRED');
     if (need === 'edit' && !allowArchived && goal.state !== 'active') throw new OcsError('conflict', 409, undefined, undefined, 'GOAL_ARCHIVED');
     return { c, goal };
+  };
+
+  /** Projects gate (fail closed): the module must be on for this user. */
+  const projectsClient = async (id: AccountId): Promise<OcsClient> => {
+    const c = await client(id);
+    const b = await bootstrap(id, c);
+    if (!b.modules.projects) throw new OcsError('forbidden', 403, undefined, undefined, 'PROJECTS_DISABLED');
+    return c;
   };
 
   return {
@@ -593,6 +610,16 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       if (!target || !(target.cards ?? []).some((x) => x.id === cardId)) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
       return goalsApi.setCards(c, goalId, targetId, target.version, cardSetWithout(target, cardId));
     },
+
+    async projectGantt(accountId, boardId) {
+      return projectViewsApi.gantt(await projectsClient(accountId), boardId);
+    },
+    async projectActivity(accountId, boardId, filter, cursor) {
+      return projectViewsApi.activity(await projectsClient(accountId), boardId, filter, cursor);
+    },
+    async workload(accountId, query) {
+      return projectViewsApi.workload(await projectsClient(accountId), query);
+    },
   };
 }
 
@@ -611,6 +638,7 @@ export const BACKEND_METHODS = [
   'requests', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert', 'requestReport',
   'goals', 'goalDetail', 'goalCreate', 'goalUpdate', 'goalDelete', 'goalTransfer', 'goalTargetAdd', 'goalTargetUpdate', 'goalTargetDelete',
   'goalCheckin', 'goalCheckins', 'goalSetCards', 'cardGoals', 'cardLinkGoal', 'cardUnlinkGoal',
+  'projectGantt', 'projectActivity', 'workload',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -752,6 +780,30 @@ export const isValidCheckin = (v: unknown): v is GoalCheckinInput => {
 };
 const isCardIds = (v: unknown) => Array.isArray(v) && v.length <= 500 && v.every(isInt) && new Set(v).size === v.length;
 
+// ---- Project views wire validation ----
+/** A real calendar day (the server's date parser silently rolls 2026-13-01 over). */
+const isCalendarDay = (v: unknown) => {
+  if (!isDay(v)) return false;
+  const t = Date.parse(`${v as string}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().startsWith(v as string);
+};
+const isCursor = (v: unknown) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= 200 && /^[A-Za-z0-9+/=]+$/.test(v));
+export const isValidActivityFilter = (v: unknown): v is ActivityFilter => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (o.from !== undefined && o.to !== undefined && !isDayRange(o.from, o.to, 3660)) return false;
+  return fieldsOk(o, { type: (x) => (ACTIVITY_TYPES as readonly unknown[]).includes(x), actor: isUid, from: isCalendarDay, to: isCalendarDay, q: isStr(200) }, ['type']);
+};
+export const isValidWorkloadQuery = (v: unknown): v is WorkloadQuery => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return fieldsOk(o, {
+    from: isCalendarDay, to: isCalendarDay,
+    boardIds: (x) => Array.isArray(x) && x.length <= 200 && x.every(isInt) && new Set(x).size === x.length,
+    members: (x) => Array.isArray(x) && x.length <= 200 && x.every((u) => isUid(u) && !(u as string).includes(',')) && new Set(x).size === x.length,
+  }, ['from', 'to']) && isDayRange(o.from, o.to, WORKLOAD_MAX_DAYS);
+};
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -827,6 +879,9 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   cardGoals: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   cardLinkGoal: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
   cardUnlinkGoal: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isInt(a[3]),
+  projectGantt: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  projectActivity: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isValidActivityFilter(a[2]) && isCursor(a[3]),
+  workload: (a) => a.length === 2 && isAccountId(a[0]) && isValidWorkloadQuery(a[1]),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */

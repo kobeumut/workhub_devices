@@ -155,6 +155,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             version={tasksVersion}
             {...(detail?.kind === 'project' ? { selectedProject: detail.id } : {})}
             onOpenProject={(p) => setDetail({ kind: 'project', id: p.id, title: p.title })}
+            onOpenTask={(cardId) => setDetail({ kind: 'task', cardId })}
           />
         );
       case 'inbox':

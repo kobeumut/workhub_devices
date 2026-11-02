@@ -139,6 +139,46 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       }
       return 'counter not visible';
     });
+    await step('project views: Gantt (edited task as milestone) → activity stream (title change, paging)', async () => {
+      if (!(await click('açık', false))) throw new Error('project row');
+      await waitText('To Do', 20_000);
+      if (!(await click('Gantt'))) throw new Error('gantt tab');
+      await waitText('Zaman çizelgesi', 20_000);
+      await waitText(editedTitle, 15_000);
+      const row = await js<string | null>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').startsWith(${JSON.stringify(editedTitle)})); return el ? el.getAttribute('aria-label') : null; })()`);
+      if (!row || !row.includes('Kilometre taşı')) throw new Error(`gantt row label: ${row}`);
+      await shot('19-gantt');
+      if (!(await click('Etkinlik'))) throw new Error('activity tab');
+      await waitText('başlığı değiştirdi', 20_000);
+      if (!(await click('Filtre: Alt işler'))) throw new Error('subtasks filter');
+      await waitText('alt işi tamamladı', 15_000);
+      await shot('20-activity');
+      if (!(await click('Filtre: Tümü'))) throw new Error('all filter');
+      await waitText('başlığı değiştirdi', 15_000);
+      const paged = (await click('Daha eski')) ? 'older page loaded' : 'single page';
+      await sleep(1500);
+      if (!(await click('Pano'))) throw new Error('board tab');
+      return `gantt label: "${row.slice(0, 80)}…"; activity ${paged}`;
+    });
+    await step('workload matrix: person × day table with spoken cells; web links gone from "Diğer"', async () => {
+      if (!(await click('İş yükü'))) throw new Error('workload tab');
+      await waitText('Kişi', 20_000);
+      const t = await js<{ headers: number; rows: number; cell: string | null }>(`(() => { const t = document.querySelector('[role=table]'); const c = t && [...t.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').includes('planlanan')); return { headers: t ? t.querySelectorAll('[role=columnheader]').length : 0, rows: t ? t.querySelectorAll('[role=row]').length : 0, cell: c ? c.getAttribute('aria-label') : null }; })()`);
+      if (t.headers !== 9 || t.rows < 2 || !t.cell) throw new Error(`workload table ${JSON.stringify(t)}`);
+      if (!(await click('2 hafta'))) throw new Error('span chip');
+      await sleep(1500);
+      const wide = await js<number>(`document.querySelector('[role=table]')?.querySelectorAll('[role=columnheader]').length ?? 0`);
+      if (wide !== 16) throw new Error(`2-week headers ${wide}`);
+      await click(t.cell);
+      await sleep(800);
+      await shot('21-workload');
+      if (!(await click('Diğer'))) throw new Error('more tab');
+      await sleep(800);
+      const links = await js<boolean>(`document.body.innerText.includes('İş yükü ↗') || document.body.innerText.includes('Gantt ve etkinlik')`);
+      if (links) throw new Error('web fallback links still listed');
+      await click('Projeler');
+      return `${t.headers} columns × ${t.rows} rows; cell "${t.cell.slice(0, 90)}…"`;
+    });
     await step('time module: start → stop timer', async () => {
       await click('İşler');
       await sleep(500);
