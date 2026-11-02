@@ -87,6 +87,9 @@ const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platf
     WORKHUB_SMOKE_SERVER: process.env.WH_SERVER,
     WORKHUB_SMOKE_ROOM: process.env.WH_SMOKE_ROOM ?? '',
     WORKHUB_SMOKE_MEMBER: process.env.WH_SMOKE_MEMBER ?? 'Bob',
+    // Talk step: the second participant acts over REST while the UI is open (never logged).
+    WORKHUB_SMOKE_B_USER: process.env.WH_B_USER ?? '',
+    WORKHUB_SMOKE_B_PASS: process.env.WH_B_PASS ?? '',
     WORKHUB_SMOKE_GROUP: process.env.WH_SMOKE_GROUP ?? 'staff',
     WORKHUB_SMOKE_GOAL: goal?.id ? goalTitle : '',
     WORKHUB_SMOKE_SUBJECT: subjectName,

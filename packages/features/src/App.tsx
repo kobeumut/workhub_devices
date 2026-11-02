@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import type { AccountId, AccountSummary, AppRoute, Backend, RoutedTarget, SessionInfo } from '@workhub-devices/core';
+import { talkFeaturesOf, type AccountId, type AccountSummary, type AppRoute, type Backend, type RoutedTarget, type SessionInfo } from '@workhub-devices/core';
 import { ServicesProvider, useAsync, useServices, type PlatformServices } from './services';
 import { LoginScreen } from './LoginScreen';
 import { ChatView, RoomList } from './talk';
@@ -98,6 +98,8 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   const [detail, setDetail] = useState<Detail>(null);
   const [tasksVersion, setTasksVersion] = useState(0);
   const bumpTasks = useCallback(() => setTasksVersion((v) => v + 1), []);
+  const [roomsVersion, setRoomsVersion] = useState(0);
+  const bumpRooms = useCallback(() => setRoomsVersion((v) => v + 1), []);
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
 
@@ -140,11 +142,21 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   }
   const s = session.data!;
   const selfId = s.workhub?.user.uid ?? account.loginName;
+  const talkFeatures = talkFeaturesOf(s.talkFeatures);
 
   const listPane = (() => {
     switch (tab) {
       case 'chats':
-        return <RoomList accountId={account.id} {...(detail?.kind === 'room' ? { selected: detail.token } : {})} onOpen={(r) => setDetail({ kind: 'room', token: r.token, displayName: r.displayName })} />;
+        return (
+          <RoomList
+            accountId={account.id}
+            features={talkFeatures}
+            canCreate={s.talkCanCreate}
+            version={roomsVersion}
+            {...(detail?.kind === 'room' ? { selected: detail.token } : {})}
+            onOpen={(r) => setDetail({ kind: 'room', token: r.token, displayName: r.displayName })}
+          />
+        );
       case 'tasks':
         if (!s.workhub) return <Empty text={t.workhubMissing} />;
         return (
@@ -168,7 +180,19 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   const back = wide ? undefined : () => setDetail(detail?.kind === 'task' && detail.from ? { kind: 'project', ...detail.from } : null);
   const detailPane =
     detail?.kind === 'room' ? (
-      <ChatView key={detail.token} accountId={account.id} room={{ token: detail.token, displayName: detail.displayName || 'Sohbet' }} selfId={selfId} {...(back ? { onBack: back } : {})} />
+      <ChatView
+        key={detail.token}
+        accountId={account.id}
+        room={{ token: detail.token, displayName: detail.displayName || 'Sohbet' }}
+        selfId={selfId}
+        features={talkFeatures}
+        onRoomChanged={bumpRooms}
+        onRoomGone={() => {
+          setDetail(null);
+          bumpRooms();
+        }}
+        {...(back ? { onBack: back } : {})}
+      />
     ) : detail?.kind === 'project' ? (
       <BoardScreen key={detail.id} accountId={account.id} project={detail} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'task' ? (

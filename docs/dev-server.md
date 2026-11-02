@@ -59,6 +59,8 @@ AI: `npm run smoke:ai -w @workhub-devices/core` (aynı `WH_*`; `ai` modülü `st
 
 Yönetim (admin) yazma uçları parola onayı ister: yönetici **uygulama parolasıyla** 403 döner; dev hazırlığında yönetici asıl parolasıyla (repo dışı secret dosyası) çağrıldı.
 
+Talk (GENE-57): `npm run smoke:talk -w @workhub-devices/core` (aynı `WH_*`; A grup sohbeti oluşturur, B ve C eklenir/çıkarılır, düzenleme/silme/tepki B'nin feed'inde doğrulanır; oluşturulan sohbetler sonunda silinir, mesaj gövdeleri yazdırılmaz). Masaüstü smoke `WH_B_*` verilirse Talk adımlarında B'yi REST ile oynatır.
+
 Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
 ## Push relay uçtan uca testi (dev)

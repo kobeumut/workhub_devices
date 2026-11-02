@@ -14,6 +14,15 @@ export interface TalkRoom {
   lastActivity: number;
   readOnly: number;
   lastMessage?: TalkMessage | Record<string, never>;
+  /** v4 fields used for capability/role gates (absent = fail closed). */
+  description?: string;
+  participantType?: number;
+  permissions?: number;
+  attendeeId?: number;
+  actorType?: string;
+  actorId?: string;
+  canDeleteConversation?: boolean;
+  canLeaveConversation?: boolean;
 }
 
 export interface RichObject {
@@ -35,7 +44,15 @@ export interface TalkMessage {
   systemMessage: string;
   messageType: string;
   referenceId?: string;
-  parent?: TalkMessage;
+  /** Full parent, or `{ id, deleted: true }` when the quoted message was deleted. */
+  parent?: TalkMessage | { id: number; deleted: true };
+  isReplyable?: boolean;
+  /** emoji → count; the server sends `[]` / `{}` when empty. */
+  reactions?: Record<string, number> | [];
+  /** The viewer's own reactions (only present when they reacted). */
+  reactionsSelf?: string[];
+  lastEditTimestamp?: number;
+  lastEditActorDisplayName?: string;
 }
 
 /** Room tokens are short alphanumerics; validate before they go into a URL path (trust boundary). */
@@ -164,6 +181,7 @@ export function mergeTimeline(items: readonly ChatItem[], incoming: readonly Tal
     else pending.push(it);
   }
   for (const m of incoming) byId.set(m.id, m);
+  applyMessageUpdates(byId, incoming);
   const confirmedRefs = new Set<string>();
   for (const m of byId.values()) if (m.referenceId) confirmedRefs.add(m.referenceId);
   const server: ChatItem[] = [...byId.values()].sort((a, b) => a.id - b.id).map((message) => ({ kind: 'server', message }));
@@ -246,4 +264,404 @@ export function renderMessageSegments(message: string, parameters: TalkMessage['
 export function reconnectDelay(attempt: number, random: () => number = Math.random): number {
   const base = Math.min(30_000, 1_000 * 2 ** Math.max(0, attempt));
   return Math.round(base / 2 + random() * (base / 2));
+}
+
+// ---- Edits, deletions and reactions arriving through the chat feed -----------
+
+/**
+ * System messages that only carry an update of their `parent` (Talk docs: "should not be shown").
+ * The parent in these messages is re-read by the server at fetch time, so it is the current state.
+ */
+export const UPDATE_SYSTEM_MESSAGES: ReadonlySet<string> = new Set([
+  'message_edited', 'message_deleted', 'reaction', 'reaction_deleted', 'reaction_revoked',
+]);
+
+/** Hidden from the timeline: pure update carriers (the change shows on the message itself). */
+export const isHiddenSystemMessage = (m: TalkMessage) => UPDATE_SYSTEM_MESSAGES.has(m.systemMessage) || m.systemMessage === 'poll_voted';
+
+const isFullMessage = (p: TalkMessage['parent']): p is TalkMessage => !!p && typeof p === 'object' && 'message' in p && typeof p.id === 'number';
+
+/** Replace the edited/deleted/reacted message (and quotes of it) with the parent snapshot. */
+function applyMessageUpdates(byId: Map<number, TalkMessage>, incoming: readonly TalkMessage[]) {
+  const updates = [...incoming].filter((m) => UPDATE_SYSTEM_MESSAGES.has(m.systemMessage) && isFullMessage(m.parent)).sort((a, b) => a.id - b.id);
+  for (const u of updates) {
+    const fresh = u.parent as TalkMessage;
+    const old = byId.get(fresh.id);
+    if (old) {
+      // `reactionsSelf` is only sent when the viewer reacted; absence means "none".
+      byId.set(fresh.id, { ...old, ...fresh, reactionsSelf: fresh.reactionsSelf ?? [] });
+    }
+    for (const [id, m] of byId) {
+      if (m.parent && m.parent.id === fresh.id && isFullMessage(m.parent)) {
+        byId.set(id, { ...m, parent: fresh.messageType === 'comment_deleted' ? { id: fresh.id, deleted: true } : { ...m.parent, ...fresh } });
+      }
+    }
+  }
+}
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  self: boolean;
+}
+
+export function reactionSummary(m: TalkMessage): ReactionSummary[] {
+  const map = m.reactions && !Array.isArray(m.reactions) ? m.reactions : {};
+  const self = new Set(m.reactionsSelf ?? []);
+  return Object.entries(map)
+    .filter(([, n]) => typeof n === 'number' && n > 0)
+    .map(([emoji, count]) => ({ emoji, count, self: self.has(emoji) }));
+}
+
+// ---- Capability + role rules (UI hides, Backend re-checks, server decides) ----
+
+export interface TalkFeatures {
+  reply: boolean;
+  edit: boolean;
+  delete: boolean;
+  /** Without it, deletion is limited to 6 hours. */
+  deleteUnlimited: boolean;
+  reactions: boolean;
+  /** Talk ≥ NC34: reacting has its own permission bit (256) instead of the chat bit. */
+  reactPermission: boolean;
+  mentions: boolean;
+  /** Unified search provider `talk-message` (with `conversation` filter). */
+  search: boolean;
+  description: boolean;
+}
+
+export function talkFeaturesOf(features: Iterable<string>): TalkFeatures {
+  const f = new Set(features);
+  return {
+    reply: f.has('chat-replies'),
+    edit: f.has('edit-messages'),
+    delete: f.has('delete-messages'),
+    deleteUnlimited: f.has('delete-messages-unlimited'),
+    reactions: f.has('reactions'),
+    reactPermission: f.has('react-permission'),
+    mentions: f.has('chat-v2'),
+    search: f.has('unified-search'),
+    description: f.has('room-description'),
+  };
+}
+
+/** Conversation types (Talk constants). */
+export const ROOM_TYPE = { oneToOne: 1, group: 2, public: 3, changelog: 4, formerOneToOne: 5, noteToSelf: 6 } as const;
+/** Participant types: 1 owner, 2 moderator, 3 user, 4 guest, 5 self-joined user, 6 guest moderator. */
+export const PARTICIPANT_TYPE = { owner: 1, moderator: 2, user: 3, guest: 4, selfJoined: 5, guestModerator: 6 } as const;
+export const TALK_PERMISSION = { chat: 128, react: 256 } as const;
+export const TALK_LIMITS = { message: 32000, roomName: 255, description: 2000, editAgeSec: 86400, deleteAgeSec: 6 * 3600, searchTerm: 200 } as const;
+
+export const isModeratorType = (t: number | undefined) => t === PARTICIPANT_TYPE.owner || t === PARTICIPANT_TYPE.moderator || t === PARTICIPANT_TYPE.guestModerator;
+const isGroupLike = (type: number) => type === ROOM_TYPE.group || type === ROOM_TYPE.public;
+const hasPerm = (room: Pick<TalkRoom, 'permissions'>, bit: number) => typeof room.permissions === 'number' && (room.permissions & bit) !== 0;
+
+export type RoomGate = Pick<TalkRoom, 'type' | 'readOnly' | 'participantType' | 'permissions' | 'canDeleteConversation' | 'canLeaveConversation'>;
+
+export interface RoomActions {
+  chat: boolean;
+  react: boolean;
+  rename: boolean;
+  describe: boolean;
+  manageParticipants: boolean;
+  leave: boolean;
+  delete: boolean;
+}
+
+/** What the current participant may do with the room. Missing fields → not allowed (fail closed). */
+export function roomActions(room: RoomGate, f: TalkFeatures): RoomActions {
+  const writable = room.readOnly === 0;
+  const mod = isModeratorType(room.participantType) && isGroupLike(room.type);
+  return {
+    chat: writable && hasPerm(room, TALK_PERMISSION.chat),
+    react: f.reactions && writable && hasPerm(room, f.reactPermission ? TALK_PERMISSION.react : TALK_PERMISSION.chat),
+    rename: mod,
+    describe: mod && f.description,
+    manageParticipants: mod,
+    leave: room.canLeaveConversation === true,
+    delete: room.canDeleteConversation === true,
+  };
+}
+
+export interface MessageActions {
+  reply: boolean;
+  edit: boolean;
+  delete: boolean;
+  react: boolean;
+}
+
+const NO_ACTIONS: MessageActions = { reply: false, edit: false, delete: false, react: false };
+
+/**
+ * Mirrors ChatController::editMessage/deleteMessage and ReactionController: own message, or a
+ * moderator outside one-to-one rooms; only real comments; edit ≤ 24 h (except note-to-self),
+ * delete ≤ 6 h unless `delete-messages-unlimited`.
+ */
+export function messageActions(m: TalkMessage, room: RoomGate, self: { actorType: string; actorId: string }, f: TalkFeatures, nowSec: number): MessageActions {
+  if (m.systemMessage !== '' || m.messageType !== 'comment' || m.id <= 0) return NO_ACTIONS;
+  const r = roomActions(room, f);
+  const own = m.actorType === self.actorType && m.actorId === self.actorId;
+  const modOther = isModeratorType(room.participantType) && room.type !== ROOM_TYPE.oneToOne && room.type !== ROOM_TYPE.formerOneToOne;
+  const mayChange = r.chat && (own || modOther);
+  const age = nowSec - m.timestamp;
+  const onlyFile = /^\{file\}$/.test(m.message.trim());
+  return {
+    reply: f.reply && r.chat && m.isReplyable !== false,
+    edit: f.edit && mayChange && !onlyFile && (room.type === ROOM_TYPE.noteToSelf || age < TALK_LIMITS.editAgeSec),
+    delete: f.delete && mayChange && (f.deleteUnlimited || age < TALK_LIMITS.deleteAgeSec),
+    react: r.react,
+  };
+}
+
+// ---- Message / reaction API ----------------------------------------------------
+
+const REACTION_API = '/ocs/v2.php/apps/spreed/api/v1/reaction';
+const assertMessageId = (id: number) => {
+  if (!Number.isInteger(id) || id <= 0) throw new OcsError('client', undefined, 'invalid message id');
+  return id;
+};
+
+/** An emoji reaction: short, no whitespace/controls, not plain ASCII text. */
+export const isReaction = (v: unknown): v is string =>
+  typeof v === 'string' && v.length > 0 && v.length <= 32 && !/[\s\u0000-\u001f\u007f]/.test(v) && /[^\u0000-\u007f]/.test(v);
+
+/** Returns the `message_edited` system message; its `parent` is the edited message. */
+export async function editMessage(client: OcsClient, token: string, messageId: number, message: string): Promise<TalkMessage> {
+  const r = await client.request<TalkMessage>(`${CHAT_API}/${assertRoomToken(token)}/${assertMessageId(messageId)}`, { method: 'PUT', body: { message } });
+  if (!r.data || !isFullMessage(r.data.parent)) throw new OcsError('invalid_response', r.status);
+  return r.data;
+}
+
+/** Returns the `message_deleted` system message; its `parent` is the `comment_deleted` placeholder. */
+export async function deleteMessage(client: OcsClient, token: string, messageId: number): Promise<TalkMessage> {
+  const r = await client.request<TalkMessage>(`${CHAT_API}/${assertRoomToken(token)}/${assertMessageId(messageId)}`, { method: 'DELETE' });
+  if (!r.data || !isFullMessage(r.data.parent)) throw new OcsError('invalid_response', r.status);
+  return r.data;
+}
+
+export interface ReactionActor {
+  actorType: string;
+  actorId: string;
+  actorDisplayName: string;
+  timestamp: number;
+}
+export type ReactionMap = Record<string, ReactionActor[]>;
+
+const reactionMap = (d: unknown): ReactionMap => (d && typeof d === 'object' && !Array.isArray(d) ? (d as ReactionMap) : {});
+
+export async function addReaction(client: OcsClient, token: string, messageId: number, reaction: string): Promise<ReactionMap> {
+  if (!isReaction(reaction)) throw new OcsError('client', undefined, 'invalid reaction');
+  const r = await client.request<ReactionMap>(`${REACTION_API}/${assertRoomToken(token)}/${assertMessageId(messageId)}`, { method: 'POST', body: { reaction } });
+  return reactionMap(r.data);
+}
+
+export async function removeReaction(client: OcsClient, token: string, messageId: number, reaction: string): Promise<ReactionMap> {
+  if (!isReaction(reaction)) throw new OcsError('client', undefined, 'invalid reaction');
+  const r = await client.request<ReactionMap>(`${REACTION_API}/${assertRoomToken(token)}/${assertMessageId(messageId)}`, { method: 'DELETE', query: { reaction } });
+  return reactionMap(r.data);
+}
+
+export async function listReactions(client: OcsClient, token: string, messageId: number, reaction?: string): Promise<ReactionMap> {
+  if (reaction !== undefined && !isReaction(reaction)) throw new OcsError('client', undefined, 'invalid reaction');
+  const r = await client.request<ReactionMap>(`${REACTION_API}/${assertRoomToken(token)}/${assertMessageId(messageId)}`, { query: { reaction } });
+  return reactionMap(r.data);
+}
+
+/** Apply a reaction response to the local message (counts from the server, own flag locally). */
+export function withReactions(m: TalkMessage, map: ReactionMap, selfActor: { actorType: string; actorId: string }): TalkMessage {
+  const reactions: Record<string, number> = {};
+  const mine: string[] = [];
+  for (const [emoji, actors] of Object.entries(map)) {
+    if (!Array.isArray(actors) || actors.length === 0) continue;
+    reactions[emoji] = actors.length;
+    if (actors.some((a) => a.actorType === selfActor.actorType && a.actorId === selfActor.actorId)) mine.push(emoji);
+  }
+  return { ...m, reactions, reactionsSelf: mine };
+}
+
+// ---- Mentions --------------------------------------------------------------------
+
+export interface MentionSuggestion {
+  id: string;
+  label: string;
+  /** `users`, `groups`, `calls` (= @all), `guests`, `emails`, `federated_users`, `teams`. */
+  source: string;
+  mentionId: string;
+}
+
+export async function mentionSuggestions(client: OcsClient, token: string, search: string, limit = 10): Promise<MentionSuggestion[]> {
+  const r = await client.request<MentionSuggestion[]>(`${CHAT_API}/${assertRoomToken(token)}/mentions`, {
+    query: { search: search.slice(0, 64), limit: Math.max(1, Math.min(limit, 20)), includeStatus: false },
+  });
+  return (Array.isArray(r.data) ? r.data : [])
+    .filter((x) => x && typeof x.mentionId === 'string' && typeof x.label === 'string')
+    .map((x) => ({ id: String(x.id), label: x.label, source: String(x.source), mentionId: x.mentionId }));
+}
+
+/** The `@…` word being typed right before the caret, if any. */
+export function activeMentionQuery(text: string, caret: number): { start: number; query: string } | null {
+  const before = text.slice(0, Math.max(0, Math.min(caret, text.length)));
+  const m = /(^|\s)@([^\s@"]{0,64})$/.exec(before);
+  if (!m) return null;
+  return { start: before.length - m[2]!.length - 1, query: m[2]! };
+}
+
+/** Talk parses `@id` for simple ids and `@"id"` otherwise (spaces, `/`, …). */
+export function mentionText(mentionId: string): string {
+  return /^[a-z0-9_.@-]+$/i.test(mentionId) && !mentionId.includes('@') ? `@${mentionId}` : `@"${mentionId.replace(/"/g, '')}"`;
+}
+
+/** Replace the active `@query` with the mention; returns the new text and caret. */
+export function insertMention(text: string, at: { start: number; query: string }, mentionId: string): { text: string; caret: number } {
+  const insert = `${mentionText(mentionId)} `;
+  const end = at.start + 1 + at.query.length;
+  return { text: text.slice(0, at.start) + insert + text.slice(end), caret: at.start + insert.length };
+}
+
+/** Message text for the edit box: mention placeholders back to `@id`, other objects to their name. */
+export function editableText(m: Pick<TalkMessage, 'message' | 'messageParameters'>): string {
+  const params = Array.isArray(m.messageParameters) ? {} : m.messageParameters;
+  return m.message.replace(/\{([a-z0-9_-]+)\}/gi, (whole, key: string) => {
+    const p = params[key];
+    if (!p) return whole;
+    if (p.type === 'call') return '@all';
+    if (MENTION_TYPES[p.type]) return mentionText(typeof p['mention-id'] === 'string' ? (p['mention-id'] as string) : String(p.id));
+    return typeof p.name === 'string' ? p.name : whole;
+  });
+}
+
+/** Does the message mention the viewer (directly, or @all)? */
+export function mentionsSelf(m: TalkMessage, selfId: string): boolean {
+  const params = Array.isArray(m.messageParameters) ? {} : m.messageParameters;
+  return Object.values(params).some((p) => (p.type === 'user' && String(p.id) === selfId) || p.type === 'call');
+}
+
+// ---- Message search (unified search provider) -------------------------------------
+
+export interface MessageSearchHit {
+  token: string;
+  messageId: number;
+  /** "{user} in {conversation}" or "{user}" (server-localised). */
+  title: string;
+  /** Plain text excerpt around the match — never rendered as HTML. */
+  excerpt: string;
+  actorId: string;
+  timestamp: number;
+}
+
+export interface MessageSearchPage {
+  hits: MessageSearchHit[];
+  /** Offset for the next page; null when no more results. */
+  cursor: number | null;
+}
+
+interface RawSearchResult {
+  isPaginated?: boolean;
+  cursor?: unknown;
+  entries?: Array<{ title?: unknown; subline?: unknown; attributes?: Record<string, unknown> }>;
+}
+
+export async function searchMessages(client: OcsClient, o: { term: string; token?: string | null; cursor?: number | null; limit?: number }): Promise<MessageSearchPage> {
+  const term = o.term.trim();
+  if (!term || term.length > TALK_LIMITS.searchTerm) throw new OcsError('client', undefined, 'invalid search term');
+  const limit = Math.max(1, Math.min(o.limit ?? 20, 50));
+  const r = await client.request<RawSearchResult>('/ocs/v2.php/search/providers/talk-message/search', {
+    query: { term, limit, cursor: o.cursor ?? undefined, conversation: o.token ? assertRoomToken(o.token) : undefined },
+  });
+  const entries = Array.isArray(r.data?.entries) ? r.data!.entries : [];
+  const hits: MessageSearchHit[] = [];
+  for (const e of entries) {
+    const a = e.attributes ?? {};
+    const token = typeof a.conversation === 'string' ? a.conversation : '';
+    const messageId = Number(a.messageId);
+    if (!/^[a-z0-9]{1,64}$/i.test(token) || !Number.isInteger(messageId) || messageId <= 0) continue;
+    hits.push({
+      token,
+      messageId,
+      title: typeof e.title === 'string' ? e.title : '',
+      excerpt: typeof e.subline === 'string' ? e.subline : '',
+      actorId: typeof a.actorId === 'string' ? a.actorId : '',
+      timestamp: Number(a.timestamp) || 0,
+    });
+  }
+  const next = Number(r.data?.cursor);
+  return { hits, cursor: r.data?.isPaginated && entries.length >= limit && Number.isInteger(next) && next > 0 ? next : null };
+}
+
+// ---- Conversation management --------------------------------------------------------
+
+export interface TalkParticipant {
+  attendeeId: number;
+  actorType: string;
+  actorId: string;
+  displayName: string;
+  participantType: number;
+}
+
+export type RoomKind = 'group' | 'public';
+export interface RoomPatch {
+  name?: string;
+  description?: string;
+}
+
+export const talkRoomApi = {
+  async get(c: OcsClient, token: string): Promise<TalkRoom> {
+    const r = await c.request<TalkRoom>(`${ROOM_API}/${assertRoomToken(token)}`);
+    if (!r.data?.token) throw new OcsError('invalid_response', r.status);
+    return r.data;
+  },
+  async create(c: OcsClient, kind: RoomKind, name: string): Promise<TalkRoom> {
+    const r = await c.request<TalkRoom>(ROOM_API, { method: 'POST', body: { roomType: kind === 'public' ? ROOM_TYPE.public : ROOM_TYPE.group, roomName: name.trim() } });
+    if (!r.data?.token) throw new OcsError('invalid_response', r.status);
+    return r.data;
+  },
+  async rename(c: OcsClient, token: string, name: string): Promise<void> {
+    await c.request(`${ROOM_API}/${assertRoomToken(token)}`, { method: 'PUT', body: { roomName: name.trim() } });
+  },
+  async describe(c: OcsClient, token: string, description: string): Promise<void> {
+    await c.request(`${ROOM_API}/${assertRoomToken(token)}/description`, { method: 'PUT', body: { description } });
+  },
+  async participants(c: OcsClient, token: string): Promise<TalkParticipant[]> {
+    const r = await c.request<TalkParticipant[]>(`${ROOM_API}/${assertRoomToken(token)}/participants`, { query: { includeStatus: false } });
+    return (Array.isArray(r.data) ? r.data : []).map((p) => ({
+      attendeeId: p.attendeeId, actorType: p.actorType, actorId: p.actorId, displayName: p.displayName ?? '', participantType: p.participantType,
+    }));
+  },
+  /** Returns the (possibly changed) room type. */
+  async addParticipant(c: OcsClient, token: string, source: 'users' | 'groups', id: string): Promise<{ type?: number }> {
+    const r = await c.request<{ type?: number } | []>(`${ROOM_API}/${assertRoomToken(token)}/participants`, { method: 'POST', body: { newParticipant: id, source } });
+    return r.data && !Array.isArray(r.data) ? r.data : {};
+  },
+  async removeAttendee(c: OcsClient, token: string, attendeeId: number): Promise<void> {
+    await c.request(`${ROOM_API}/${assertRoomToken(token)}/attendees`, { method: 'DELETE', query: { attendeeId } });
+  },
+  async setModerator(c: OcsClient, token: string, attendeeId: number, moderator: boolean): Promise<void> {
+    await c.request(`${ROOM_API}/${assertRoomToken(token)}/moderators`, moderator ? { method: 'POST', body: { attendeeId } } : { method: 'DELETE', query: { attendeeId } });
+  },
+  async leave(c: OcsClient, token: string): Promise<void> {
+    await c.request(`${ROOM_API}/${assertRoomToken(token)}/participants/self`, { method: 'DELETE' });
+  },
+  async remove(c: OcsClient, token: string): Promise<void> {
+    await c.request(`${ROOM_API}/${assertRoomToken(token)}`, { method: 'DELETE' });
+  },
+};
+
+/** Users/groups that can be invited to a conversation (core autocomplete, `itemType=call`). */
+export interface InviteCandidate {
+  source: 'users' | 'groups';
+  id: string;
+  label: string;
+}
+
+export async function inviteCandidates(c: OcsClient, token: string, search: string): Promise<InviteCandidate[]> {
+  const r = await c.request<Array<{ id?: unknown; label?: unknown; source?: unknown }>>('/ocs/v2.php/core/autocomplete/get', {
+    query: { search: search.slice(0, 64), itemType: 'call', itemId: assertRoomToken(token), shareTypes: [0, 1], limit: 20 },
+  });
+  const out: InviteCandidate[] = [];
+  for (const x of Array.isArray(r.data) ? r.data : []) {
+    if (typeof x.id !== 'string' || !x.id) continue;
+    const source = x.source === 'users' ? 'users' : x.source === 'groups' ? 'groups' : null;
+    if (source) out.push({ source, id: x.id, label: typeof x.label === 'string' ? x.label : x.id });
+  }
+  return out;
 }

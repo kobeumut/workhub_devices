@@ -4,7 +4,12 @@ import { pollLoginFlow, startLoginFlow, type LoginFlowStart } from './loginFlow'
 import { OcsError, type FetchLike, type OcsClient } from './ocs';
 import { dismissNotification, listNotifications, type InboxNotification } from './routing';
 import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './serverUrl';
-import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
+import {
+  fetchChat, listRooms, markRead, sendMessage, editMessage, deleteMessage, addReaction, removeReaction, listReactions, mentionSuggestions,
+  searchMessages, inviteCandidates, talkRoomApi, talkFeaturesOf, roomActions, isReaction, ROOM_TYPE, TALK_LIMITS,
+  type ChatFetchResult, type InviteCandidate, type MentionSuggestion, type MessageSearchPage, type ReactionMap, type RoomActions, type RoomKind,
+  type RoomListResult, type RoomPatch, type TalkFeatures, type TalkMessage, type TalkParticipant, type TalkRoom,
+} from './talk';
 import {
   openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, goalsApi, cardSetWithout, REPORT_STATES, GOAL_MAX_SCALE,
   SHARE_OBJECT_TYPES, SHARE_ROLES,
@@ -44,6 +49,8 @@ export interface SessionInfo {
   nextcloudVersion: string | null;
   talkVersion: string | null;
   talkFeatures: string[];
+  /** `spreed.config.conversations.can-create` for this user. */
+  talkCanCreate: boolean;
   issues: CompatibilityIssue[];
   workhub: WorkhubBootstrap | null;
   /** Notifications Web Push available (`webpush` capability). */
@@ -74,6 +81,30 @@ export interface Backend {
   send(accountId: AccountId, token: string, message: string, referenceId: string, replyTo?: number): Promise<TalkMessage | null>;
   markRead(accountId: AccountId, token: string, lastReadMessage: number): Promise<void>;
   createOneToOne(accountId: AccountId, userId: string): Promise<{ token: string }>;
+
+  /**
+   * Talk extensions. Every call is capability-gated (`talkFeatures`, fail closed) and the role
+   * gates use a FRESH room read (never a cached list row); the server re-checks everything.
+   */
+  talkRoom(accountId: AccountId, token: string): Promise<TalkRoom>;
+  /** Own message or moderator (not 1:1), ≤ 24 h (note-to-self: unlimited). Returns the `message_edited` system message. */
+  editMessage(accountId: AccountId, token: string, messageId: number, message: string): Promise<TalkMessage>;
+  deleteMessage(accountId: AccountId, token: string, messageId: number): Promise<TalkMessage>;
+  /** Add (`true`) or remove (`false`) the caller's reaction; returns the full reaction map. */
+  react(accountId: AccountId, token: string, messageId: number, reaction: string, add: boolean): Promise<ReactionMap>;
+  reactions(accountId: AccountId, token: string, messageId: number): Promise<ReactionMap>;
+  mentions(accountId: AccountId, token: string, search: string): Promise<MentionSuggestion[]>;
+  /** Unified search `talk-message`; `token` limits it to one conversation. */
+  searchMessages(accountId: AccountId, term: string, token: string | null, cursor: number | null): Promise<MessageSearchPage>;
+  createRoom(accountId: AccountId, kind: RoomKind, name: string): Promise<TalkRoom>;
+  updateRoom(accountId: AccountId, token: string, patch: RoomPatch): Promise<TalkRoom>;
+  participants(accountId: AccountId, token: string): Promise<TalkParticipant[]>;
+  inviteCandidates(accountId: AccountId, token: string, search: string): Promise<InviteCandidate[]>;
+  addParticipant(accountId: AccountId, token: string, source: 'users' | 'groups', id: string): Promise<TalkParticipant[]>;
+  removeParticipant(accountId: AccountId, token: string, attendeeId: number): Promise<TalkParticipant[]>;
+  setModerator(accountId: AccountId, token: string, attendeeId: number, moderator: boolean): Promise<TalkParticipant[]>;
+  leaveRoom(accountId: AccountId, token: string): Promise<void>;
+  deleteRoom(accountId: AccountId, token: string): Promise<void>;
 
   notifications(accountId: AccountId): Promise<InboxNotification[]>;
   dismissNotification(accountId: AccountId, id: number): Promise<void>;
@@ -402,6 +433,27 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
   };
   const clientError = (code: string) => new OcsError('client', 422, undefined, undefined, code);
 
+  /** Talk capabilities per account, cached briefly (they change only on server upgrades/config). */
+  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean }>();
+  const talkFor = async (id: AccountId, need?: keyof TalkFeatures) => {
+    const c = await client(id);
+    let hit = talkCaps.get(id);
+    if (!hit || Date.now() - hit.at > 60_000) {
+      const caps = await fetchServerCapabilities(c);
+      hit = { at: Date.now(), features: talkFeaturesOf(caps.talk.features), canCreate: caps.talk.canCreate };
+      talkCaps.set(id, hit);
+    }
+    if (need && !hit.features[need]) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
+    return { c, f: hit.features, canCreate: hit.canCreate };
+  };
+  /** Room gate on the CURRENT room (fresh read). */
+  const roomFor = async (id: AccountId, token: string, need: keyof RoomActions, feature?: keyof TalkFeatures) => {
+    const { c, f } = await talkFor(id, feature);
+    const room = await talkRoomApi.get(c, token);
+    if (!roomActions(room, f)[need]) throw new OcsError('forbidden', 403, undefined, undefined, `TALK_${need.replace(/[A-Z]/g, (x) => `_${x}`).toUpperCase()}_FORBIDDEN`);
+    return { c, f, room };
+  };
+
   const widgetOf = (d: Dashboard, widgetId: number) => {
     const w = d.widgets.find((x) => x.id === widgetId);
     if (!w) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
@@ -475,6 +527,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
         nextcloudVersion: caps.nextcloudVersion,
         talkVersion: caps.talk.version,
         talkFeatures: [...caps.talk.features],
+        talkCanCreate: caps.talk.canCreate,
         issues: checkCompatibility(caps),
         workhub,
         webPush: caps.notifications.push.has('webpush'),
@@ -505,7 +558,8 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
 
     async send(accountId, token, message, referenceId, replyTo) {
       if (!message.trim()) throw new OcsError('client', undefined, 'empty message');
-      return sendMessage(await client(accountId), token, { message, referenceId, ...(replyTo ? { replyTo } : {}) });
+      const c = replyTo ? (await talkFor(accountId, 'reply')).c : await client(accountId);
+      return sendMessage(c, token, { message, referenceId, ...(replyTo ? { replyTo } : {}) });
     },
 
     async markRead(accountId, token, lastReadMessage) {
@@ -519,6 +573,82 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       });
       if (!r.data?.token) throw new OcsError('invalid_response');
       return { token: r.data.token };
+    },
+
+    async talkRoom(accountId, token) {
+      return talkRoomApi.get(await client(accountId), token);
+    },
+    async editMessage(accountId, token, messageId, message) {
+      if (!message.trim()) throw clientError('EMPTY_MESSAGE');
+      const { c } = await roomFor(accountId, token, 'chat', 'edit');
+      return editMessage(c, token, messageId, message);
+    },
+    async deleteMessage(accountId, token, messageId) {
+      const { c } = await roomFor(accountId, token, 'chat', 'delete');
+      return deleteMessage(c, token, messageId);
+    },
+    async react(accountId, token, messageId, reaction, add) {
+      const { c } = await roomFor(accountId, token, 'react', 'reactions');
+      return add ? addReaction(c, token, messageId, reaction) : removeReaction(c, token, messageId, reaction);
+    },
+    async reactions(accountId, token, messageId) {
+      const { c } = await talkFor(accountId, 'reactions');
+      return listReactions(c, token, messageId);
+    },
+    async mentions(accountId, token, search) {
+      const { c } = await talkFor(accountId, 'mentions');
+      return mentionSuggestions(c, token, search);
+    },
+    async searchMessages(accountId, term, token, cursor) {
+      const { c } = await talkFor(accountId, 'search');
+      return searchMessages(c, { term, token, cursor });
+    },
+    async createRoom(accountId, kind, name) {
+      const { c, canCreate } = await talkFor(accountId);
+      if (!canCreate) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_CREATE_FORBIDDEN');
+      if (!name.trim()) throw clientError('EMPTY_NAME');
+      return talkRoomApi.create(c, kind, name);
+    },
+    async updateRoom(accountId, token, patch) {
+      if (patch.name !== undefined && !patch.name.trim()) throw clientError('EMPTY_NAME');
+      const { c, f, room } = await roomFor(accountId, token, 'rename');
+      if (patch.description !== undefined && !roomActions(room, f).describe) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_DESCRIBE_FORBIDDEN');
+      if (patch.name !== undefined && patch.name.trim() !== room.displayName) await talkRoomApi.rename(c, token, patch.name);
+      if (patch.description !== undefined && patch.description !== (room.description ?? '')) await talkRoomApi.describe(c, token, patch.description);
+      return talkRoomApi.get(c, token);
+    },
+    async participants(accountId, token) {
+      return talkRoomApi.participants(await client(accountId), token);
+    },
+    async inviteCandidates(accountId, token, search) {
+      const { c } = await roomFor(accountId, token, 'manageParticipants');
+      return inviteCandidates(c, token, search);
+    },
+    async addParticipant(accountId, token, source, id) {
+      const { c } = await roomFor(accountId, token, 'manageParticipants');
+      await talkRoomApi.addParticipant(c, token, source, id);
+      return talkRoomApi.participants(c, token);
+    },
+    async removeParticipant(accountId, token, attendeeId) {
+      const { c, room } = await roomFor(accountId, token, 'manageParticipants');
+      if (attendeeId === room.attendeeId) throw clientError('USE_LEAVE');
+      await talkRoomApi.removeAttendee(c, token, attendeeId);
+      return talkRoomApi.participants(c, token);
+    },
+    async setModerator(accountId, token, attendeeId, moderator) {
+      const { c, room } = await roomFor(accountId, token, 'manageParticipants');
+      if (attendeeId === room.attendeeId) throw clientError('SELF_ROLE');
+      await talkRoomApi.setModerator(c, token, attendeeId, moderator);
+      return talkRoomApi.participants(c, token);
+    },
+    async leaveRoom(accountId, token) {
+      const { c } = await roomFor(accountId, token, 'leave');
+      await talkRoomApi.leave(c, token);
+    },
+    async deleteRoom(accountId, token) {
+      const { c, room } = await roomFor(accountId, token, 'delete');
+      if (room.type === ROOM_TYPE.oneToOne || room.type === ROOM_TYPE.formerOneToOne) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_DELETE_FORBIDDEN');
+      await talkRoomApi.remove(c, token);
     },
 
     async notifications(accountId) {
@@ -912,6 +1042,8 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
 export const BACKEND_METHODS = [
   'listAccounts', 'beginLogin', 'completeLogin', 'cancel', 'logout', 'session',
   'rooms', 'chat', 'send', 'markRead', 'createOneToOne',
+  'talkRoom', 'editMessage', 'deleteMessage', 'react', 'reactions', 'mentions', 'searchMessages', 'createRoom', 'updateRoom',
+  'participants', 'inviteCandidates', 'addParticipant', 'removeParticipant', 'setModerator', 'leaveRoom', 'deleteRoom',
   'notifications', 'dismissNotification',
   'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
   'addSubtask', 'updateSubtask', 'deleteSubtask', 'addDependency', 'removeDependency',
@@ -1207,6 +1339,13 @@ const isAiRequestId = (v: unknown) => typeof v === 'string' && AI_REQUEST_ID_RE.
 /** The server requires a UUID Idempotency-Key for AI create/accept. */
 const isUuidKey = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
+// ---- Talk wire validation ----
+/** Talk route requirement is `[a-z0-9]{4,30}`. */
+const isToken = (v: unknown) => typeof v === 'string' && /^[a-z0-9]{4,30}$/.test(v);
+export const isValidRoomPatch = (v: unknown): v is RoomPatch =>
+  isObj(v) && Object.keys(v as object).length > 0
+  && fieldsOk(v as Record<string, unknown>, { name: isTitle(TALK_LIMITS.roomName), description: isStr(TALK_LIMITS.description) }, []);
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -1220,6 +1359,22 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   send: (a) => (a.length === 4 || a.length === 5) && isAccountId(a[0]) && isStr(64)(a[1]) && isStr(32000)(a[2]) && isStr(128)(a[3]) && isOptInt(a[4]),
   markRead: (a) => a.length === 3 && isAccountId(a[0]) && isStr(64)(a[1]) && isInt(a[2]),
   createOneToOne: (a) => a.length === 2 && isAccountId(a[0]) && isStr(256)(a[1]),
+  talkRoom: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
+  editMessage: (a) => a.length === 4 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]) && isTitle(TALK_LIMITS.message)(a[3]),
+  deleteMessage: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]),
+  react: (a) => a.length === 5 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]) && isReaction(a[3]) && typeof a[4] === 'boolean',
+  reactions: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]),
+  mentions: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isStr(64)(a[2]),
+  searchMessages: (a) => a.length === 4 && isAccountId(a[0]) && isTitle(TALK_LIMITS.searchTerm)(a[1]) && (a[2] === null || isToken(a[2])) && (a[3] === null || isInt(a[3])),
+  createRoom: (a) => a.length === 3 && isAccountId(a[0]) && (a[1] === 'group' || a[1] === 'public') && isTitle(TALK_LIMITS.roomName)(a[2]),
+  updateRoom: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isValidRoomPatch(a[2]),
+  participants: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
+  inviteCandidates: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isStr(64)(a[2]),
+  addParticipant: (a) => a.length === 4 && isAccountId(a[0]) && isToken(a[1]) && (a[2] === 'users' || a[2] === 'groups') && isUid(a[3]),
+  removeParticipant: (a) => a.length === 3 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]),
+  setModerator: (a) => a.length === 4 && isAccountId(a[0]) && isToken(a[1]) && isInt(a[2]) && typeof a[3] === 'boolean',
+  leaveRoom: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
+  deleteRoom: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
   notifications: (a) => a.length === 1 && isAccountId(a[0]),
   dismissNotification: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   projects: (a) => a.length === 1 && isAccountId(a[0]),
