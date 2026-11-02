@@ -5,13 +5,15 @@ import { useAsync, useServices } from './services';
 import { Button, Empty, ErrorBanner, Header, Loading, Row, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
 import { describeError, formatDate, t } from './i18n';
+import { DependencySection, SubtaskSection, TaskEditor } from './taskEdit';
 
 const PRIORITY: Record<string, string> = { urgent: 'Acil', high: 'Yüksek', normal: 'Normal', low: 'Düşük' };
 const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-export function ProjectsScreen({ accountId, selected, onOpen }: { accountId: AccountId; selected?: number; onOpen: (p: ProjectSummary) => void }) {
+/** `version` changes whenever a task changes elsewhere, so open/done counters never stay stale. */
+export function ProjectsScreen({ accountId, selected, onOpen, version = 0 }: { accountId: AccountId; selected?: number; onOpen: (p: ProjectSummary) => void; version?: number }) {
   const { backend } = useServices();
-  const s = useAsync(() => backend.projects(accountId), [accountId]);
+  const s = useAsync(() => backend.projects(accountId), [accountId, version]);
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <ErrorBanner error={s.error} onRetry={s.reload} />
@@ -48,7 +50,7 @@ function taskSubtitle(task: Task): string {
 }
 
 /** Kanban as sections (accessible on phones; no drag required) + list view in the same component. */
-export function BoardScreen({ accountId, project, onOpenTask, onBack }: { accountId: AccountId; project: { id: number; title: string }; onOpenTask: (cardId: number) => void; onBack?: () => void }) {
+export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged }: { accountId: AccountId; project: { id: number; title: string }; onOpenTask: (cardId: number) => void; onBack?: () => void; onChanged?: () => void }) {
   const { backend } = useServices();
   const s = useAsync(() => backend.board(accountId, project.id), [accountId, project.id]);
   const [newTitle, setNewTitle] = useState('');
@@ -71,6 +73,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack }: { accoun
       await backend.createTask(accountId, project.id, first.id, newTitle.trim(), uuid());
       setNewTitle('');
       s.reload();
+      onChanged?.();
     } catch (e) {
       setErr(e);
     } finally {
@@ -84,6 +87,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack }: { accoun
     try {
       await backend.moveTask(accountId, task.id, stackId, 0);
       s.reload();
+      onChanged?.();
     } catch (e) {
       setErr(e);
     }
@@ -142,9 +146,18 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack }: { accoun
 }
 
 /** Task detail always comes from a fresh, ACL-checked fetch (never from notification payload). */
-export function TaskScreen({ accountId, cardId, onBack, timeEnabled }: { accountId: AccountId; cardId: number; onBack?: () => void; timeEnabled?: boolean }) {
+export function TaskScreen({ accountId, cardId, onBack, timeEnabled, onChanged }: { accountId: AccountId; cardId: number; onBack?: () => void; timeEnabled?: boolean; onChanged?: () => void }) {
   const { backend } = useServices();
   const s = useAsync(() => backend.openTask(accountId, cardId), [accountId, cardId]);
+  const boardId = s.data?.state === 'ok' ? s.data.task.boardId : 0;
+  // Board metadata (members, labels, sibling tasks, permissions) for the editor and dependency picker.
+  const board = useAsync(() => (boardId ? backend.board(accountId, boardId) : Promise.resolve(undefined)), [accountId, boardId]);
+  const [editing, setEditing] = useState(false);
+  const changed = () => {
+    s.reload();
+    board.reload();
+    onChanged?.();
+  };
   const comments = useAsync(() => (s.data?.state === 'ok' ? backend.comments(accountId, cardId) : Promise.resolve([])), [accountId, cardId, s.data?.state]);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
@@ -170,13 +183,16 @@ export function TaskScreen({ accountId, cardId, onBack, timeEnabled }: { account
     );
   }
   const task: TaskDetail = r.task;
+  const project = board.data?.project;
+  const canEdit = project?.permissions.edit ?? false;
+  const labelNames = (project?.labels ?? []).filter((l) => !l.priority && task.labels.includes(l.id)).map((l) => l.title).join(', ');
 
   const toggleDone = async () => {
     setBusy(true);
     setErr(undefined);
     try {
       await backend.updateTask(accountId, cardId, { done: !task.done });
-      s.reload();
+      changed();
     } catch (e) {
       setErr(e);
     } finally {
@@ -222,11 +238,30 @@ export function TaskScreen({ accountId, cardId, onBack, timeEnabled }: { account
           <Text style={{ fontSize: font.title, fontWeight: '700', color: colors.text }}>{task.title}</Text>
           <Text style={{ color: colors.muted, marginTop: space(1) }}>{taskSubtitle(task) || ' '}</Text>
           {task.done ? <Text style={{ color: colors.ok, marginTop: space(1) }}>✓ {formatDate(task.done)}</Text> : null}
+          {task.startDate ? <Text style={{ color: colors.muted, marginTop: space(1) }}>Başlangıç: {formatDate(task.startDate)}</Text> : null}
+          {task.estimateSec != null ? <Text style={{ color: colors.muted, marginTop: space(1) }}>Tahmini: {Math.round((task.estimateSec / 3600) * 100) / 100} sa</Text> : null}
+          {labelNames ? <Text style={{ color: colors.muted, marginTop: space(1) }}>Etiketler: {labelNames}</Text> : null}
           {task.description ? <Text style={{ marginTop: space(3), color: colors.text }} selectable>{task.description}</Text> : null}
+          {canEdit && !editing ? <Button title={t.edit} kind="secondary" onPress={() => setEditing(true)} /> : null}
           <Button title={task.done ? t.markUndone : t.markDone} kind="secondary" onPress={() => void toggleDone()} busy={busy} />
           {timeEnabled ? <Button title="⏱ Zamanlayıcı başlat" kind="secondary" onPress={() => void startTimer()} busy={busy} /> : null}
           {timerNote ? <Text style={{ color: colors.ok }}>{timerNote}</Text> : null}
         </View>
+        {editing && project ? (
+          <TaskEditor
+            key={task.lastModified}
+            accountId={accountId}
+            task={task}
+            board={project}
+            onCancel={() => setEditing(false)}
+            onSaved={() => {
+              setEditing(false);
+              changed();
+            }}
+          />
+        ) : null}
+        <SubtaskSection accountId={accountId} task={task} canEdit={canEdit} onChanged={changed} />
+        {project ? <DependencySection accountId={accountId} task={task} board={project} tasks={board.data?.tasks ?? []} canEdit={canEdit} onChanged={changed} /> : null}
         <View style={card}>
           <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
             {t.assignees}

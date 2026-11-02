@@ -17,7 +17,8 @@ const hms = (sec: number) => {
 type Section = 'projects' | 'time' | 'requests' | 'goals' | 'more';
 
 /** Workhub home: every enabled module, gated per user by the Workhub bootstrap (fail closed). */
-export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, onOpenProject }: {
+export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, onOpenProject, version }: {
+  version?: number;
   accountId: AccountId;
   serverBase: ServerBase;
   workhub: WorkhubBootstrap;
@@ -43,7 +44,7 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
           </Pressable>
         ))}
       </ScrollView>
-      {section === 'projects' ? <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} onOpen={onOpenProject} /> : null}
+      {section === 'projects' ? <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} onOpen={onOpenProject} /> : null}
       {section === 'time' ? <TimeScreen accountId={accountId} /> : null}
       {section === 'requests' ? <RequestsScreen accountId={accountId} /> : null}
       {section === 'goals' ? <GoalsScreen accountId={accountId} /> : null}

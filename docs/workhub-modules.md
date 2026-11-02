@@ -17,12 +17,13 @@ Gate sütunu `GET /capabilities` → `modules.*` (kullanıcı bazlı, fail-close
 | Görev taşı | `edit` | `POST /tasks/{id}/move` | Pano → "Taşı" (erişilebilir, sürüklemesiz) | **Native** | birim/arayüz |
 | Görev detayı | ACL | `GET /tasks/{id}` (her açılışta taze) | Görev | **Native** | API smoke (403/404/feature off) |
 | Tamamla / yeniden aç | `edit` | `PATCH /tasks/{id}` `done` | Görev | **Native** | arayüz |
-| Atama değiştirme | `edit` | `PATCH assignees` (tam küme) | — | Native (kısmi): API var; kişi seçici ekranı yok → web | API smoke (unassign) |
-| Başlık/açıklama/öncelik/tarih/etiket düzenleme | `edit` | `PATCH /tasks/{id}` | — | Web fallback (API hazır, ekran yok) | — |
+| Atama değiştirme | `edit` | `PATCH assignees` (kullanıcıların tam kümesi; grup atamalarına dokunulmaz) | Görev → Düzenle → Atananlar (proje üyeleri) | **Native** | `smoke:tasks`; API smoke (unassign) |
+| Başlık/açıklama/öncelik/tarih/tahmini süre/etiket düzenleme | `edit` | `PATCH /tasks/{id}` (yalnız değişen alanlar; etiket tam küme + mevcut öncelik etiketi) | Görev → Düzenle | **Native** | `smoke:tasks`; masaüstü smoke |
+| Etiket oluşturma/yönetimi | — | yok (yalnız öncelik etiketi sunucuda otomatik) | — | **Gap** (Workhub API'sinde yok; mevcut etiketler seçilebilir) | `smoke:tasks` (native backend'de düz etiket yok) |
 | Yorumlar | ACL | `GET/POST /tasks/{id}/comments` | Görev → Yorumlar | **Native** | Masaüstü smoke |
 | Yorum düzenle/sil | — | yok | — | **Gap** (Workhub API'sinde yok) | — |
-| Alt işler | `edit` | `/tasks/{id}/subtasks` (`index`+`expectedText`) | — | Web fallback (ilerleme sayacı gösteriliyor) | — |
-| Bağımlılıklar | `edit` | `/tasks/{id}/dependencies` | — | Web fallback | — |
+| Alt işler | `edit` | `/tasks/{id}/subtasks` (`index`+`expectedText`; eski metinle yazma 409 `SUBTASK_CHANGED`) | Görev → Alt işler (ekle, işaretle, sil) | **Native** | `smoke:tasks`; masaüstü smoke |
+| Bağımlılıklar | `edit`, `features.dependencies` | `POST/DELETE /tasks/{id}/dependencies` (aynı proje; döngü 409) | Görev → Bağımlılıklar (bekliyor/engelliyor) | **Native** | `smoke:tasks` |
 | Görev ekleri | — | yok | — | **Gap** | — |
 | Atama bildirimi → görev | `projects` | Notifications + `GET /tasks/{id}` | Bildirimler / push | **Native** | API smoke, push e2e |
 | Gantt / etkinlik | `projects` | `views/gantt`, `views/activity` | Diğer → web | Web fallback | — |
@@ -41,4 +42,4 @@ Gate sütunu `GET /capabilities` → `modules.*` (kullanıcı bazlı, fail-close
 | Yönetim | admin | `/admin/…` (parola onayı) | Diğer → web (yalnız admin) | Web fallback (admin parolası uygulamada saklanmaz) | — |
 | Proje/üye/sütun yönetimi | `manage` | `POST /projects`, `/members`, `/stacks` | — | Web fallback; üye silme API'si yok (**Gap**) | API smoke (oluşturma) |
 
-**Sonuç:** Günlük iş akışı native: görev listeleme, oluşturma, açma, taşıma, tamamlama, yorum, atama bildirimleri, zamanlayıcı, talep oluşturma, hedef takibi. Yönetim ve analiz modülleri (dashboard, Gantt, iş yükü, iş akışları, AI, admin) ve düzenleme alt akışları şimdilik web fallback. Bunlar açık iş olarak duruyor ve "tam Workhub native" denmiyor.
+**Sonuç:** Günlük iş akışı native: görev listeleme, oluşturma, açma, taşıma, tamamlama, alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, yorum, atama bildirimleri, zamanlayıcı, talep oluşturma, hedef takibi. Yönetim ve analiz modülleri (dashboard, Gantt, iş yükü, iş akışları, AI, admin) ve düzenleme alt akışları şimdilik web fallback. Bunlar açık iş olarak duruyor ve "tam Workhub native" denmiyor.

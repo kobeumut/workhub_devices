@@ -96,6 +96,8 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   const session = useAsync(() => backend.session(account.id), [account.id]);
   const [tab, setTab] = useState<Tab>('chats');
   const [detail, setDetail] = useState<Detail>(null);
+  const [tasksVersion, setTasksVersion] = useState(0);
+  const bumpTasks = useCallback(() => setTasksVersion((v) => v + 1), []);
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
 
@@ -150,6 +152,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             accountId={account.id}
             serverBase={account.serverBase}
             workhub={s.workhub}
+            version={tasksVersion}
             {...(detail?.kind === 'project' ? { selectedProject: detail.id } : {})}
             onOpenProject={(p) => setDetail({ kind: 'project', id: p.id, title: p.title })}
           />
@@ -166,9 +169,9 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
     detail?.kind === 'room' ? (
       <ChatView key={detail.token} accountId={account.id} room={{ token: detail.token, displayName: detail.displayName || 'Sohbet' }} selfId={selfId} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'project' ? (
-      <BoardScreen key={detail.id} accountId={account.id} project={detail} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
+      <BoardScreen key={detail.id} accountId={account.id} project={detail} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'task' ? (
-      <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
+      <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} onChanged={bumpTasks} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
     ) : null;
 
   const tabs = (

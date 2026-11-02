@@ -24,7 +24,7 @@ Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış o
 | 1 — temel/auth | `packages/core` + `Backend`; masaüstü (Electron+RNW) ve mobil (RN 0.88) kabukları; Keystore/Keychain/safeStorage; çoklu hesap; logout + revoke | `npm run check`, masaüstü smoke |
 | 2 — Talk | Oda listesi + arama + delta, geçmiş, long-poll, okundu, optimistic gönderim/`referenceId` uzlaştırma, rich-object (HTML'siz). Eksik: reply/edit/delete/reaction UI, dosya/ses notu, oda yönetimi | masaüstü smoke |
 | 3 — bildirim | Inbox + yönlendirme; Android FCM servisi, native çözme, RemoteInput yanıt, kanallar, kilit ekranında gizli içerik; iOS NSE + yanıt (**derlenmedi**); masaüstü bildirim + tepsi, macOS inline yanıt, diğerlerinde odaklı compose | Kotlin RFC testi, push e2e |
-| 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li) | masaüstü smoke, API smoke |
+| 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li). GENE-49: görev alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, proje sayaçlarının yenilenmesi | masaüstü smoke, API smoke, `smoke:tasks` |
 | 5 — modüller | Zaman (zamanlayıcı/hafta), Talepler (liste/oluştur), Hedefler (liste) native; diğerleri web fallback | `docs/workhub-modules.md` |
 | 6 — dağıtım | electron-builder ve gradle yapılandırması var; imzalama/mağaza yok | README |
 | 7 — çağrılar | Başlamadı (kapsam onayı gerekli) | — |

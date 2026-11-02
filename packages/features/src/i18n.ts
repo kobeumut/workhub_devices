@@ -39,6 +39,8 @@ export const t = {
   due: 'Bitiş',
   priority: 'Öncelik',
   newTask: 'Yeni görev',
+  editTask: 'Görevi düzenle',
+  edit: 'Düzenle',
   taskGone: 'Bu görev silinmiş.',
   taskForbidden: 'Bu göreve artık erişiminiz yok.',
   featureOff: 'Projeler modülü bu hesap için kapalı.',

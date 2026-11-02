@@ -7,7 +7,7 @@ import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './se
 import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
 import {
   openTaskFromNotification, workhubApi, workhubModulesApi,
-  type BoardPayload, type GoalSummary, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
+  type BoardPayload, type GoalSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
 
 /**
@@ -42,14 +42,7 @@ export interface ChatRequest {
   pollId?: string;
 }
 
-export interface TaskUpdate {
-  title?: string;
-  description?: string;
-  done?: boolean;
-  assignees?: string[];
-  dueDate?: string | null;
-  priority?: 'urgent' | 'high' | 'normal' | 'low' | null;
-}
+export type TaskUpdate = TaskPatch;
 
 export interface Backend {
   listAccounts(): Promise<AccountSummary[]>;
@@ -76,6 +69,11 @@ export interface Backend {
   updateTask(accountId: AccountId, cardId: number, patch: TaskUpdate): Promise<Task | null>;
   moveTask(accountId: AccountId, cardId: number, stackId: number, order: number): Promise<Task | null>;
   createTask(accountId: AccountId, boardId: number, stackId: number, title: string, idempotencyKey: string): Promise<Task | null>;
+  addSubtask(accountId: AccountId, cardId: number, text: string): Promise<SubtaskList | null>;
+  updateSubtask(accountId: AccountId, cardId: number, index: number, expectedText: string, change: { text?: string; done?: boolean }): Promise<SubtaskList | null>;
+  deleteSubtask(accountId: AccountId, cardId: number, index: number, expectedText: string): Promise<SubtaskList | null>;
+  addDependency(accountId: AccountId, predecessorId: number, successorId: number): Promise<{ id: number } | null>;
+  removeDependency(accountId: AccountId, cardId: number, dependencyId: number): Promise<void>;
 
   timer(accountId: AccountId): Promise<{ timer: Timer | null; serverTime: string }>;
   timerStart(accountId: AccountId, cardId: number | null, description: string, idempotencyKey: string): Promise<{ timer: Timer } | null>;
@@ -299,6 +297,21 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       });
       return r.data;
     },
+    async addSubtask(accountId, cardId, text) {
+      return workhubApi.addSubtask(await client(accountId), cardId, text);
+    },
+    async updateSubtask(accountId, cardId, index, expectedText, change) {
+      return workhubApi.updateSubtask(await client(accountId), cardId, index, expectedText, change);
+    },
+    async deleteSubtask(accountId, cardId, index, expectedText) {
+      return workhubApi.deleteSubtask(await client(accountId), cardId, index, expectedText);
+    },
+    async addDependency(accountId, predecessorId, successorId) {
+      return workhubApi.addDependency(await client(accountId), predecessorId, successorId);
+    },
+    async removeDependency(accountId, cardId, dependencyId) {
+      await workhubApi.removeDependency(await client(accountId), cardId, dependencyId);
+    },
 
     async timer(accountId) {
       return workhubModulesApi.timer(await client(accountId));
@@ -335,6 +348,7 @@ export const BACKEND_METHODS = [
   'rooms', 'chat', 'send', 'markRead', 'createOneToOne',
   'notifications', 'dismissNotification',
   'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
+  'addSubtask', 'updateSubtask', 'deleteSubtask', 'addDependency', 'removeDependency',
   'timer', 'timerStart', 'timerStop', 'timeWeek', 'requests', 'requestContext', 'createRequest', 'goals',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
@@ -346,6 +360,33 @@ const isStr = (max: number) => (v: unknown) => typeof v === 'string' && v.length
 const isInt = (v: unknown) => Number.isInteger(v) && (v as number) > 0;
 const isOptInt = (v: unknown) => v === undefined || isInt(v);
 const isObj = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+const isIndex = (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) < 10000;
+const isDateOrNull = (v: unknown) => v === null || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2}))?$/.test(v));
+const PRIORITIES = ['urgent', 'high', 'normal', 'low'];
+
+/** Task PATCH: only known fields with the right types; anything else is rejected, not forwarded. */
+const TASK_PATCH: Record<keyof TaskPatch, (v: unknown) => boolean> = {
+  title: (v) => isStr(255)(v) && (v as string).trim().length > 0,
+  description: isStr(100000),
+  done: (v) => typeof v === 'boolean',
+  assignees: (v) => Array.isArray(v) && v.length <= 50 && v.every((x) => isStr(64)(x) && (x as string).length > 0),
+  labels: (v) => Array.isArray(v) && v.length <= 50 && v.every(isInt),
+  startDate: isDateOrNull,
+  dueDate: isDateOrNull,
+  estimateSec: (v) => v === null || (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 10_000 * 3600),
+  priority: (v) => v === null || PRIORITIES.includes(v as string),
+};
+export const isValidTaskPatch = (v: unknown): v is TaskPatch => {
+  if (!isObj(v)) return false;
+  const entries = Object.entries(v as object);
+  return entries.length > 0 && entries.every(([k, x]) => Object.hasOwn(TASK_PATCH, k) && TASK_PATCH[k as keyof TaskPatch](x));
+};
+const isSubtaskChange = (v: unknown) => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o);
+  return keys.length > 0 && keys.every((k) => k === 'text' || k === 'done') && (o.text === undefined || isStr(1000)(o.text)) && (o.done === undefined || typeof o.done === 'boolean');
+};
 
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
@@ -367,9 +408,14 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   openTask: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   comments: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   addComment: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isStr(10000)(a[2]) && isStr(128)(a[3]),
-  updateTask: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isObj(a[2]),
+  updateTask: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidTaskPatch(a[2]),
   moveTask: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && Number.isInteger(a[3]),
   createTask: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isStr(255)(a[3]) && isStr(128)(a[4]),
+  addSubtask: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isStr(1000)(a[2]),
+  updateSubtask: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isIndex(a[2]) && isStr(4000)(a[3]) && isSubtaskChange(a[4]),
+  deleteSubtask: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isIndex(a[2]) && isStr(4000)(a[3]),
+  addDependency: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && a[1] !== a[2],
+  removeDependency: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
   timer: (a) => a.length === 1 && isAccountId(a[0]),
   timerStart: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === null || isInt(a[1])) && isStr(1000)(a[2]) && isStr(128)(a[3]),
   timerStop: (a) => a.length === 1 && isAccountId(a[0]),
