@@ -16,6 +16,19 @@ Talk sohbetleri ana ekran olacak; kullanıcı mesaj bildiriminin içinden cevapl
 
 Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış olması uygulamanın/testin tamamlandığı anlamına gelmez.
 
+## Uygulama ilerlemesi (GENE-48)
+
+| Faz | Durum | Kanıt |
+|---|---|---|
+| 0 — sürüm/push kapısı | **Bloke**: test sunucusu, hesaplar, bundle ID, APNs/FCM, relay sahibi ve fiziksel cihaz verilmedi | `docs/phase0-status.md` |
+| 1 — temel/auth | Kısmi: `packages/core` (URL doğrulama, OCS istemcisi/hata normalizasyonu, Login Flow v2, hesap izolasyonu, logout, capability gate) + CI. RN/Electron kabukları, OS secret store, beş OS build'i yok | `npm run check` (35 test) |
+| 2 — Talk | Kısmi: core oda/sohbet/gönderim/merge/rich-render mantığı; UI ve gerçek sunucu testi yok | `packages/core/src/talk.ts` |
+| 3 — bildirim | Kısmi: saf dispatcher, push payload yorumlama, deep link, gizli önizleme; native push/quick reply yok (Faz 0'a bağlı) | `packages/core/src/routing.ts` |
+| 4 — Workhub | Kısmi: API v1 istemcisinin task/proje/yorum alt kümesi, bildirimden ACL'li açılış; UI yok | `packages/core/src/workhub.ts` |
+| 5–7 | Başlamadı | — |
+
+Aşağıdaki checkbox'lar yalnız madde gerçek ortamda tamamlanınca işaretlenir; core mantığının mock testleri bir maddeyi tek başına tamamlamaz.
+
 ## 1. Kararlar ve kapsam sınırı
 
 | Konu | Karar / gerekçe |
