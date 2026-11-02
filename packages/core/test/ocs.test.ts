@@ -100,3 +100,16 @@ test('Retry-After seconds and HTTP-date', () => {
   assert.equal(parseRetryAfter(null), undefined);
   assert.equal(parseRetryAfter('soon'), undefined);
 });
+
+test('a redirect already followed by the platform (React Native) is rejected', async () => {
+  const followed = json(200, ocs({ secret: 'x' }));
+  Object.defineProperty(followed, 'url', { value: 'https://evil.example/ocs/v2.php/x' });
+  const f1 = scriptedFetch(followed);
+  assert.equal(((await kindOf(client(f1).get('/a'))) as OcsError).kind, 'redirect');
+  const flagged = json(200, ocs({}));
+  Object.defineProperty(flagged, 'redirected', { value: true });
+  assert.equal(((await kindOf(client(scriptedFetch(flagged)).get('/a'))) as OcsError).kind, 'redirect');
+  const same = json(200, ocs({ ok: 1 }));
+  Object.defineProperty(same, 'url', { value: 'https://cloud.example.com/nc/ocs/v2.php/a?format=json' });
+  assert.deepEqual(await client(scriptedFetch(same)).get('/a'), { ok: 1 });
+});

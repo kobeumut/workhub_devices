@@ -178,6 +178,12 @@ export class OcsClient {
     if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400 && res.status !== 304)) {
       throw new OcsError('redirect', res.status || undefined);
     }
+    // React Native's fetch cannot disable redirects (OkHttp/NSURLSession follow them). Detect a
+    // followed redirect after the fact and refuse the response; OkHttp already strips the
+    // Authorization header on cross-host redirects.
+    if (res.redirected || (res.url && !res.url.startsWith(`${this.serverBase}/`))) {
+      throw new OcsError('redirect', res.status || undefined);
+    }
     if (res.status === 304 || res.status === 204) return { status: res.status, data: null, headers: res.headers };
 
     let envelope: OcsEnvelope | undefined;

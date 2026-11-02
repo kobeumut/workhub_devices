@@ -7,7 +7,7 @@ import { createPublicKey, verify } from 'node:crypto';
  * accept that protocol for native apps. The device therefore registers this endpoint at its
  * Nextcloud server:
  *
- *     https://<relay>/wp/<fcmRegistrationToken>?k=<server VAPID public key>
+ *     https://<relay>/wp/<fcmRegistrationToken>?k=<server VAPID public key>&a=<opaque account tag>
  *
  * For every push the relay
  *   1. accepts only requests signed (VAPID, RFC 8292) by the key pinned in the URL — so only the
@@ -112,7 +112,7 @@ export function verifyVapid(jwt: string, key: string, origin: string, nowMs: num
   }
 }
 
-export function buildFcmMessage(token: string, body: Uint8Array, h: RelayRequest['headers']): FcmMessage {
+export function buildFcmMessage(token: string, body: Uint8Array, h: RelayRequest['headers'], accountTag?: string): FcmMessage {
   const topic = h.topic && /^[A-Za-z0-9_-]{1,32}$/.test(h.topic) ? h.topic : undefined;
   const urgency = ['very-low', 'low', 'normal', 'high'].includes(h.urgency ?? '') ? (h.urgency as string) : 'normal';
   const ttlSec = Math.min(Math.max(Number(h.ttl) || 0, 0), 28 * 24 * 3600);
@@ -120,6 +120,8 @@ export function buildFcmMessage(token: string, body: Uint8Array, h: RelayRequest
   const data: Record<string, string> = { urgency };
   if (ct.length <= MAX_INLINE_CT) data.ct = ct; // otherwise the app fetches by topic/nid
   if (topic) data.topic = topic;
+  // Opaque per-account tag chosen by the device (one FCM token serves several accounts).
+  if (accountTag) data.acct = accountTag;
   return {
     token,
     data,
@@ -154,7 +156,9 @@ export async function handleWebPush(req: RelayRequest, deps: RelayDeps): Promise
   if ((req.headers['content-encoding'] ?? '').toLowerCase() !== 'aes128gcm') return { status: 415 };
   if (req.body.length === 0 || req.body.length > MAX_BODY) return { status: 413 };
 
-  const result = await deps.send(buildFcmMessage(token, req.body, req.headers));
+  const acct = req.query.a;
+  if (acct !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(acct)) return { status: 404 };
+  const result = await deps.send(buildFcmMessage(token, req.body, req.headers, acct));
   if (result.ok) return { status: 201 };
   switch (result.reason) {
     case 'unregistered':

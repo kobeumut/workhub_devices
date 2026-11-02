@@ -4,7 +4,8 @@ import type { AccountId, AccountSummary, AppRoute, Backend, RoutedTarget, Sessio
 import { ServicesProvider, useAsync, useServices, type PlatformServices } from './services';
 import { LoginScreen } from './LoginScreen';
 import { ChatView, RoomList } from './talk';
-import { BoardScreen, ProjectsScreen, TaskScreen } from './workhub';
+import { BoardScreen, TaskScreen } from './workhub';
+import { WorkhubHome } from './modules';
 import { InboxScreen } from './inbox';
 import { Button, Empty, ErrorBanner, Header, Loading, card } from './ui';
 import { colors, font, space } from './theme';
@@ -134,8 +135,15 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         return <RoomList accountId={account.id} {...(detail?.kind === 'room' ? { selected: detail.token } : {})} onOpen={(r) => setDetail({ kind: 'room', token: r.token, displayName: r.displayName })} />;
       case 'tasks':
         if (!s.workhub) return <Empty text={t.workhubMissing} />;
-        if (!s.workhub.modules.projects) return <Empty text={t.featureOff} />;
-        return <ProjectsScreen accountId={account.id} {...(detail?.kind === 'project' ? { selected: detail.id } : {})} onOpen={(p) => setDetail({ kind: 'project', id: p.id, title: p.title })} />;
+        return (
+          <WorkhubHome
+            accountId={account.id}
+            serverBase={account.serverBase}
+            workhub={s.workhub}
+            {...(detail?.kind === 'project' ? { selectedProject: detail.id } : {})}
+            onOpenProject={(p) => setDetail({ kind: 'project', id: p.id, title: p.title })}
+          />
+        );
       case 'inbox':
         return <InboxScreen accountId={account.id} serverBase={account.serverBase} onRoute={go} />;
       case 'account':
@@ -150,7 +158,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
     ) : detail?.kind === 'project' ? (
       <BoardScreen key={detail.id} accountId={account.id} project={detail} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'task' ? (
-      <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
+      <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
     ) : null;
 
   const tabs = (

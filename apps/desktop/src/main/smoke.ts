@@ -101,15 +101,29 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Masaüstünden yorum', 15_000);
       await shot('06-task');
     });
+    await step('time module: start → stop timer', async () => {
+      await click('İşler');
+      await sleep(500);
+      if (!(await click('Zaman'))) throw new Error('time tab');
+      await waitText('Zamanlayıcı', 15_000);
+      if (await js<boolean>(`document.body.innerText.includes('Durdur')`)) await click('Durdur');
+      await waitText('Başlat', 15_000);
+      await type('input', 'Masaüstü smoke');
+      await click('Başlat');
+      await waitText('Durdur', 15_000);
+      await shot('07-time');
+      await click('Durdur');
+      await waitText('Başlat', 15_000);
+    });
     await step('inbox', async () => {
       await click('Bildirimler');
       await sleep(2500);
-      await shot('07-inbox');
+      await shot('08-inbox');
     });
     await step('account', async () => {
       await click('Hesap');
       await waitText('Çıkış yap');
-      await shot('08-account');
+      await shot('09-account');
     });
   } catch {
     /* recorded in steps */

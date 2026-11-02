@@ -109,3 +109,76 @@ export async function openTaskFromNotification(c: OcsClient, cardId: number, pro
     throw e;
   }
 }
+
+// ---- Further modules (Time, Requests, Goals) -----------------------------------
+
+export interface Timer {
+  cardId: number | null;
+  card: { id: number; title: string } | null;
+  description: string;
+  billable: boolean;
+  startedAt: string;
+  elapsedSec: number;
+  version: number;
+}
+
+export interface TimeEntry {
+  id: number;
+  cardId: number | null;
+  card: { id: number; title: string } | null;
+  localDate: string;
+  durationSec: number;
+  description: string;
+  billable: boolean;
+  locked: boolean;
+}
+
+export interface TimeWeek {
+  period: { id: number; localStartDate: string; localEndDate: string; state: string; open: boolean };
+  days: { date: string; totalSec: number; billableSec: number }[];
+  entries: TimeEntry[];
+  totals: { totalSec: number; billableSec: number };
+  timer: Timer | null;
+  serverTime: string;
+}
+
+export interface WorkRequest {
+  id: number;
+  version: number;
+  title: string;
+  description: string;
+  requesterName: string;
+  recipientName: string;
+  state: string;
+  canRespond: boolean;
+  createdAt: string;
+}
+
+export interface RequestContext {
+  uid: string;
+  manager: { uid: string; displayName: string } | null;
+  managers: { uid: string; displayName: string }[];
+  isManager: boolean;
+}
+
+export interface GoalSummary {
+  id: number;
+  title: string;
+  progressBp: number | null;
+  state: string;
+  owner: string;
+}
+
+export const workhubModulesApi = {
+  timer: (c: OcsClient) => c.get<{ timer: Timer | null; serverTime: string }>(`${BASE}/time/timer`),
+  /** One active timer per user (server enforced: 409 TIMER_ALREADY_RUNNING). */
+  timerStart: async (c: OcsClient, body: { cardId?: number; description?: string }, idempotencyKey: string) =>
+    (await c.request<{ timer: Timer }>(`${BASE}/time/timer/start`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
+  timerStop: async (c: OcsClient) => (await c.request<{ entries: TimeEntry[]; totalSec: number }>(`${BASE}/time/timer/stop`, { method: 'POST', body: {} })).data,
+  week: (c: OcsClient, date?: string) => c.get<TimeWeek>(`${BASE}/time/week`, date ? { query: { date } } : {}),
+  requests: async (c: OcsClient, scope: 'mine' | 'received' | 'team') => (await c.get<{ items: WorkRequest[] }>(`${BASE}/requests`, { query: { scope, state: 'any' } })).items,
+  requestContext: (c: OcsClient) => c.get<RequestContext>(`${BASE}/requests/context`),
+  createRequest: async (c: OcsClient, body: { title: string; description: string; recipientUid?: string }, idempotencyKey: string) =>
+    (await c.request<{ id: number }>(`${BASE}/requests`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
+  goals: async (c: OcsClient) => (await c.get<{ items: GoalSummary[] }>(`${BASE}/goals`)).items,
+};

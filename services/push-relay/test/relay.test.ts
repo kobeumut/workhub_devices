@@ -117,3 +117,12 @@ test('VAPID aud: exact origin, or host without port (Nextcloud web-push library 
   assert.ok(!audienceMatches('http://relay', 'https://relay:8789'));
   assert.ok(!audienceMatches(undefined, 'https://relay'));
 });
+
+test('account tag is forwarded and validated', async () => {
+  const s = sender();
+  const ok = await handleWebPush(req({ query: { k: k.raw, a: 'acc_01-x' } }), { origin: ORIGIN, send: s.send, now: () => NOW });
+  assert.equal(ok.status, 201);
+  assert.equal(s.sent[0]!.data.acct, 'acc_01-x');
+  const bad = await handleWebPush(req({ query: { k: k.raw, a: 'a b/c' } }), { origin: ORIGIN, send: sender().send, now: () => NOW });
+  assert.equal(bad.status, 404);
+});

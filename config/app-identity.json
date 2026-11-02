@@ -4,7 +4,11 @@
   "bundleId": "com.next.workhub",
   "android": {
     "applicationId": "com.next.workhub",
-    "notificationChannels": ["chat", "workhub", "other"]
+    "notificationChannels": [
+      "chat",
+      "workhub",
+      "other"
+    ]
   },
   "ios": {
     "bundleId": "com.next.workhub",
@@ -19,6 +23,8 @@
     "transport": "webpush-via-fcm-relay",
     "webPushAppTypes": "talk,workhub",
     "relayFunction": "webpush",
-    "relayRegion": "europe-west1"
+    "relayRegion": "europe-west1",
+    "relayBase": "",
+    "$comment": "relayBase: Firebase relay function URL, e.g. https://europe-west1-<project>.cloudfunctions.net/webpush (README: Push bildirimleri). Empty = push disabled, app still works."
   }
 }

@@ -109,6 +109,13 @@ export async function getVapidKey(client: OcsClient): Promise<string> {
   return r.vapid;
 }
 
+/** Relay endpoint for one account on this device. */
+export function relayEndpoint(relayBase: string, fcmToken: string, vapidKey: string, accountTag: string): string {
+  if (!/^https:\/\//.test(relayBase)) throw new Error('relay must be https');
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(accountTag)) throw new Error('invalid account tag');
+  return `${relayBase.replace(/\/+$/, '')}/wp/${encodeURIComponent(fcmToken)}?k=${vapidKey.replace(/=+$/, '')}&a=${accountTag}`;
+}
+
 /** 201 = created (activation push follows), 200 = already registered/updated. */
 export async function registerWebPush(client: OcsClient, endpoint: string, keys: Pick<SubscriptionKeys, 'publicKey' | 'auth'>, appTypes = WEBPUSH_APP_TYPES): Promise<'created' | 'updated'> {
   if (!endpoint.startsWith('https://')) throw new OcsError('client', undefined, 'endpoint must be https');
@@ -130,6 +137,7 @@ export async function unregisterWebPush(client: OcsClient): Promise<void> {
  * `GET notifications/{id}` with its own credentials (404 → the notification was deleted).
  */
 export interface RelayedPush {
+  acct?: string; // opaque per-account tag from the endpoint URL
   ct?: string; // base64url aes128gcm body
   topic?: string;
   urgency?: string;

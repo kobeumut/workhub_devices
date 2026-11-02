@@ -142,13 +142,14 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack }: { accoun
 }
 
 /** Task detail always comes from a fresh, ACL-checked fetch (never from notification payload). */
-export function TaskScreen({ accountId, cardId, onBack }: { accountId: AccountId; cardId: number; onBack?: () => void }) {
+export function TaskScreen({ accountId, cardId, onBack, timeEnabled }: { accountId: AccountId; cardId: number; onBack?: () => void; timeEnabled?: boolean }) {
   const { backend } = useServices();
   const s = useAsync(() => backend.openTask(accountId, cardId), [accountId, cardId]);
   const comments = useAsync(() => (s.data?.state === 'ok' ? backend.comments(accountId, cardId) : Promise.resolve([])), [accountId, cardId, s.data?.state]);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
+  const [timerNote, setTimerNote] = useState<string>();
 
   if (s.loading && !s.data) return <Loading />;
   if (s.error) {
@@ -183,6 +184,19 @@ export function TaskScreen({ accountId, cardId, onBack }: { accountId: AccountId
     }
   };
 
+  const startTimer = async () => {
+    setBusy(true);
+    setErr(undefined);
+    try {
+      await backend.timerStart(accountId, cardId, '', uuid());
+      setTimerNote('Zamanlayıcı bu görev için başladı (İşler → Zaman).');
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const addComment = async () => {
     const msg = comment.trim();
     if (!msg) return;
@@ -210,6 +224,8 @@ export function TaskScreen({ accountId, cardId, onBack }: { accountId: AccountId
           {task.done ? <Text style={{ color: colors.ok, marginTop: space(1) }}>✓ {formatDate(task.done)}</Text> : null}
           {task.description ? <Text style={{ marginTop: space(3), color: colors.text }} selectable>{task.description}</Text> : null}
           <Button title={task.done ? t.markUndone : t.markDone} kind="secondary" onPress={() => void toggleDone()} busy={busy} />
+          {timeEnabled ? <Button title="⏱ Zamanlayıcı başlat" kind="secondary" onPress={() => void startTimer()} busy={busy} /> : null}
+          {timerNote ? <Text style={{ color: colors.ok }}>{timerNote}</Text> : null}
         </View>
         <View style={card}>
           <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>

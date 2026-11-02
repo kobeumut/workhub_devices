@@ -117,8 +117,10 @@ export async function fetchChat(client: OcsClient, token: string, o: ChatFetchOp
 }
 
 /** 64 hex chars, the format Talk expects for `referenceId`. */
-export function newReferenceId(random: (bytes: Uint8Array) => Uint8Array = (b) => crypto.getRandomValues(b)): string {
-  return [...random(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
+export function newReferenceId(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function sendMessage(

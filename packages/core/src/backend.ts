@@ -5,7 +5,10 @@ import { OcsError, type FetchLike, type OcsClient } from './ocs';
 import { dismissNotification, listNotifications, type InboxNotification } from './routing';
 import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './serverUrl';
 import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
-import { openTaskFromNotification, workhubApi, type BoardPayload, type ProjectSummary, type Task, type TaskComment, type TaskOpenResult } from './workhub';
+import {
+  openTaskFromNotification, workhubApi, workhubModulesApi,
+  type BoardPayload, type GoalSummary, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
+} from './workhub';
 
 /**
  * The single domain API every UI talks to. It is implemented once here ("direct", used by the
@@ -73,6 +76,15 @@ export interface Backend {
   updateTask(accountId: AccountId, cardId: number, patch: TaskUpdate): Promise<Task | null>;
   moveTask(accountId: AccountId, cardId: number, stackId: number, order: number): Promise<Task | null>;
   createTask(accountId: AccountId, boardId: number, stackId: number, title: string, idempotencyKey: string): Promise<Task | null>;
+
+  timer(accountId: AccountId): Promise<{ timer: Timer | null; serverTime: string }>;
+  timerStart(accountId: AccountId, cardId: number | null, description: string, idempotencyKey: string): Promise<{ timer: Timer } | null>;
+  timerStop(accountId: AccountId): Promise<{ entries: TimeEntry[]; totalSec: number } | null>;
+  timeWeek(accountId: AccountId, date?: string): Promise<TimeWeek>;
+  requests(accountId: AccountId, scope: 'mine' | 'received' | 'team'): Promise<WorkRequest[]>;
+  requestContext(accountId: AccountId): Promise<RequestContext>;
+  createRequest(accountId: AccountId, title: string, description: string, recipientUid: string | null, idempotencyKey: string): Promise<{ id: number } | null>;
+  goals(accountId: AccountId): Promise<GoalSummary[]>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -287,6 +299,31 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       });
       return r.data;
     },
+
+    async timer(accountId) {
+      return workhubModulesApi.timer(await client(accountId));
+    },
+    async timerStart(accountId, cardId, description, idempotencyKey) {
+      return workhubModulesApi.timerStart(await client(accountId), { ...(cardId ? { cardId } : {}), ...(description ? { description } : {}) }, idempotencyKey);
+    },
+    async timerStop(accountId) {
+      return workhubModulesApi.timerStop(await client(accountId));
+    },
+    async timeWeek(accountId, date) {
+      return workhubModulesApi.week(await client(accountId), date);
+    },
+    async requests(accountId, scope) {
+      return workhubModulesApi.requests(await client(accountId), scope);
+    },
+    async requestContext(accountId) {
+      return workhubModulesApi.requestContext(await client(accountId));
+    },
+    async createRequest(accountId, title, description, recipientUid, idempotencyKey) {
+      return workhubModulesApi.createRequest(await client(accountId), { title, description, ...(recipientUid ? { recipientUid } : {}) }, idempotencyKey);
+    },
+    async goals(accountId) {
+      return workhubModulesApi.goals(await client(accountId));
+    },
   };
 }
 
@@ -298,6 +335,7 @@ export const BACKEND_METHODS = [
   'rooms', 'chat', 'send', 'markRead', 'createOneToOne',
   'notifications', 'dismissNotification',
   'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
+  'timer', 'timerStart', 'timerStop', 'timeWeek', 'requests', 'requestContext', 'createRequest', 'goals',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -332,6 +370,14 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   updateTask: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isObj(a[2]),
   moveTask: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && Number.isInteger(a[3]),
   createTask: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isStr(255)(a[3]) && isStr(128)(a[4]),
+  timer: (a) => a.length === 1 && isAccountId(a[0]),
+  timerStart: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === null || isInt(a[1])) && isStr(1000)(a[2]) && isStr(128)(a[3]),
+  timerStop: (a) => a.length === 1 && isAccountId(a[0]),
+  timeWeek: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && (a[1] === undefined || (typeof a[1] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a[1]))),
+  requests: (a) => a.length === 2 && isAccountId(a[0]) && ['mine', 'received', 'team'].includes(a[1] as string),
+  requestContext: (a) => a.length === 1 && isAccountId(a[0]),
+  createRequest: (a) => a.length === 5 && isAccountId(a[0]) && isStr(255)(a[1]) && isStr(10000)(a[2]) && (a[3] === null || isStr(64)(a[3])) && isStr(128)(a[4]),
+  goals: (a) => a.length === 1 && isAccountId(a[0]),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */

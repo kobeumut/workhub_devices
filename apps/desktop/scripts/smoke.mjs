@@ -37,5 +37,5 @@ const code = await new Promise((r) => child.on('exit', r));
 rmSync(profile, { recursive: true, force: true });
 const result = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
 for (const s of result.steps) console.log(`${s.ok ? '✔' : '✘'} ${s.step}${s.note ? ` — ${s.note}` : ''}`);
-process.exitCode = result.steps.every((s) => s.ok) && result.steps.length >= 8 ? 0 : 1;
+process.exitCode = result.steps.every((s) => s.ok) && result.steps.length >= 9 ? 0 : 1;
 console.log(`electron exit ${code}; screenshots in ${out}`);

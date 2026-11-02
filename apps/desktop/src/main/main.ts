@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray, t
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
-import { createDirectBackend, dispatchWire, unregisterWebPush, type RoutedTarget } from '@workhub-devices/core';
+import { createDirectBackend, dispatchWire, isWithinServer, unregisterWebPush, type RoutedTarget } from '@workhub-devices/core';
 import { createPlainStore, createSecretStore } from './stores';
 import { DesktopNotifier } from './notifier';
 import { runSmoke } from './smoke';
@@ -120,7 +120,10 @@ ipcMain.handle('workhub:invoke', async (e, method: unknown, args: unknown) => {
 });
 
 ipcMain.handle('workhub:openExternal', async (e, url: unknown) => {
-  if (!isOurFrame(e.sender, e.senderFrame?.url) || typeof url !== 'string' || !allowedExternal.has(url)) return false;
+  if (!isOurFrame(e.sender, e.senderFrame?.url) || typeof url !== 'string') return false;
+  // Allowed: login pages main issued, or https pages on a logged-in account's own server (web fallback).
+  const onOwnServer = (await backend.listAccounts()).some((a) => isWithinServer(a.serverBase, url) && /^https?:\/\//.test(url));
+  if (!allowedExternal.has(url) && !onOwnServer) return false;
   if (smokeOut) {
     await fs.writeFile(join(smokeOut, 'login-url.txt'), url);
     return true;
