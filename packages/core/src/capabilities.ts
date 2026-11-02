@@ -13,7 +13,7 @@ export interface RawServerCapabilities {
 export interface ServerCapabilities {
   nextcloudMajor: number | null;
   nextcloudVersion: string | null;
-  talk: { available: boolean; version: string | null; features: ReadonlySet<string> };
+  talk: { available: boolean; version: string | null; features: ReadonlySet<string>; canCreate: boolean };
   notifications: { available: boolean; endpoints: ReadonlySet<string>; push: ReadonlySet<string> };
   /** Instance-wide Workhub info. NOT a per-user permission: use `getWorkhubBootstrap` for that. */
   workhub: { installed: boolean; version: string | null; apiVersion: string | null };
@@ -27,7 +27,13 @@ export function parseServerCapabilities(raw: RawServerCapabilities): ServerCapab
   return {
     nextcloudMajor: typeof raw.version?.major === 'number' ? raw.version.major : null,
     nextcloudVersion: raw.version?.string ?? null,
-    talk: { available: talkFeatures.size > 0, version: caps.spreed?.version ?? null, features: talkFeatures },
+    talk: {
+      available: talkFeatures.size > 0,
+      version: caps.spreed?.version ?? null,
+      features: talkFeatures,
+      // `conversations.can-create` (admin may restrict creation to groups); missing → false (fail closed)
+      canCreate: (caps.spreed?.config?.conversations as Record<string, unknown> | undefined)?.['can-create'] === true,
+    },
     notifications: {
       available: !!caps.notifications,
       endpoints: strings(caps.notifications?.['ocs-endpoints']),

@@ -89,6 +89,162 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await shot('03-chat');
       return pending ? 'still pending' : `sent: ${msg}`;
     });
+    // Talk extensions (GENE-57): the other participant (B) acts over the REST API while the UI is open.
+    const bUser = process.env.WORKHUB_SMOKE_B_USER ?? '';
+    const bPass = process.env.WORKHUB_SMOKE_B_PASS ?? '';
+    const asB = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+      const r = await fetch(`${process.env.WORKHUB_SMOKE_SERVER}${path}${path.includes('?') ? '&' : '?'}format=json`, {
+        method,
+        headers: { Authorization: `Basic ${Buffer.from(`${bUser}:${bPass}`).toString('base64')}`, 'OCS-APIRequest': 'true', Accept: 'application/json', 'Content-Type': 'application/json' },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      if (!r.ok) throw new Error(`B ${method} → ${r.status}`);
+      return ((await r.json()) as { ocs: { data: T } }).ocs.data;
+    };
+    /** Click the LAST matching button: the chat pane comes after the room list (whose rows preview the same text). */
+    const clickLast = (text: string) =>
+      js<boolean>(`(() => {
+        const els = [...document.querySelectorAll('[role=button]')].filter(e => e.innerText.includes(${JSON.stringify(text)}) || e.getAttribute('aria-label') === ${JSON.stringify(text)});
+        const el = els[els.length - 1]; if (!el) return false; el.click(); return true; })()`);
+    const textareaValue = () => js<string>(`(document.querySelector('textarea') || {}).value || ''`);
+    if (bUser && bPass) {
+      const stamp = new Date().toISOString().slice(11, 19);
+      const roomName = `Masaüstü Talk ${stamp}`;
+      let token = '';
+      await step('talk: new group conversation → description → add participant (autocomplete) → promote', async () => {
+        await click('Sohbetler');
+        if (!(await click('+ Yeni sohbet'))) throw new Error('new room button');
+        if (!(await type('input[aria-label="Sohbet adı"]', roomName))) throw new Error('room name input');
+        if (!(await click('Sohbeti oluştur'))) throw new Error('create');
+        await waitText(roomName, 15_000);
+        if (!(await click('Sohbet bilgileri'))) throw new Error('info button');
+        await waitText('Katılımcılar', 10_000);
+        if (!(await type('textarea[aria-label="Açıklama"]', 'Masaüstü smoke açıklaması'))) throw new Error('description');
+        if (!(await click('Bilgileri kaydet'))) throw new Error('save info');
+        await waitText('Sohbet bilgileri kaydedildi.', 10_000);
+        if (!(await type('input[aria-label="Katılımcı ekle: kişi veya grup ara"]', bUser.slice(0, 3)))) throw new Error('invite search');
+        const member = process.env.WORKHUB_SMOKE_MEMBER ?? 'Bob';
+        const end = Date.now() + 10_000;
+        while (!(await click(`${member} ekle`))) {
+          if (Date.now() > end) throw new Error('invite candidate');
+          await sleep(300);
+        }
+        await waitText(`${member} eklendi.`, 10_000);
+        if (!(await click(`${member}: moderatör yap`))) throw new Error('promote');
+        await waitText(`${member} · Moderatör`, 10_000);
+        await shot('03b-talk-room-settings');
+        if (!(await click(`${member}: moderatörlüğü al`))) throw new Error('demote');
+        const end2 = Date.now() + 10_000;
+        while (!(await js<boolean>(`!!document.querySelector('[aria-label=${JSON.stringify(`${member}: moderatör yap`)}]')`))) {
+          if (Date.now() > end2) throw new Error('demote not applied');
+          await sleep(300);
+        }
+        if (!(await click('Kapat'))) throw new Error('close info');
+        await waitText('Masaüstü smoke açıklaması', 10_000);
+        const rooms = await asB<Array<{ token: string; displayName: string }>>('GET', '/ocs/v2.php/apps/spreed/api/v4/room');
+        token = rooms.find((r) => r.displayName === roomName)?.token ?? '';
+        if (!token) throw new Error('B does not see the room');
+        return `room ${token}; B sees it`;
+      });
+      const first = `Talk ilk ${stamp}`;
+      let firstId = 0;
+      await step('talk: mention autocomplete → send; B reacts + edits own message → visible live in the UI', async () => {
+        if (!(await type('textarea', `@${bUser.slice(0, 2)}`))) throw new Error('composer');
+        const end = Date.now() + 10_000;
+        while (!(await click(`Bahset: ${process.env.WORKHUB_SMOKE_MEMBER ?? 'Bob'}`))) {
+          if (Date.now() > end) throw new Error('mention suggestion');
+          await sleep(300);
+        }
+        const v = await textareaValue();
+        if (!v.startsWith(`@${bUser}`) && !v.startsWith(`@"${bUser}"`)) throw new Error(`mention not inserted: ${v.length} chars`);
+        await type('textarea', `${v}${first}`);
+        if (!(await click('Gönder'))) throw new Error('send');
+        await waitText(first, 15_000);
+        await waitText(`@${process.env.WORKHUB_SMOKE_MEMBER ?? 'Bob'}`, 10_000);
+        // The pending bubble shows the text immediately; wait until the server has it.
+        let m: { id: number; message: string; messageParameters: unknown } | undefined;
+        for (const endB = Date.now() + 15_000; !m && Date.now() < endB; await sleep(500)) {
+          const msgs = await asB<Array<{ id: number; message: string; messageParameters: unknown }>>('GET', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}?lookIntoFuture=0&limit=20`);
+          m = msgs.find((x) => x.message.includes(first));
+        }
+        if (!m) throw new Error('B does not see the message');
+        if (!JSON.stringify(m.messageParameters).includes(`"id":"${bUser}"`)) throw new Error('mention not parsed by server');
+        firstId = m.id;
+        await asB('POST', `/ocs/v2.php/apps/spreed/api/v1/reaction/${token}/${firstId}`, { reaction: '👍' });
+        const bMsg = await asB<{ id: number }>('POST', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}`, { message: `B mesajı ${stamp}` });
+        await asB('PUT', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}/${bMsg.id}`, { message: `B düzeltti ${stamp}` });
+        await waitText('👍 1', 45_000);
+        await waitText(`B düzeltti ${stamp}`, 45_000);
+        await waitText('düzenlendi', 5_000);
+        await shot('03c-talk-live-updates');
+        return `mention parsed for ${bUser}; reaction + edit from B arrived through the long-poll`;
+      });
+      const edited = `Talk düzenlendi ${stamp}`;
+      await step('talk: reply (quote) → edit own → add reaction → who reacted → search → delete; B sees each change', async () => {
+        if (!(await clickLast(first))) throw new Error('select message');
+        if (!(await click('Yanıtla'))) throw new Error('reply button');
+        await waitText('Yanıtlanıyor', 5_000);
+        await type('textarea', `Yanıt ${stamp}`);
+        if (!(await click('Gönder'))) throw new Error('send reply');
+        await waitText(`Yanıt ${stamp}`, 15_000);
+        if (!(await clickLast(first))) throw new Error('select again');
+        if (!(await click('Mesajı düzenle'))) throw new Error('edit button');
+        await waitText('Mesaj düzenleniyor', 5_000);
+        const cur = await textareaValue();
+        if (!cur.includes(first)) throw new Error('edit box not prefilled');
+        await type('textarea', cur.replace(first, edited));
+        if (!(await click('Düzenlemeyi kaydet'))) throw new Error('save edit');
+        await waitText(edited, 15_000);
+        if (!(await clickLast(edited))) throw new Error('select edited');
+        if (!(await click('Tepki ekle'))) throw new Error('reaction picker');
+        if (!(await click('🎉 tepkisi ekle'))) throw new Error('pick 🎉');
+        await waitText('🎉 1', 10_000);
+        if (!(await clickLast(edited))) throw new Error('select for reactors');
+        if (!(await click('Tepki verenler'))) throw new Error('reactors');
+        await waitText(`👍 ${process.env.WORKHUB_SMOKE_MEMBER ?? 'Bob'}`, 10_000);
+        await shot('03d-talk-actions');
+        // B's view after edit + reaction: the quote in the reply carries the edited text
+        const seen = await asB<Array<{ id: number; message: string; reactions?: Record<string, number>; lastEditTimestamp?: number; parent?: { id: number; message?: string } }>>('GET', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}?lookIntoFuture=0&limit=30`);
+        const orig = seen.find((x) => x.id === firstId);
+        if (!orig?.message.includes(edited) || !orig.lastEditTimestamp) throw new Error('B does not see the edit');
+        if (orig.reactions?.['🎉'] !== 1 || orig.reactions?.['👍'] !== 1) throw new Error('B does not see both reactions');
+        const reply = seen.find((x) => x.message === `Yanıt ${stamp}`);
+        if (reply?.parent?.id !== firstId) throw new Error('reply has no quote for B');
+        // search (unified search, this conversation)
+        if (!(await click('Bu sohbette ara'))) throw new Error('search button');
+        if (!(await type('input[aria-label="Bu sohbette ara"]', 'düzenlendi'))) throw new Error('search input');
+        if (!(await click('Aramayı başlat'))) throw new Error('search run');
+        const endS = Date.now() + 15_000;
+        while (!(await js<boolean>(`[...document.querySelectorAll('[role=button]')].some(e => e.innerText.includes(${JSON.stringify(stamp)}) && e.innerText.includes('düzenlendi') && !e.innerText.includes('Yanıt'))`))) {
+          if (Date.now() > endS) throw new Error('search found nothing');
+          await sleep(300);
+        }
+        await shot('03e-talk-search');
+        if (!(await click('Kapat'))) throw new Error('close search');
+        // delete
+        if (!(await clickLast(edited))) throw new Error('select for delete');
+        if (!(await click('Mesajı sil'))) throw new Error('delete button');
+        if (!(await click('Evet, sil'))) throw new Error('confirm delete');
+        await waitText('Bu mesaj silindi', 10_000);
+        const after = await asB<Array<{ id: number; messageType: string }>>('GET', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}?lookIntoFuture=0&limit=30`);
+        if (after.find((x) => x.id === firstId)?.messageType !== 'comment_deleted') throw new Error('B does not see the deletion');
+        return 'B: edit + 🎉/👍 + quote + deletion confirmed';
+      });
+      await step('talk: delete the conversation for everyone → gone from the list and for B', async () => {
+        if (!(await click('Sohbet bilgileri'))) throw new Error('info');
+        if (!(await click('Sohbeti herkes için sil'))) throw new Error('delete room');
+        if (!(await click('Evet, kalıcı olarak sil'))) throw new Error('confirm delete room');
+        const end = Date.now() + 15_000;
+        while (await js<boolean>(`document.body.innerText.includes(${JSON.stringify(roomName)})`)) {
+          if (Date.now() > end) throw new Error('room still listed');
+          await sleep(500);
+        }
+        const rooms = await asB<Array<{ token: string }>>('GET', '/ocs/v2.php/apps/spreed/api/v4/room');
+        if (rooms.some((r) => r.token === token)) throw new Error('B still has the room');
+        token = '';
+      });
+      if (token) await asB('DELETE', `/ocs/v2.php/apps/spreed/api/v4/room/${token}/participants/self`).catch(() => undefined);
+    }
     await step('tasks: projects + board', async () => {
       await click('İşler');
       await waitText('açık', 20_000);
