@@ -148,6 +148,23 @@ Sözleşme Talk `v25.0.6` kaynağından (`docs/chat.md` dosya paylaşımı, `Cha
 | iOS | — | Native dosya/ses modülü yazılmadı: `native.filePick` yoksa `files`/`voice` servisleri verilmez → düğmeler gizli, Backend `FILES_UNSUPPORTED` ile kapalı (GENE-60) |
 | Doğrulanmayan | — | Windows/macOS masaüstü kaydetme/açma pencereleri ve gerçek mikrofon (yalnız Linux başsız + sahte cihaz); 2 GB'a yakın dosyalar; S3 birincil depolama (chunk en az 5 MB kuralı — 10 MB parça kullanılıyor) |
 
+## GENE-59 — Bilinen sorunlar (Android klavye, LogBox), Android emülatör turu, Linux paketleri (2026-11-03)
+
+Kök neden (klavye): Android 16 edge-to-edge zorunlu; `adjustResize` pencereyi küçültmüyor. `KeyboardAvoidingView` (RN 0.88) taşmayı `onLayout`'un **üst bileşene göre** çerçevesiyle hesaplıyor (`frame.y + frame.height - keyboard.screenY`); kök `SafeAreaView`'ın üst boşluğu ve başlık bu hesaba girmediği için yazma alanı bu kadar klavyenin altında kalıyordu. Diğer ekranlarda (form, görev) hiç kaçınma yoktu. Düzeltme: mobil kabukta tek bir Android klavye boşluğu (`keyboardDidShow` yüksekliği = `ime - systemBars`, kök zaten gezinme çubuğu kadar dolgulu → toplam = IME), KAV yalnız iOS.
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim | `npm run check`; `apps/mobile`: `npx tsc --noEmit`, `npx jest` | core 132/132, relay 8/8, desktop 3/3 (yeni: paket kimliği/sürüm `app-identity.json`'dan, geçersiz kimlik reddedilir, kaynaklarda sabit sürüm kopyası yok); mobil tsc temiz; mobil jest 2/2 (`keyboardPadding`) |
+| **Android** (mevcut AVD `Medium_Phone_API_36.1`, Android 16 / API 36, debug APK x86_64 + Metro) | adb ile sürülen arayüz, ekran görüntüsü | Önce: "Open debugger to view warnings" balonu yazma alanını ve sekme çubuğunu örtüyordu. Sonra: balon yok. Sohbet (Alice) → yazma alanına odak → klavye açık: alan + Gönder klavyenin hemen üstünde (alan alt kenarı y=1497, klavye üstü ≈1515 / 2400 px), yazılan "Klavye testi" gönderildi, sunucuda **tek kopya**. Hedefler formu → Bitiş tarihi alanı: form klavyenin üstüne kaydı, sekme çubuğu klavyenin üstünde. APK `versionName 0.1.0`, `versionCode 1`, etiket "Workhub" (`aapt2 dump badging`) |
+| Android emülatör turu (önceki dilimler) | adb | Giriş (Login Flow v2, uygulama parolası) → Sohbetler, oda, Bilgi (katılımcılar, ayrıl); İşler: Projeler → pano (To Do), Gantt (planlı/tarihsiz, kilometre taşı), Etkinlik (filtreler, arama), görev detayı (Düzenle, tamamla, zamanlayıcı, alt iş, bağımlılık, hedef bağla, atananlar, yorum); Talepler (Gönderdiklerim/Bana gelenler/Ekibim/Rapor), Zaman (Haftam/İnceleme/Takım raporu, zamanlayıcı), İş yükü (hafta gezinme), Dashboard (yeni dashboard formu, şablon), İş akışları (bekleyenler/şablonlar), Hedefler (filtreler, yeni hedef), AI (sağlayıcı, kota, istek türleri). Hepsi hatasız açıldı |
+| Android Talk dosyaları (GENE-58'den devredilen) | adb + sunucu REST kontrolü | 📎 → SAF seçici (Downloads) → `gene59-emu.txt` + altyazı gönderildi; sunucuda `{file}` 29 B `text/plain` + altyazı. Kart → **Aç** → FileProvider ile "Open with" seçici → HTML Viewer'da açıldı. **Kaydet / paylaş** → SAF "belge oluştur" → `gene59-emu (1).txt`, md5 kaynakla birebir, uygulamada "Kaydedildi.". 🎤 → mikrofon izni (çalışma anında) → kayıt → Gönder: iki ses notu sunucuda `voice-message`, `audio/wav`, 146 988 B; ▶ Dinle → çalıyor (AudioFlinger'da uygulama izi), düğme "■ Durdur". Not: `-no-audio` ile açılan emülatörde kayıt veri almadığı için "Kayıt çok kısa." doğru şekilde gösterildi (boş dosya gönderilmedi); ses açık yeniden başlatmadan hemen sonraki ilk denemede yükleme bir kez "Beklenmeyen bir hata" verdi, ardışık iki denemede **tekrarlanmadı** (Tekrar dene/Kaldır sunuldu) |
+| **Linux paketleri** | `npm run dist:linux -w @workhub-devices/desktop` | `workhub-0.1.0-x86_64.AppImage` (~120 MB) ve `workhub-0.1.0-amd64.deb` (~97 MB). deb: `Package: workhub`, `Version: 0.1.0`, `Section: net`, bağımlılıklar `libsecret-1-0`, `libnotify4`, …; `/opt/Workhub/workhub`, `workhub.desktop` (`Categories=Network;Chat;InstantMessaging;`). `app.asar` yalnız `dist/` + `package.json` (`name workhub`, `version 0.1.0`) |
+| AppImage açılış smoke | `WH_SMOKE_BIN=release/workhub-0.1.0-x86_64.AppImage node scripts/smoke.mjs` (başsız) | **33/33** — paketlenmiş uygulama gerçek Login Flow v2 ile giriş + tüm masaüstü adımları |
+| deb kurulum + açılış smoke | `dpkg-deb -x` ile kurulum düzeni, `WH_SMOKE_BIN=<kök>/opt/Workhub/workhub` | **33/33**. `apt install` (root) yapılamadı: bu makinede sudo yok; paket bağımlılık çözümü ve postinst (chrome-sandbox izinleri) çalıştırılmadı |
+| Masaüstü regresyon | `npm run smoke -w @workhub-devices/desktop` | 33/33 (ortak `KeyboardAvoidingView` değişikliği masaüstünde davranışı değiştirmiyor) |
+| Smoke dayanıklılığı | `apps/desktop/src/main/smoke.ts` | Paketlenmiş koşuda görülen üç zamanlama kırılması giderildi: widget kaldır/onay `until` ile; dev sunucudaki birikmiş veri (ilk projede 60+ kart, 70+ proje) sanal listeyi ekran dışına ittiği için yeni görev / Gantt satırı / yeni proje `reveal` (kaydırarak bekle) ile aranıyor |
+| Doğrulanmayan | — | Gerçek `apt install`, GNOME/KDE oturumunda menü/ikon/tepsi ve bildirim (başsız koşu); Windows/macOS paketleri; fiziksel Android cihaz; iOS klavye davranışı (KAV iOS'ta değişmedi) |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.
@@ -157,6 +174,7 @@ Sözleşme Talk `v25.0.6` kaynağından (`docs/chat.md` dosya paylaşımı, `Cha
 
 ## Bilinen sorunlar
 
-- Android 16 emülatöründe klavye açıkken yazma alanının alt kısmı klavyeye hafifçe biniyor (edge-to-edge zorunluluğu). Gönder düğmesi çalışıyor; düzeltme açık iş.
-- Debug derlemede React Native LogBox uyarı balonu alt sekme çubuğunu kapatabiliyor (yalnız geliştirme modunda).
+- ~~Android 16 emülatöründe klavye açıkken yazma alanının alt kısmı klavyeye hafifçe biniyor (edge-to-edge zorunluluğu).~~ GENE-59'da düzeltildi (kökte tek Android klavye boşluğu; emülatörde ekran görüntüsüyle doğrulandı).
+- ~~Debug derlemede React Native LogBox uyarı balonu alt sekme çubuğunu kapatabiliyor.~~ GENE-59'da giderildi (debug'da balon kapalı; uyarılar Metro/logcat'te).
+- Linux paketlerinde uygulama ikonu yok (Electron varsayılanı); marka ikonu sahibinden bekleniyor.
 - ~~Proje listesindeki açık/tamamlandı sayaçları görev oluşturduktan sonra eski kalıyor.~~ GENE-49'da düzeltildi (görev değişiminde liste yenilenir; masaüstü smoke ile doğrulandı).

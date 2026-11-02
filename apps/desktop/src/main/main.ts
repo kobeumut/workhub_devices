@@ -7,6 +7,7 @@ import { createPlainStore, createSecretStore } from './stores';
 import { DesktopNotifier } from './notifier';
 import { runSmoke } from './smoke';
 import { createDesktopFiles } from './files';
+import identity from '../../../../config/app-identity.json';
 
 const smokeOut = process.env.WORKHUB_SMOKE_OUT;
 const allowHttp = process.env.WORKHUB_ALLOW_HTTP === '1' && (!app.isPackaged || !!smokeOut);
@@ -27,7 +28,7 @@ const backend = createDirectBackend({
   secrets,
   plain,
   files: files.host,
-  userAgent: `WorkhubDesktop/${app.getVersion()} (${process.platform})`,
+  userAgent: `WorkhubDesktop/${identity.version} (${process.platform})`,
   ...(allowHttp ? { urlOptions: { allowInsecureHttp: true } } : {}),
   onLogout: async (_a, client) => {
     try {

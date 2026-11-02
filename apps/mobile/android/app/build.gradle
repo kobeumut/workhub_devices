@@ -72,6 +72,14 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+/**
+ * Single source of app identity (GENE-48). Namespace stays the Kotlin package; the installable
+ * id, display name and version are read here so they cannot drift from desktop/iOS.
+ */
+def appIdentity = new groovy.json.JsonSlurper().parse(rootProject.file("../../../config/app-identity.json"))
+if (!(appIdentity.version ==~ /\d+\.\d+\.\d+/)) throw new GradleException("config/app-identity.json: version must be x.y.z")
+if (!(appIdentity.android.versionCode instanceof Integer) || appIdentity.android.versionCode < 1) throw new GradleException("config/app-identity.json: android.versionCode must be a positive integer")
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -79,11 +87,13 @@ android {
 
     namespace "com.next.workhub"
     defaultConfig {
-        applicationId "com.next.workhub"
+        // Identity and version come only from config/app-identity.json (see appIdentity above).
+        applicationId appIdentity.android.applicationId
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appIdentity.android.versionCode as int
+        versionName appIdentity.version
+        resValue "string", "app_name", appIdentity.displayName
     }
     signingConfigs {
         if (project.hasProperty("WORKHUB_UPLOAD_STORE_FILE")) {

@@ -6,7 +6,7 @@ import {
   type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type TalkFeatures, type TalkMessage, type TalkRoom,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Empty, ErrorBanner, Header, Loading, Row, styles as ui } from './ui';
+import { Button, Empty, ErrorBanner, Header, Loading, Row, keyboardAvoidBehavior, styles as ui } from './ui';
 import { colors, font, space } from './theme';
 import { formatTime, t } from './i18n';
 import { MessageSearch, NewRoomForm, RoomSettings, SearchResults } from './talkRoom';
@@ -433,7 +433,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
   const reversed = [...items].filter((i) => i.kind === 'pending' || !isHiddenSystemMessage(i.message)).reverse();
   const nowSec = Math.floor(Date.now() / 1000);
   return (
-    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.bg }}>
+    <KeyboardAvoidingView behavior={keyboardAvoidBehavior} style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header
         title={title}
         {...(onBack ? { onBack } : {})}
