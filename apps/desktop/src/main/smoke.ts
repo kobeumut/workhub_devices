@@ -257,8 +257,12 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     const goal = process.env.WORKHUB_SMOKE_GOAL ?? '';
     if (goal) {
       await step('goal shares: share with a group → save → server list reloaded', async () => {
+        await click('İşler');
+        await sleep(500);
         if (!(await click('Hedefler'))) throw new Error('goals tab');
         await waitText(goal, 15_000);
+        if (!(await click(`Hedef: ${goal}`))) throw new Error('open goal');
+        await waitText('Hedef değerler', 15_000);
         if (!(await click(`Paylaş: ${goal}`))) throw new Error('share button');
         await waitText('Henüz kimseyle paylaşılmadı.', 15_000);
         const group = process.env.WORKHUB_SMOKE_GROUP ?? 'staff';
@@ -272,6 +276,81 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         await waitText('Paylaşımlar kaydedildi.', 15_000);
         await shot('11-goal-shares');
         return `shared with group ${group}`;
+      });
+      const has = (label: string) => js<boolean>(`!!document.querySelector(${JSON.stringify(`[aria-label="${label}"]`)})`);
+      const until = async (fn: () => Promise<boolean>, what: string, ms = 15_000) => {
+        const end = Date.now() + ms;
+        while (!(await fn())) {
+          if (Date.now() > end) throw new Error(what);
+          await sleep(300);
+        }
+      };
+      await step('goals: add currency target → bad decimal refused → delta check-in → history → archive/reactivate', async () => {
+        if (!(await click('Para'))) throw new Error('currency chip');
+        if (!(await type('input[aria-label="Hedef değer başlığı"]', 'Ciro'))) throw new Error('target title');
+        if (!(await type('input[aria-label="Hedef"]', '1000,5'))) throw new Error('target value');
+        if (!(await click('Ekle'))) throw new Error('add target');
+        await waitText('Hedef değer eklendi.', 15_000);
+        await waitText('Şu an 0,00 TRY · hedef 1000,50 TRY', 15_000);
+        await until(() => click('Check-in: Ciro'), 'check-in button');
+        if (!(await click('Artış (+/−)'))) throw new Error('delta chip');
+        await type('input[aria-label="Değer: Ciro"]', '1,234');
+        if (!(await click('Check-in kaydet: Ciro'))) throw new Error('save check-in');
+        await waitText('en fazla 2 ondalık', 5_000);
+        await type('input[aria-label="Değer: Ciro"]', '250,25');
+        await type('input[aria-label="Not: Ciro"]', 'Masaüstü check-in');
+        if (!(await click('Check-in kaydet: Ciro'))) throw new Error('save check-in 2');
+        await waitText('Check-in kaydedildi.', 15_000);
+        await waitText('Şu an 250,25 TRY', 15_000);
+        await until(() => click('Geçmiş: Ciro'), 'history button');
+        await waitText('0,00 TRY → 250,25 TRY (artış) · “Masaüstü check-in”', 15_000);
+        await shot('19-goal-checkin');
+        if (!(await click(`Arşivle: ${goal}`))) throw new Error('archive');
+        await waitText('Hedef arşivlendi.', 15_000);
+        await waitText('Arşivdeki hedefte hedef değer', 15_000);
+        if (await has('Check-in: Ciro')) throw new Error('check-in offered on an archived goal');
+        if (!(await click(`Yeniden etkinleştir: ${goal}`))) throw new Error('reactivate');
+        await waitText('Hedef yeniden etkin.', 15_000);
+        await until(() => has('Check-in: Ciro'), 'check-in back after reactivate');
+        return 'target 1000,50 TRY; 1,234 refused locally; +250,25 → %25; archived (no writes) → reactivated';
+      });
+      await step('goals ↔ task: open task → link to goal → listed with progress → unlink', async () => {
+        await click('İşler');
+        await sleep(500);
+        if (!(await click('Projeler'))) throw new Error('projects tab');
+        await until(() => click(`${projectTitle} (yeni ad)`, false), 'project row');
+        await waitText('To Do', 20_000);
+        const linkTask = `Hedef görevi ${stamp}`;
+        if (!(await type('input[aria-label="Yeni görev"]', linkTask))) throw new Error('new task input');
+        if (!(await click('+'))) throw new Error('add task');
+        await waitText(linkTask, 15_000);
+        if (!(await click(linkTask, false))) throw new Error('task row');
+        await waitText('Bu görev bir hedefe bağlı değil.', 20_000);
+        if (!(await click('Hedefe bağla'))) throw new Error('link button');
+        await until(() => click(`Bağla: ${goal}`), 'goal in picker');
+        await waitText(`Görev “${goal}” hedefine bağlandı.`, 15_000);
+        await until(() => has(`Hedeften çıkar: ${goal}`), 'linked goal listed');
+        await shot('20-task-goal-linked');
+        if (!(await click(`Hedeften çıkar: ${goal}`))) throw new Error('unlink');
+        await waitText('Görev hedeften çıkarıldı.', 15_000);
+        await waitText('Bu görev bir hedefe bağlı değil.', 15_000);
+        return `task "${linkTask}" linked → unlinked`;
+      });
+      await step('goals: transfer ownership to another user (picker: users only) → previous owner keeps manage', async () => {
+        await click('İşler');
+        await sleep(500);
+        if (!(await click('Hedefler'))) throw new Error('goals tab');
+        await until(() => click(`Hedef: ${goal}`), 'open goal');
+        await waitText('Hedef değerler', 15_000);
+        if (!(await click(`Sahipliği devret: ${goal}`))) throw new Error('transfer button');
+        const member = process.env.WORKHUB_SMOKE_MEMBER ?? 'Bob';
+        if (!(await type('input[aria-label="Kişi ara"]', member))) throw new Error('person search');
+        await until(() => click(`Seç: ${member}`), 'person result');
+        if (!(await click(`Devret: ${member}`))) throw new Error('confirm transfer');
+        await waitText('Sahiplik devredildi; yönetme yetkiniz sürüyor.', 15_000);
+        await waitText(`Sahip: ${member} · Rolünüz: yönetir`, 15_000);
+        await shot('21-goal-transferred');
+        return `owner → ${member}; caller role manage`;
       });
     }
     const reqApprove = process.env.WORKHUB_SMOKE_REQ_APPROVE ?? '';

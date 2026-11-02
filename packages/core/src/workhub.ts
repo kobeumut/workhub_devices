@@ -752,17 +752,214 @@ export interface RequestContext {
   isManager: boolean;
 }
 
+export type GoalProgressState = 'ok' | 'not_calculable' | 'restricted' | 'stale' | 'source_missing';
+export type GoalLifecycle = 'active' | 'archived';
+export const GOAL_TARGET_TYPES = ['number', 'currency', 'boolean', 'task'] as const;
+export type GoalTargetType = (typeof GOAL_TARGET_TYPES)[number];
+/** Server limit (`GoalProgress::MAX_SCALE`). */
+export const GOAL_MAX_SCALE = 4;
+
+/** Goal header + list projection (`GET /goals`, `GET /cards/{id}/goals`). */
 export interface GoalSummary {
   id: number;
   title: string;
-  progressBp: number | null;
-  state: string;
+  dueDate: string | null;
+  /** Lifecycle: an archived goal is read-only until reactivated. */
+  state: GoalLifecycle;
   owner: { uid: string; displayName: string };
   role: ShareRole;
   canEdit: boolean;
-  /** Owner or a `manage` share: may change shares. */
+  /** Owner or a `manage` share: may change shares, transfer, delete. */
   canManage: boolean;
+  /** Optimistic lock for goal PATCH / DELETE / transfer (targets have their own). */
+  version: number;
+  updatedAt: string;
+  progressBp: number | null;
+  progressState: GoalProgressState;
+  stateNote: string | null;
+  calculatedAt: string | null;
+  targetCount?: number;
 }
+
+/** A linked card as the VIEWER can read it (unreadable cards are omitted by the server). */
+export interface GoalCard {
+  id: number;
+  title: string;
+  boardId: number;
+  boardTitle: string;
+  stackTitle: string;
+  done: string | null;
+  archived: boolean;
+  url: string;
+}
+
+export interface GoalTarget {
+  id: number;
+  goalId: number;
+  type: GoalTargetType;
+  title: string;
+  version: number;
+  weight: number;
+  progressBp: number | null;
+  state: GoalProgressState;
+  /** number / currency: decimal strings with `scale` digits. */
+  scale?: number;
+  currencyCode?: string | null;
+  start?: string | null;
+  target?: string | null;
+  current?: string | null;
+  /** boolean */
+  booleanValue?: boolean | null;
+  /** task (frozen card set) */
+  scopeMode?: string;
+  doneCount?: number | null;
+  totalCount?: number | null;
+  missingCount?: number | null;
+  cards?: GoalCard[];
+}
+
+export interface GoalDetail extends GoalSummary {
+  description: string;
+  zone: string;
+  createdAt: string;
+  targets: GoalTarget[];
+}
+
+export interface GoalCheckin {
+  id: number;
+  actor: { uid: string; displayName: string };
+  mode: 'absolute' | 'delta' | 'boolean';
+  old: string | null;
+  new: string | null;
+  oldBool: boolean | null;
+  newBool: boolean | null;
+  note: string | null;
+  occurredAt: string;
+}
+
+export interface GoalCheckinResult {
+  checkin: GoalCheckin;
+  target: { id: number; version: number; current: string | null; booleanValue: boolean | null; progressBp: number | null; state: GoalProgressState };
+}
+
+/** A goal the card belongs to, with the target(s) holding it. */
+export interface CardGoal extends GoalSummary {
+  linkedTargets: { id: number; title: string }[];
+}
+
+export interface GoalListFilter {
+  owner: 'me' | 'shared' | 'all';
+  state: GoalLifecycle | 'any';
+}
+
+export interface GoalInput {
+  title: string;
+  description?: string;
+  /** `YYYY-MM-DD` or null (no due date). */
+  dueDate?: string | null;
+}
+
+export interface GoalPatch {
+  version: number;
+  title?: string;
+  description?: string;
+  dueDate?: string | null;
+  state?: GoalLifecycle;
+}
+
+export type GoalTargetInput =
+  | { type: 'number' | 'currency'; title: string; start: string; target: string; current?: string; scale?: number; currencyCode?: string }
+  | { type: 'boolean' | 'task'; title: string };
+
+export interface GoalTargetPatch {
+  version: number;
+  title?: string;
+  start?: string;
+  target?: string;
+  currencyCode?: string;
+}
+
+export type GoalCheckinInput =
+  | { version: number; mode: 'absolute' | 'delta'; value: string; note?: string }
+  | { version: number; value: boolean; note?: string };
+
+/**
+ * What the UI may offer, derived only from server flags + lifecycle (the server re-checks):
+ * targets/check-ins/card links need `edit` on an ACTIVE goal; archive/reactivate needs `edit`;
+ * transfer/delete/shares need `manage`.
+ */
+export function goalActions(g: Pick<GoalSummary, 'canEdit' | 'canManage' | 'state'>) {
+  const active = g.state === 'active';
+  return {
+    editHeader: g.canEdit,
+    archive: g.canEdit && active,
+    reactivate: g.canEdit && !active,
+    targets: g.canEdit && active,
+    checkin: g.canEdit && active,
+    linkCards: g.canEdit && active,
+    transfer: g.canManage,
+    remove: g.canManage,
+    share: g.canManage,
+  };
+}
+
+export const isManualTarget = (t: Pick<GoalTarget, 'type'>) => t.type !== 'task';
+
+/**
+ * Normalizes a typed decimal to the server's format (`-?digits(.digits)?`, at most `scale`
+ * fraction digits). Accepts a comma decimal separator; rejects grouping separators, exponents,
+ * and anything else (the server would 422). Returns null when invalid.
+ */
+export function normalizeGoalDecimal(input: string, scale: number): string | null {
+  const v = input.trim().replace(',', '.');
+  const m = /^(-)?(\d{1,30})(?:\.(\d{1,30}))?$/.exec(v);
+  if (!m) return null;
+  const frac = (m[3] ?? '').replace(/0+$/, '');
+  if (frac.length > Math.max(0, Math.min(GOAL_MAX_SCALE, scale))) return null;
+  return `${m[1] ?? ''}${m[2]}${frac ? `.${frac}` : ''}`;
+}
+
+/** Progress basis points (0–10000, may exceed for over-achievement) → whole percent, or null. */
+export const goalPercent = (bp: number | null | undefined) => (bp === null || bp === undefined ? null : Math.round(bp / 100));
+
+/**
+ * New card set for a task target after removing one card. Built from the server's detail; the
+ * server refuses (CARDS_NOT_READABLE) if the actor cannot see a card the owner still can, so a
+ * hidden card is never dropped silently by this client.
+ */
+export const cardSetWithout = (t: Pick<GoalTarget, 'cards'>, cardId: number) => (t.cards ?? []).map((c) => c.id).filter((id) => id !== cardId);
+
+export const goalsApi = {
+  list: async (c: OcsClient, f: GoalListFilter = { owner: 'all', state: 'active' }) =>
+    (await c.get<{ items: GoalSummary[] }>(`${BASE}/goals`, { query: { owner: f.owner, state: f.state } })).items,
+  get: (c: OcsClient, id: number) => c.get<GoalDetail>(`${BASE}/goals/${posId(id)}`),
+  create: async (c: OcsClient, input: GoalInput) => (await c.request<GoalDetail>(`${BASE}/goals`, { method: 'POST', body: input })).data,
+  update: async (c: OcsClient, id: number, patch: GoalPatch) => (await c.request<GoalDetail>(`${BASE}/goals/${posId(id)}`, { method: 'PATCH', body: patch })).data,
+  remove: async (c: OcsClient, id: number, version: number) =>
+    (await c.request<{ id: number; deleted: boolean }>(`${BASE}/goals/${posId(id)}`, { method: 'DELETE', body: { version } })).data,
+  /** The previous owner keeps a `manage` share; progress is recalculated with the new owner's Deck access. */
+  transfer: async (c: OcsClient, id: number, version: number, newOwnerUid: string) =>
+    (await c.request<GoalDetail>(`${BASE}/goals/${posId(id)}/transfer`, { method: 'POST', body: { version, newOwnerUid } })).data,
+  addTarget: async (c: OcsClient, goalId: number, input: GoalTargetInput) =>
+    (await c.request<GoalTarget>(`${BASE}/goals/${posId(goalId)}/targets`, { method: 'POST', body: input })).data,
+  updateTarget: async (c: OcsClient, goalId: number, targetId: number, patch: GoalTargetPatch) =>
+    (await c.request<GoalTarget>(`${BASE}/goals/${posId(goalId)}/targets/${posId(targetId)}`, { method: 'PATCH', body: patch })).data,
+  removeTarget: async (c: OcsClient, goalId: number, targetId: number, version: number) =>
+    (await c.request<{ id: number; deleted: boolean }>(`${BASE}/goals/${posId(goalId)}/targets/${posId(targetId)}`, { method: 'DELETE', body: { version } })).data,
+  /** Same Idempotency-Key → the first result; the delta is not applied twice. */
+  checkin: async (c: OcsClient, goalId: number, targetId: number, input: GoalCheckinInput, idempotencyKey: string) =>
+    (await c.request<GoalCheckinResult>(`${BASE}/goals/${posId(goalId)}/targets/${posId(targetId)}/checkins`, { method: 'POST', body: input, headers: keyHeader(idempotencyKey) })).data,
+  /** Newest first, at most 100 (server limit; no paging). */
+  checkins: async (c: OcsClient, goalId: number, targetId: number) =>
+    (await c.get<{ items: GoalCheckin[] }>(`${BASE}/goals/${posId(goalId)}/targets/${posId(targetId)}/checkins`)).items,
+  /** Replaces the frozen card set of a task target. */
+  setCards: async (c: OcsClient, goalId: number, targetId: number, version: number, cardIds: number[]) =>
+    (await c.request<GoalTarget>(`${BASE}/goals/${posId(goalId)}/targets/${posId(targetId)}/cards`, { method: 'PUT', body: { version, cardIds: cardIds.map(posId) } })).data,
+  cardGoals: async (c: OcsClient, cardId: number) => (await c.get<{ items: CardGoal[] }>(`${BASE}/cards/${posId(cardId)}/goals`)).items,
+  /** Adds the card to the goal's task target (created when missing); returns the goal detail. */
+  linkCard: async (c: OcsClient, cardId: number, goalId: number) =>
+    (await c.request<GoalDetail>(`${BASE}/cards/${posId(cardId)}/goals`, { method: 'POST', body: { goalId: posId(goalId) } })).data,
+};
 
 export const workhubModulesApi = {
   timer: (c: OcsClient) => c.get<{ timer: Timer | null; serverTime: string }>(`${BASE}/time/timer`),
@@ -774,7 +971,6 @@ export const workhubModulesApi = {
   requestContext: (c: OcsClient) => c.get<RequestContext>(`${BASE}/requests/context`),
   createRequest: async (c: OcsClient, body: { title: string; description: string; recipientUid?: string }, idempotencyKey: string) =>
     (await c.request<{ id: number }>(`${BASE}/requests`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
-  goals: async (c: OcsClient) => (await c.get<{ items: GoalSummary[] }>(`${BASE}/goals`)).items,
 };
 
 // ---- Task edit form → minimal PATCH ----------------------------------------------

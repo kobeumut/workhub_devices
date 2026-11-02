@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { type AccountId, type ProjectSummary, type ServerBase, type WorkhubBootstrap } from '@workhub-devices/core';
-import { useAsync, useServices } from './services';
+import { useServices } from './services';
 import { ProjectsScreen } from './workhub';
-import { SharesEditor } from './projectAdmin';
-import { Button, Empty, ErrorBanner, Loading, Row, card } from './ui';
-import { colors, font, space } from './theme';
+import { Row } from './ui';
+import { colors, space } from './theme';
 import { TimeScreen } from './time';
 import { RequestsScreen } from './requests';
+import { GoalsScreen } from './goals';
 
 type Section = 'projects' | 'time' | 'requests' | 'goals' | 'more';
 
@@ -48,37 +48,6 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
   );
 }
 
-export function GoalsScreen({ accountId }: { accountId: AccountId }) {
-  const { backend } = useServices();
-  const s = useAsync(() => backend.goals(accountId), [accountId]);
-  const [sharing, setSharing] = useState<number | null>(null);
-  if (s.loading && !s.data) return <Loading />;
-  return (
-    <ScrollView contentContainerStyle={{ padding: space(3) }}>
-      <ErrorBanner error={s.error} onRetry={s.reload} />
-      {(s.data ?? []).length === 0 && !s.error ? <Empty text="Hedef yok." /> : null}
-      {(s.data ?? []).map((g) => {
-        const pct = g.progressBp === null ? null : Math.round(g.progressBp / 100);
-        return (
-          <View key={g.id} style={card} accessible accessibilityLabel={`${g.title}, ilerleme ${pct ?? 'bilinmiyor'} yüzde`}>
-            <Text style={{ fontWeight: '700', color: colors.text }}>{g.title}</Text>
-            <Text style={{ color: colors.muted }}>
-              {g.owner.displayName} · {g.state}
-            </Text>
-            <View style={{ height: 8, backgroundColor: colors.surface, borderRadius: 4, marginTop: space(2), overflow: 'hidden' }}>
-              <View style={{ height: 8, width: `${Math.min(100, Math.max(0, pct ?? 0))}%`, backgroundColor: colors.primary }} />
-            </View>
-            <Text style={{ color: colors.muted, fontSize: font.small, marginTop: 2 }}>{pct === null ? '—' : `%${pct}`}</Text>
-            {g.canManage && sharing !== g.id ? <Button title="Paylaş" accessibilityLabel={`Paylaş: ${g.title}`} kind="secondary" onPress={() => setSharing(g.id)} /> : null}
-            {sharing === g.id ? <SharesEditor accountId={accountId} type="goal" objectId={g.id} onClose={() => setSharing(null)} /> : null}
-          </View>
-        );
-      })}
-      <Text style={{ color: colors.muted, fontSize: font.small }}>Hedef oluşturma, check-in ve kart bağlama şimdilik web'de (Diğer → Hedefler).</Text>
-    </ScrollView>
-  );
-}
-
 /** Modules without a native screen yet: explicit gap + safe web fallback (opens the user's own server). */
 export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; workhub: WorkhubBootstrap }) {
   const { platform } = useServices();
@@ -88,7 +57,7 @@ export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; wo
     ['Gantt ve etkinlik', 'projects', 'Proje Gantt ve etkinlik akışı', workhub.modules.projects],
     ['İş akışları', 'workflows', 'Şablonlar, çalıştırmalar, devir', workhub.modules.projects],
     ['Zaman: görev bağlama ve panolar', 'time', 'Kayda görev bağlama, zaman widget\'ları', workhub.modules.time],
-    ['Hedefler: düzenleme', 'goals', 'Hedef/target, check-in, kart bağlantısı', workhub.modules.goals],
+    ['Hedef widget\'ları', 'dashboards', 'Dashboard\'da hedef ilerleme widget\'ı', workhub.modules.goals && workhub.modules.dashboard],
     ['AI', 'ai', 'Öneri ve taslaklar', workhub.modules.ai],
     ['Yönetim', 'settings', 'Modül, iş yükü, zaman politikası, AI sağlayıcı', workhub.user.isAdmin],
   ];
