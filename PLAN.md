@@ -16,6 +16,21 @@ Talk sohbetleri ana ekran olacak; kullanıcı mesaj bildiriminin içinden cevapl
 
 Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış olması uygulamanın/testin tamamlandığı anlamına gelmez.
 
+## Uygulama ilerlemesi (GENE-48)
+
+| Faz | Durum | Kanıt |
+|---|---|---|
+| 0 — sürüm/push kapısı | Sunucu doğrulandı (NC 35.0.2 / Talk 25.0.6 / Notifications 8.0.1 / Workhub 0.5.0). Taşıma: Web Push `talk,workhub` → Firebase relay (ADR 0001). Nextcloud → relay → çözme e2e geçti. **Kalan (sahibi ekleyecek):** Firebase projesi, APNs anahtarı, `relayBase`; fiziksel cihaz kabulü | `docs/phase0-status.md`, `services/push-relay` |
+| 1 — temel/auth | `packages/core` + `Backend`; masaüstü (Electron+RNW) ve mobil (RN 0.88) kabukları; Keystore/Keychain/safeStorage; çoklu hesap; logout + revoke | `npm run check`, masaüstü smoke |
+| 2 — Talk | Oda listesi + arama + delta, geçmiş, long-poll, okundu, optimistic gönderim/`referenceId` uzlaştırma, rich-object (HTML'siz). Eksik: reply/edit/delete/reaction UI, dosya/ses notu, oda yönetimi | masaüstü smoke |
+| 3 — bildirim | Inbox + yönlendirme; Android FCM servisi, native çözme, RemoteInput yanıt, kanallar, kilit ekranında gizli içerik; iOS NSE + yanıt (**derlenmedi**); masaüstü bildirim + tepsi, macOS inline yanıt, diğerlerinde odaklı compose | Kotlin RFC testi, push e2e |
+| 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li) | masaüstü smoke, API smoke |
+| 5 — modüller | Zaman (zamanlayıcı/hafta), Talepler (liste/oluştur), Hedefler (liste) native; diğerleri web fallback | `docs/workhub-modules.md` |
+| 6 — dağıtım | electron-builder ve gradle yapılandırması var; imzalama/mağaza yok | README |
+| 7 — çağrılar | Başlamadı (kapsam onayı gerekli) | — |
+
+Aşağıdaki checkbox'lar yalnız madde gerçek ortamda tamamlanınca işaretlenir; core mantığının mock testleri bir maddeyi tek başına tamamlamaz.
+
 ## 1. Kararlar ve kapsam sınırı
 
 | Konu | Karar / gerekçe |
@@ -61,15 +76,15 @@ Bütün özellik için ayrı npm paketi, yeni backend veya yeni sunucu tablosu g
 
 Gereken dış girdiler: test sunucusu URL'si/kurulu sürümleri, iki normal kullanıcı + bir sınırlı kullanıcı, Workhub/Talk/Notifications erişimi; marka bundle/application ID; Apple Developer/APNs, Firebase/FCM yetkileri; gerekirse relay hosting/onay; beş OS test ortamı ve dağıtım imzalama sahipleri. Secret'lar issue/Git'e yazılmaz. Bunlar henüz bu planlama işinde verilmedi.
 
-- [ ] Core ve kullanıcı Workhub capabilities çıktısını redakte ederek kaydet; Nextcloud/Talk/Notifications/Workhub ve native/Deck sürüm matrisi oluştur.
-- [ ] Workhub Nextcloud 34–35 ve Talk adapter `>=20,<26` kısıtını gerçek kurulumla karşılaştır; incelemede kullanılan Talk 26/Notifications 9 geliştirme snapshot'ı NC36 içindir. Uyumlu kararlı sürümleri seç.
-- [ ] Login Flow v2/app password ile Talk room + Workhub project + Notifications GET smoke testi yap. Ayrıca browser cookie/requesttoken olmadan `OCS-APIRequest: true` ile geri alınabilir Workhub POST/PATCH yapıp kalıcı state'i okuyarak OCS auth/CSRF davranışını doğrula; yalnız GET bunu kanıtlamaz.
+- [x] Core ve kullanıcı Workhub capabilities çıktısını redakte ederek kaydet; Nextcloud/Talk/Notifications/Workhub ve native/Deck sürüm matrisi oluştur.
+- [x] Workhub Nextcloud 34–35 ve Talk adapter `>=20,<26` kısıtını gerçek kurulumla karşılaştır; incelemede kullanılan Talk 26/Notifications 9 geliştirme snapshot'ı NC36 içindir. Uyumlu kararlı sürümleri seç.
+- [x] Login Flow v2/app password ile Talk room + Workhub project + Notifications GET smoke testi yap. Ayrıca browser cookie/requesttoken olmadan `OCS-APIRequest: true` ile geri alınabilir Workhub POST/PATCH yapıp kalıcı state'i okuyarak OCS auth/CSRF davranışını doğrula; yalnız GET bunu kanıtlamaz.
 - [ ] Mobil minimal native push PoC kur; branding'e uygun delivery provider ve secret ownership belirle.
 - [ ] Hem normal hem urgent atama ve Talk mesajını **aynı hesapta**, başka resmî Talk client'ı yokken/varken ve stale kayıt varken test et. UA sınıflandırma/native token hash tekilliğini doğrula.
 - [ ] Hedefin Web Push API/activation/appTypes desteğini kontrol et; `talk,workhub` aboneliğinin native iOS/Android teslimat + crypto/NSE fizibilitesini kanıtla. Web Push varlığını RN native delivery kanıtı sanma.
-- [ ] Hedef için tek transport veya gerekçeli sınırlı transport kombinasyonunu ADR'ye yaz: mobile provider, server registration, relay ihtiyacı, token identities, routing, crypto, rotation, maliyet ve işletim sahibi.
-- [ ] İki push türünün zorunlu olarak upstream Talk/Notifications ayarı/değişikliği gerektirdiği kanıtlanırsa açık onay iste; Workhub koduna dokunma. İnternetten rastgele proxy/UA workaround ekleme.
-- [ ] Karar sonucunu ve hâlâ eksik credential/altyapı/OS ortamlarını uygulama issue'sunda blocker olarak yaz.
+- [x] Hedef için tek transport veya gerekçeli sınırlı transport kombinasyonunu ADR'ye yaz: mobile provider, server registration, relay ihtiyacı, token identities, routing, crypto, rotation, maliyet ve işletim sahibi.
+- [x] İki push türünün zorunlu olarak upstream Talk/Notifications ayarı/değişikliği gerektirdiği kanıtlanırsa açık onay iste; Workhub koduna dokunma. İnternetten rastgele proxy/UA workaround ekleme.
+- [x] Karar sonucunu ve hâlâ eksik credential/altyapı/OS ortamlarını uygulama issue'sunda blocker olarak yaz.
 
 **Çıkış ölçütü:** en az bir fiziksel iOS ve Android'de JS süreci çalışmıyorken Talk mesajı ve normal Workhub ataması ayrı ayrı teslim edilir, doğru hesaba açılır; resmî Talk ile birlikte kayıtlıyken kayıp görülmez. Doğrulanamıyorsa Faz 0 geçmedi; foreground bildirim inbox'ı arka plan push yerine gösterilemez. Fiziksel cihaz bağlı değilse mevcut sim/emulator geliştirme için kullanılabilir ama bu kabulü karşılamaz; test için yeni simulator/emulator yaratma.
 

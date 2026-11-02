@@ -1,0 +1,17 @@
+{
+  "name": "workhub-devices",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@workhub-devices/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workhub desktop (Windows, macOS, Linux): Electron + React Native Web",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:main": "esbuild src/main/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/main.cjs && esbuild src/main/preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/preload.cjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "dist": "npm run build && electron-builder"
+  },
+  "devDependencies": {
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "@workhub-devices/core": "^0.1.0",
+    "@workhub-devices/features": "^0.1.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-native-web": "^0.21.4"
+  }
+}

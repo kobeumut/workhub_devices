@@ -1,0 +1,21 @@
+{
+  "name": "@workhub-devices/push-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Stateless Web Push (RFC 8030) \u2192 Firebase Cloud Messaging relay for Workhub Devices",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../packages/core/scripts/run-tests.mjs",
+    "e2e:live": "rm -rf .e2e-dist && tsc -p tsconfig.e2e.json && echo '{\"type\":\"commonjs\"}' > .e2e-dist/package.json && node .e2e-dist/services/push-relay/test/e2e.live.js",
+    "build": "rm -rf lib && tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^6.6.0"
+  },
+  "main": "lib/firebase.js",
+  "engines": {
+    "node": "22"
+  }
+}
