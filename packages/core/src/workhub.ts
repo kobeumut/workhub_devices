@@ -293,10 +293,17 @@ export async function openTaskFromNotification(c: OcsClient, cardId: number, pro
 
 // ---- Further modules (Time, Requests, Goals) -----------------------------------
 
+export interface TimeCardRef {
+  id: number;
+  title: string;
+  boardId?: number | null;
+  restricted?: boolean;
+}
+
 export interface Timer {
   cardId: number | null;
-  card: { id: number; title: string } | null;
-  description: string;
+  card: TimeCardRef | null;
+  description: string | null;
   billable: boolean;
   startedAt: string;
   elapsedSec: number;
@@ -305,23 +312,303 @@ export interface Timer {
 
 export interface TimeEntry {
   id: number;
+  kind: 'range' | 'duration';
   cardId: number | null;
-  card: { id: number; title: string } | null;
+  card: TimeCardRef | null;
+  /** ISO-8601 UTC; null for duration entries. */
+  startUtc: string | null;
+  endUtc: string | null;
   localDate: string;
   durationSec: number;
-  description: string;
+  zone: string;
+  description: string | null;
   billable: boolean;
+  origin: string;
+  periodId: number;
+  version: number;
+  /**
+   * Set by the server only in period payloads (`/time/week`, `/time/periods/{id}`); treat the
+   * entry as read-only when this OR its period is not open.
+   */
   locked: boolean;
+  slices: { localDate: string; durationSec: number }[];
+}
+
+export type PeriodState = 'draft' | 'submitted' | 'changes_requested' | 'approved' | 'reopened';
+
+export interface TimePeriod {
+  id: number;
+  userUid: string;
+  localStartDate: string;
+  localEndDate: string;
+  zone: string;
+  state: PeriodState;
+  open: boolean;
+  revision: number;
+  /** Optimistic lock for submit / withdraw / review decisions. */
+  version: number;
+}
+
+export type SubmissionStatus = 'pending' | 'approved' | 'changes_requested' | 'withdrawn' | 'superseded';
+
+export interface TimeSubmission {
+  id: number;
+  periodId: number;
+  revision: number;
+  status: SubmissionStatus;
+  submittedBy: string;
+  submittedAt: string;
+  totalSec: number;
+  billableSec: number;
+  reviews: { actorUid: string; action: string; reason: string | null; occurredAt: string }[];
+}
+
+export interface TimePolicySummary {
+  zone: string;
+  weekStart: number;
+  overlap: 'allow' | 'warn' | 'reject';
+  allowTaskless: boolean;
+  maxEntrySeconds: number;
 }
 
 export interface TimeWeek {
-  period: { id: number; localStartDate: string; localEndDate: string; state: string; open: boolean };
+  period: TimePeriod;
   days: { date: string; totalSec: number; billableSec: number }[];
   entries: TimeEntry[];
   totals: { totalSec: number; billableSec: number };
+  submissions: TimeSubmission[];
   timer: Timer | null;
   serverTime: string;
+  policy: TimePolicySummary;
+  navigation: { today: string; prevDate: string; nextDate: string };
+  /** False when the user has no manager: submitting would wait for nobody. */
+  reviewerConfigured: boolean;
 }
+
+/** Fields of a manual entry. `version` is required for updates (optimistic lock). */
+export type TimeEntryInput =
+  | { kind: 'range'; startUtc: string; endUtc: string; timezone: string; description?: string | null; billable?: boolean; cardId?: number | null }
+  | { kind: 'duration'; localDate: string; durationSeconds: number; timezone: string; description?: string | null; billable?: boolean; cardId?: number | null };
+
+export interface TimeEntryPatch {
+  version: number;
+  startUtc?: string;
+  endUtc?: string;
+  localDate?: string;
+  durationSeconds?: number;
+  timezone?: string;
+  description?: string | null;
+  billable?: boolean;
+  cardId?: number | null;
+}
+
+export interface TimeEntryResult {
+  entries: TimeEntry[];
+  /** e.g. `TIME_OVERLAP` under the `warn` overlap policy; the entry was saved. */
+  warnings: { code: string; message: string }[];
+}
+
+export interface SubmissionResult {
+  period: TimePeriod;
+  submission: TimeSubmission;
+}
+
+/** One submission in the reviewer queue (or a single one via `/time/submissions/{id}`). */
+export interface ReviewItem {
+  submission: TimeSubmission;
+  period: TimePeriod;
+  user: { uid: string; displayName: string };
+  /** Frozen snapshot of the submitted entries. */
+  entries: Array<Omit<TimeEntry, 'id' | 'cardId' | 'zone' | 'periodId' | 'version' | 'locked'> & { entryId: number; entryVersion: number }>;
+  canReview: boolean;
+}
+
+export type ReviewAction = 'approve' | 'request_changes' | 'reopen';
+
+export interface TeamReport {
+  from: string;
+  to: string;
+  users: Array<{
+    uid: string;
+    displayName: string;
+    totalSec: number;
+    billableSec: number;
+    byState: Partial<Record<PeriodState, number>>;
+    days: { date: string; totalSec: number }[];
+    cards: { key: string; title: string; restricted: boolean; totalSec: number }[];
+  }>;
+  totals: { totalSec: number; billableSec: number };
+}
+
+export type CsvScope = 'own' | 'team';
+
+const posId = (id: number) => {
+  if (!Number.isInteger(id) || id <= 0) throw new OcsError('client', undefined, 'invalid id');
+  return id;
+};
+const keyHeader = (k: string) => ({ 'Idempotency-Key': k });
+
+export const timeApi = {
+  week: (c: OcsClient, date?: string) => c.get<TimeWeek>(`${BASE}/time/week`, date ? { query: { date } } : {}),
+  period: (c: OcsClient, periodId: number) => c.get<TimeWeek & { viewerRole: 'owner' | 'reviewer'; user: { uid: string; displayName: string } }>(`${BASE}/time/periods/${posId(periodId)}`),
+  createEntry: async (c: OcsClient, input: TimeEntryInput, idempotencyKey: string) => {
+    const { kind, ...rest } = input;
+    return (await c.request<TimeEntryResult>(`${BASE}/time/entries`, { method: 'POST', body: { entryKind: kind, ...rest }, headers: keyHeader(idempotencyKey) })).data;
+  },
+  updateEntry: async (c: OcsClient, id: number, patch: TimeEntryPatch) =>
+    (await c.request<TimeEntryResult>(`${BASE}/time/entries/${posId(id)}`, { method: 'PATCH', body: patch })).data,
+  deleteEntry: async (c: OcsClient, id: number, version: number) =>
+    (await c.request<{ deleted: number }>(`${BASE}/time/entries/${posId(id)}`, { method: 'DELETE', body: { version } })).data,
+  submit: async (c: OcsClient, periodId: number, version: number, idempotencyKey: string) =>
+    (await c.request<SubmissionResult>(`${BASE}/time/periods/${posId(periodId)}/submit`, { method: 'POST', body: { version }, headers: keyHeader(idempotencyKey) })).data,
+  withdraw: async (c: OcsClient, submissionId: number, version: number, idempotencyKey: string) =>
+    (await c.request<SubmissionResult>(`${BASE}/time/submissions/${posId(submissionId)}/withdraw`, { method: 'POST', body: { version }, headers: keyHeader(idempotencyKey) })).data,
+  reviews: async (c: OcsClient, status: 'pending' | 'approved') => (await c.get<{ items: ReviewItem[] }>(`${BASE}/time/reviews`, { query: { status } })).items,
+  submission: (c: OcsClient, id: number) => c.get<ReviewItem>(`${BASE}/time/submissions/${posId(id)}`),
+  /** Period `version` (not submission) is the lock; `reason` is required except for approve. */
+  decide: async (c: OcsClient, submissionId: number, action: ReviewAction, version: number, reason: string | null, idempotencyKey: string) => {
+    const path = action === 'approve' ? 'approve' : action === 'request_changes' ? 'request-changes' : 'reopen';
+    const body: Record<string, unknown> = { version };
+    if (reason) body.reason = reason;
+    return (await c.request<SubmissionResult>(`${BASE}/time/submissions/${posId(submissionId)}/${path}`, { method: 'POST', body, headers: keyHeader(idempotencyKey) })).data;
+  },
+  team: (c: OcsClient, from?: string, to?: string) => c.get<TeamReport>(`${BASE}/time/team`, { query: { from, to } }),
+  /** Non-OCS route (`TimeCsvController`); the server caps the range at 366 days. */
+  csv: async (c: OcsClient, scope: CsvScope, from: string, to: string) => {
+    const r = await c.download('/index.php/apps/workhub/csv/time', { query: { scope, from, to } });
+    // The server writes a UTF-8 BOM (Excel); `Response.text()` strips it, so put it back.
+    return { filename: timeCsvFilename(scope, from, to), csv: r.text.startsWith('\uFEFF') ? r.text : `\uFEFF${r.text}` };
+  },
+};
+
+/** Filename built locally from validated parts (never from a server header). */
+export const timeCsvFilename = (scope: CsvScope, from: string, to: string) => `workhub-time-${scope}-${from}_${to}.csv`;
+
+// ---- Time entry form → request body (pure) ---------------------------------------
+
+export interface TimeEntryForm {
+  kind: 'range' | 'duration';
+  /** `YYYY-MM-DD` in the user's zone. */
+  date: string;
+  /** `HH:MM` (range only). An end before the start means the next day. */
+  start: string;
+  end: string;
+  /** Hours as typed for duration entries ('1,5' / '1.5' / '1:30'). */
+  hours: string;
+  description: string;
+  billable: boolean;
+}
+
+export type TimeFormError = 'date_invalid' | 'time_invalid' | 'duration_invalid' | 'too_long' | 'description_required' | 'description_too_long';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const isValidLocalDate = (d: string) => DATE_RE.test(d) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d);
+
+/** Offset (minutes, east positive) of `zone` at the UTC instant `ms`, via Intl (no tz database copy). */
+function zoneOffsetMinutes(zone: string, ms: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(ms));
+  const n = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const asUtc = Date.UTC(n('year'), n('month') - 1, n('day'), n('hour') % 24, n('minute'), n('second'));
+  return Math.round((asUtc - Math.floor(ms / 1000) * 1000) / 60000);
+}
+
+/** Local wall time in `zone` → UTC ISO (`…Z`). Two passes settle DST edges. */
+export function zonedToUtc(date: string, hhmm: string, zone: string): string {
+  const [y, mo, d] = date.split('-').map(Number) as [number, number, number];
+  const [h, mi] = hhmm.split(':').map(Number) as [number, number];
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  let ts = wall - zoneOffsetMinutes(zone, wall) * 60000;
+  ts = wall - zoneOffsetMinutes(zone, ts) * 60000;
+  return new Date(ts).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** UTC ISO → `{date, time}` wall clock in `zone`. */
+export function utcToZoned(iso: string, zone: string): { date: string; time: string } {
+  const ms = Date.parse(iso);
+  const local = new Date(ms + zoneOffsetMinutes(zone, ms) * 60000).toISOString();
+  return { date: local.slice(0, 10), time: local.slice(11, 16) };
+}
+
+function parseHours(raw: string): number | null {
+  const v = raw.trim();
+  const hm = /^(\d{1,2}):([0-5]\d)$/.exec(v);
+  if (hm) return Number(hm[1]) * 3600 + Number(hm[2]) * 60;
+  if (!/^\d+([.,]\d+)?$/.test(v)) return null;
+  return Math.round(Number(v.replace(',', '.')) * 3600);
+}
+
+export function timeEntryFormOf(entry: TimeEntry | null, zone: string, today: string): TimeEntryForm {
+  if (!entry) return { kind: 'range', date: today, start: '09:00', end: '10:00', hours: '', description: '', billable: false };
+  const base = { kind: entry.kind, description: entry.description ?? '', billable: entry.billable, hours: '', start: '', end: '', date: entry.localDate };
+  if (entry.kind === 'duration') return { ...base, hours: String(Math.round((entry.durationSec / 3600) * 100) / 100) };
+  const s = utcToZoned(entry.startUtc!, zone);
+  const e = utcToZoned(entry.endUtc!, zone);
+  return { ...base, date: s.date, start: s.time, end: e.time };
+}
+
+/**
+ * Validates the form and builds the create body (or, with `entry`, the minimal PATCH incl.
+ * `version`). Mirrors the server rules that the user can fix in the form; the server stays the
+ * authority (locked periods, overlap policy, card permission).
+ */
+export function buildTimeEntry(form: TimeEntryForm, zone: string, opts: { maxEntrySeconds: number; allowTaskless: boolean; cardId?: number | null }, entry?: TimeEntry):
+  | { create: TimeEntryInput }
+  | { patch: TimeEntryPatch }
+  | { error: TimeFormError } {
+  if (!isValidLocalDate(form.date)) return { error: 'date_invalid' };
+  const description = form.description.trim();
+  if (description.length > 1000) return { error: 'description_too_long' };
+  const cardId = entry ? entry.cardId : (opts.cardId ?? null);
+  if (!description && cardId === null) return { error: 'description_required' };
+  let time: { startUtc: string; endUtc: string } | { localDate: string; durationSeconds: number };
+  if (form.kind === 'range') {
+    const hm = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!hm.test(form.start) || !hm.test(form.end)) return { error: 'time_invalid' };
+    const startUtc = zonedToUtc(form.date, form.start, zone);
+    let endDate = form.date;
+    if (form.end <= form.start) endDate = new Date(Date.parse(`${form.date}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    const endUtc = zonedToUtc(endDate, form.end, zone);
+    const sec = (Date.parse(endUtc) - Date.parse(startUtc)) / 1000;
+    if (sec <= 0) return { error: 'time_invalid' };
+    if (sec > opts.maxEntrySeconds) return { error: 'too_long' };
+    time = { startUtc, endUtc };
+  } else {
+    const sec = parseHours(form.hours);
+    if (sec === null || sec <= 0) return { error: 'duration_invalid' };
+    if (sec > opts.maxEntrySeconds) return { error: 'too_long' };
+    time = { localDate: form.date, durationSeconds: sec };
+  }
+  if (!entry) {
+    const extra = { timezone: zone, description: description || null, billable: form.billable, ...(cardId ? { cardId } : {}) };
+    return { create: form.kind === 'range' ? { kind: 'range', ...(time as { startUtc: string; endUtc: string }), ...extra } : { kind: 'duration', ...(time as { localDate: string; durationSeconds: number }), ...extra } };
+  }
+  if (entry.kind !== form.kind) return { error: 'time_invalid' };
+  const patch: TimeEntryPatch = { version: entry.version };
+  if ('startUtc' in time) {
+    if (time.startUtc !== entry.startUtc) patch.startUtc = time.startUtc;
+    if (time.endUtc !== entry.endUtc) patch.endUtc = time.endUtc;
+  } else {
+    if (time.localDate !== entry.localDate) patch.localDate = time.localDate;
+    if (time.durationSeconds !== entry.durationSec) patch.durationSeconds = time.durationSeconds;
+  }
+  if (Object.keys(patch).length > 1 && zone !== entry.zone) patch.timezone = zone;
+  if ((description || null) !== (entry.description ?? null)) patch.description = description || null;
+  if (form.billable !== entry.billable) patch.billable = form.billable;
+  return { patch };
+}
+
+/** Owner-side period actions, derived only from server state (no local guessing of locks). */
+export function periodActions(week: Pick<TimeWeek, 'period' | 'submissions'>): { canEdit: boolean; canSubmit: boolean; withdrawable: TimeSubmission | null } {
+  const current = week.submissions.find((s) => s.revision === week.period.revision) ?? null;
+  return {
+    canEdit: week.period.open,
+    canSubmit: week.period.open,
+    withdrawable: week.period.state === 'submitted' && current?.status === 'pending' ? current : null,
+  };
+}
+
+/** An entry may be edited/deleted only when the server says neither it nor its period is locked. */
+export const entryEditable = (week: Pick<TimeWeek, 'period'>, e: TimeEntry) => week.period.open && !e.locked && e.periodId === week.period.id;
 
 export interface WorkRequest {
   id: number;
@@ -360,7 +647,6 @@ export const workhubModulesApi = {
   timerStart: async (c: OcsClient, body: { cardId?: number; description?: string }, idempotencyKey: string) =>
     (await c.request<{ timer: Timer }>(`${BASE}/time/timer/start`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
   timerStop: async (c: OcsClient) => (await c.request<{ entries: TimeEntry[]; totalSec: number }>(`${BASE}/time/timer/stop`, { method: 'POST', body: {} })).data,
-  week: (c: OcsClient, date?: string) => c.get<TimeWeek>(`${BASE}/time/week`, date ? { query: { date } } : {}),
   requests: async (c: OcsClient, scope: 'mine' | 'received' | 'team') => (await c.get<{ items: WorkRequest[] }>(`${BASE}/requests`, { query: { scope, state: 'any' } })).items,
   requestContext: (c: OcsClient) => c.get<RequestContext>(`${BASE}/requests/context`),
   createRequest: async (c: OcsClient, body: { title: string; description: string; recipientUid?: string }, idempotencyKey: string) =>

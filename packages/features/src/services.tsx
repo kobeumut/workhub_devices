@@ -14,6 +14,11 @@ export interface PlatformServices {
   /** Subscribe to routes coming from notifications / deep links. Returns an unsubscribe. */
   subscribeRoutes?(cb: (target: RoutedTarget) => void): () => void;
   appVersion?: string;
+  /**
+   * Hand a generated file (e.g. a CSV export) to the OS: desktop shows a save dialog, mobile the
+   * share sheet. Absent → the UI hides export actions. Content is data from the server only.
+   */
+  saveFile?(filename: string, content: string, mime: 'text/csv'): Promise<'saved' | 'cancelled'>;
 }
 
 interface Ctx {

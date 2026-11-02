@@ -10,6 +10,7 @@
     "test": "node scripts/run-tests.mjs",
     "smoke:live": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.smoke.js",
     "smoke:tasks": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.tasks.smoke.js",
+    "smoke:time": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.time.smoke.js",
     "smoke:projects": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.projects.smoke.js"
   },
   "devDependencies": {

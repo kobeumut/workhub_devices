@@ -130,11 +130,15 @@ export class OcsClient {
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
-  async request<T>(path: string, req: OcsRequest = {}): Promise<OcsResponse<T>> {
+  /**
+   * Authenticated fetch to a relative path on THIS server only: no redirects followed, no
+   * cookies, bounded time. Shared by OCS calls and plain app downloads (CSV).
+   */
+  private async send(path: string, req: OcsRequest, accept: string, query: Record<string, QueryValue>): Promise<Response> {
     assertSafeApiPath(path);
     const { loginName, appPassword } = await this.options.getCredentials();
     const headers: Record<string, string> = {
-      Accept: 'application/json',
+      Accept: accept,
       'OCS-APIRequest': 'true',
       Authorization: encodeBasicAuth(loginName, appPassword),
       ...(this.options.userAgent ? { 'User-Agent': this.options.userAgent } : {}),
@@ -145,7 +149,7 @@ export class OcsClient {
       headers['Content-Type'] = 'application/json';
       body = JSON.stringify(req.body);
     }
-    const url = `${this.serverBase}${path}${buildQuery({ format: 'json', ...req.query })}`;
+    const url = `${this.serverBase}${path}${buildQuery(query)}`;
 
     const controller = new AbortController();
     let timedOut = false;
@@ -184,6 +188,36 @@ export class OcsClient {
     if (res.redirected || (res.url && !res.url.startsWith(`${this.serverBase}/`))) {
       throw new OcsError('redirect', res.status || undefined);
     }
+    return res;
+  }
+
+  /**
+   * Non-OCS app route returning a file body (e.g. Workhub `/apps/workhub/csv/time`). Errors come
+   * back as plain JSON `{error, message}`; they are mapped to `OcsError` like OCS failures.
+   */
+  async download(path: string, req: Omit<OcsRequest, 'method' | 'body'> = {}): Promise<{ text: string; contentType: string }> {
+    const res = await this.send(path, { ...req, method: 'GET' }, 'text/csv, application/json;q=0.5', req.query ?? {});
+    const contentType = res.headers.get('Content-Type') ?? '';
+    if (!res.ok || contentType.includes('application/json')) {
+      let err: { error?: unknown; message?: unknown } | undefined;
+      try {
+        err = (await res.json()) as typeof err;
+      } catch {
+        err = undefined;
+      }
+      throw new OcsError(
+        res.ok ? 'invalid_response' : kindForStatus(res.status),
+        res.status,
+        typeof err?.message === 'string' ? err.message : undefined,
+        parseRetryAfter(res.headers.get('Retry-After')),
+        typeof err?.error === 'string' ? err.error : undefined,
+      );
+    }
+    return { text: await res.text(), contentType };
+  }
+
+  async request<T>(path: string, req: OcsRequest = {}): Promise<OcsResponse<T>> {
+    const res = await this.send(path, req, 'application/json', { format: 'json', ...req.query });
     if (res.status === 304 || res.status === 204) return { status: res.status, data: null, headers: res.headers };
 
     let envelope: OcsEnvelope | undefined;

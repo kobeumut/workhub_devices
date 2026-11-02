@@ -153,6 +153,74 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('Durdur');
       await waitText('Başlat', 15_000);
     });
+    await step('time entries: add → edit → submit (locked) → withdraw → delete', async () => {
+      const label = `Masaüstü kayıt ${new Date().toISOString().slice(11, 19)}`;
+      if (!(await click('Kayıt ekle'))) throw new Error('add entry');
+      await waitText('Yeni kayıt', 10_000);
+      if (!(await type('input[aria-label="Başlangıç (SS:DD)"]', '06:00'))) throw new Error('start input');
+      await type('input[aria-label="Bitiş (SS:DD)"]', '06:30');
+      if (!(await type('textarea[aria-label="Açıklama"]', label)) && !(await type('input[aria-label="Açıklama"]', label))) throw new Error('description input');
+      if (!(await click('Kaydı ekle'))) throw new Error('save new');
+      await waitText(label, 15_000);
+      await waitText('06:00–06:30', 15_000);
+      if (!(await click(`Kaydı düzenle: ${label}`))) throw new Error('edit button');
+      await waitText('Kaydı düzenle', 10_000);
+      await type('input[aria-label="Bitiş (SS:DD)"]', '07:00');
+      if (!(await click('Kaydı kaydet'))) throw new Error('save edit');
+      await waitText('06:00–07:00', 15_000);
+      if (!(await click('Dönemi onaya gönder'))) throw new Error('submit');
+      await waitText('Dönem onaya gönderildi.', 15_000);
+      await waitText('kayıtlar salt okunur', 15_000);
+      if (await js<boolean>(`[...document.querySelectorAll('[role=button]')].some(e => e.getAttribute('aria-label') === ${JSON.stringify(`Kaydı sil: ${label}`)})`)) throw new Error('delete visible on a locked period');
+      await shot('12-time-submitted');
+      if (!(await click('Gönderimi geri çek'))) throw new Error('withdraw');
+      await waitText('Gönderim geri çekildi.', 15_000);
+      const end = Date.now() + 10_000;
+      while (!(await click(`Kaydı sil: ${label}`))) {
+        if (Date.now() > end) throw new Error('delete button after withdraw');
+        await sleep(300);
+      }
+      await waitText('Kayıt silindi.', 15_000);
+      return 'entry created, edited, locked on submit, unlocked on withdraw, deleted';
+    });
+    await step('own CSV export → save (smoke: written to the output dir)', async () => {
+      if (!(await click('CSV indir'))) throw new Error('own csv');
+      await waitText('Kaydedildi: workhub-time-own-', 20_000);
+    });
+    const subject = process.env.WORKHUB_SMOKE_SUBJECT ?? '';
+    if (subject) {
+      await step('review queue: approve → reopen (reason required); team report table; team CSV', async () => {
+        if (!(await click('İnceleme'))) throw new Error('review tab (reviewer gate)');
+        await waitText(subject, 15_000);
+        await shot('13-time-review');
+        if (!(await click(`Onayla: ${subject}`))) throw new Error('approve button');
+        await waitText('İncelemenizi bekleyen dönem yok.', 15_000);
+        // approve is allowed without reason; then reopen requires one
+        if (!(await click('Onaylananlar'))) throw new Error('approved tab');
+        await waitText(subject, 15_000);
+        const until = async (fn: () => Promise<boolean>, what: string) => {
+          const end = Date.now() + 15_000;
+          while (!(await fn())) {
+            if (Date.now() > end) throw new Error(what);
+            await sleep(300);
+          }
+        };
+        await until(() => click(`Yeniden aç: ${subject}`), 'reopen button');
+        await waitText('Gerekçe yazın.', 5_000);
+        if (!(await type(`textarea[aria-label="Gerekçe: ${subject}"]`, 'Smoke: lütfen düzelt'))) throw new Error('reason input');
+        if (!(await click(`Yeniden aç: ${subject}`))) throw new Error('reopen button 2');
+        await waitText('Onaylanmış dönem yok.', 15_000);
+        if (!(await click('Takım raporu'))) throw new Error('team tab');
+        await waitText('Faturalı', 15_000);
+        await waitText(subject, 15_000);
+        const table = await js<{ headers: number; rows: number }>(`(() => { const t = document.querySelector('[role=table]'); return { headers: t ? t.querySelectorAll('[role=columnheader]').length : 0, rows: t ? t.querySelectorAll('[role=row]').length : 0 }; })()`);
+        if (table.headers !== 5 || table.rows < 3) throw new Error(`table semantics ${JSON.stringify(table)}`);
+        await shot('14-time-team');
+        if (!(await click('Takım CSV indir'))) throw new Error('team csv');
+        await waitText('Kaydedildi: workhub-time-team-', 20_000);
+        return `approve → reopen (reason enforced); table ${table.headers} columns × ${table.rows} rows`;
+      });
+    }
     const stamp = new Date().toISOString().slice(11, 19);
     const projectTitle = `Masaüstü projesi ${stamp}`;
     await step('project management: create → rename → add/rename column → add member', async () => {
