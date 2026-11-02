@@ -44,7 +44,7 @@ export function LoginScreen({ onDone, onCancel }: { onDone: (a: AccountSummary) 
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colors.bg }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: space(6), maxWidth: 480, width: '100%', alignSelf: 'center' }} keyboardShouldPersistTaps="handled">
         <Text accessibilityRole="header" style={{ fontSize: font.h1, fontWeight: '800', color: colors.text, marginBottom: space(2) }}>
           {t.appName}

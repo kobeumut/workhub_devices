@@ -224,7 +224,7 @@ export function ChatView({ accountId, room, selfId, onBack }: { accountId: Accou
 
   const reversed = [...items].reverse();
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colors.bg }} keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header title={room.displayName} {...(onBack ? { onBack } : {})} />
       <ErrorBanner error={error} />
       {loading ? (

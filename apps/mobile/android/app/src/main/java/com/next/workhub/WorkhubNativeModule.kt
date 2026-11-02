@@ -105,7 +105,7 @@ class WorkhubNativeModule(private val ctx: ReactApplicationContext) : ReactConte
     if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
       return p.resolve(true)
     }
-    val activity = currentActivity as? PermissionAwareActivity ?: return p.resolve(false)
+    val activity = ctx.currentActivity as? PermissionAwareActivity ?: return p.resolve(false)
     activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4711) { code, _, results ->
       if (code == 4711) {
         p.resolve(results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED)

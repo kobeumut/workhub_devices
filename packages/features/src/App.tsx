@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { BackHandler, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import type { AccountId, AccountSummary, AppRoute, Backend, RoutedTarget, SessionInfo } from '@workhub-devices/core';
 import { ServicesProvider, useAsync, useServices, type PlatformServices } from './services';
 import { LoginScreen } from './LoginScreen';
@@ -108,6 +108,16 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
       setDetail({ kind: 'task', cardId: r.cardId });
     } else setTab('inbox');
   }, []);
+
+  // Android hardware back: detail → its list (task → board → list) instead of leaving the app.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!detail) return false;
+      setDetail(detail.kind === 'task' && detail.from ? { kind: 'project', ...detail.from } : null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [detail]);
 
   useEffect(() => {
     if (pendingRoute) {

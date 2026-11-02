@@ -3,8 +3,6 @@ package com.next.workhub
 import android.content.Intent
 import android.os.Bundle
 import com.facebook.react.ReactActivity
-import android.content.Intent
-import android.os.Bundle
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
