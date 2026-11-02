@@ -328,11 +328,24 @@ export interface TalkFeatures {
   /** Unified search provider `talk-message` (with `conversation` filter). */
   search: boolean;
   description: boolean;
+  /** `spreed.config.attachments.allowed` (the user may upload/share files); missing → false. */
+  files: boolean;
+  /** Caption shown with a shared file (`media-caption`). */
+  caption: boolean;
+  /** `voice-message-sharing`. */
+  voice: boolean;
+  /** `chat-get-context`: needed to re-read one message (fresh file path before a download). */
+  context: boolean;
 }
 
-export function talkFeaturesOf(features: Iterable<string>): TalkFeatures {
+export function talkFeaturesOf(features: Iterable<string>, config: { attachmentsAllowed?: boolean } = {}): TalkFeatures {
   const f = new Set(features);
+  const files = config.attachmentsAllowed === true;
   return {
+    files,
+    caption: files && f.has('media-caption'),
+    voice: files && f.has('voice-message-sharing'),
+    context: f.has('chat-get-context'),
     reply: f.has('chat-replies'),
     edit: f.has('edit-messages'),
     delete: f.has('delete-messages'),

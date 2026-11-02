@@ -13,13 +13,24 @@ export interface RawServerCapabilities {
 export interface ServerCapabilities {
   nextcloudMajor: number | null;
   nextcloudVersion: string | null;
-  talk: { available: boolean; version: string | null; features: ReadonlySet<string>; canCreate: boolean };
+  talk: {
+    available: boolean; version: string | null; features: ReadonlySet<string>; canCreate: boolean;
+    /** `config.attachments`: may this user upload/share files, and where (e.g. `/Talk`). */
+    attachments: { allowed: boolean; folder: string | null };
+  };
   notifications: { available: boolean; endpoints: ReadonlySet<string>; push: ReadonlySet<string> };
   /** Instance-wide Workhub info. NOT a per-user permission: use `getWorkhubBootstrap` for that. */
   workhub: { installed: boolean; version: string | null; apiVersion: string | null };
 }
 
 const strings = (v: unknown): Set<string> => new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+function attachmentsOf(raw: unknown): { allowed: boolean; folder: string | null } {
+  const a = (raw ?? {}) as Record<string, unknown>;
+  const folder = typeof a.folder === 'string' && a.folder.trim() && !a.folder.split('/').some((p) => p === '..' || p === '.') ? a.folder : null;
+  // Fail closed: no folder → nowhere to upload.
+  return { allowed: a.allowed === true && folder !== null, folder };
+}
 
 export function parseServerCapabilities(raw: RawServerCapabilities): ServerCapabilities {
   const caps = raw.capabilities ?? {};
@@ -33,6 +44,7 @@ export function parseServerCapabilities(raw: RawServerCapabilities): ServerCapab
       features: talkFeatures,
       // `conversations.can-create` (admin may restrict creation to groups); missing → false (fail closed)
       canCreate: (caps.spreed?.config?.conversations as Record<string, unknown> | undefined)?.['can-create'] === true,
+      attachments: attachmentsOf(caps.spreed?.config?.attachments),
     },
     notifications: {
       available: !!caps.notifications,

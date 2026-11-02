@@ -153,6 +153,22 @@ class WorkhubNativeModule(private val ctx: ReactApplicationContext) : ReactConte
     }
   }
 
+  // ---- Talk attachments (GENE-58), see TalkFiles ----
+  private val files by lazy { TalkFiles(ctx) }
+  @ReactMethod fun filePick(p: Promise) = files.pick(p)
+  @ReactMethod fun fileStat(id: String, p: Promise) = files.stat(id, p)
+  @ReactMethod fun fileRead(id: String, offset: Double, length: Double, p: Promise) = files.read(id, offset, length, p)
+  @ReactMethod fun fileRelease(id: String) = files.release(id)
+  @ReactMethod fun sinkOpen(name: String, p: Promise) = files.sinkOpen(name, p)
+  @ReactMethod fun sinkWrite(id: String, b64: String, p: Promise) = files.sinkWrite(id, b64, p)
+  @ReactMethod fun sinkFinish(id: String, mime: String, mode: String, p: Promise) = files.sinkFinish(id, mime, mode, p)
+  @ReactMethod fun sinkAbort(id: String) = files.sinkAbort(id)
+  @ReactMethod fun voiceStart(p: Promise) = files.voiceStart(p)
+  @ReactMethod fun voiceStop(name: String, p: Promise) = files.voiceStop(name, p)
+  @ReactMethod fun voiceCancel() = files.voiceCancel()
+  @ReactMethod fun audioPlay(b64: String, p: Promise) = files.audioPlay(b64, p)
+  @ReactMethod fun audioStop() = files.audioStop()
+
   @ReactMethod fun addListener(eventName: String) {}
   @ReactMethod fun removeListeners(count: Double) {}
 }

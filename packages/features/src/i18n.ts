@@ -81,9 +81,32 @@ export const t = {
   sharesSaved: 'Paylaşımlar kaydedildi.',
 };
 
+/** Stable error codes with a specific explanation (files, quota, capability gates). */
+const CODE_TEXT: Record<string, string> = {
+  QUOTA_EXCEEDED: 'Depolama kotanız dolu; dosya yüklenemedi. Yer açıp tekrar deneyin.',
+  FILE_TOO_LARGE: 'Dosya sunucunun izin verdiği boyuttan büyük.',
+  FILE_LOCKED: 'Dosya şu anda kilitli; biraz sonra tekrar deneyin.',
+  FILE_GONE: 'Seçilen dosyaya artık ulaşılamıyor; yeniden seçin.',
+  FILE_CHANGED: 'Dosya yükleme sırasında değişti; yeniden seçin.',
+  FILES_UNSUPPORTED: 'Bu cihazda dosya işlemleri henüz desteklenmiyor.',
+  TALK_FEATURE_MISSING: 'Sunucu bu Talk özelliğini desteklemiyor veya sizin için kapalı.',
+  TALK_CHAT_FORBIDDEN: 'Bu sohbette yazma veya dosya paylaşma izniniz yok.',
+  DOWNLOAD_HIDDEN: 'Paylaşan kişi bu dosyanın indirilmesini kapatmış.',
+  OPEN_NOT_ALLOWED: 'Bu dosya türü güvenlik nedeniyle doğrudan açılamaz; indirip kaydedin.',
+  INVALID_VOICE_MESSAGE: 'Sesli not WAV veya MP3 olmalı ve 25 MB’ı aşmamalı.',
+  NOT_A_FILE: 'Bu mesajda indirilebilir bir dosya yok.',
+  NAME_EXHAUSTED: 'Talk klasöründe bu adla çok fazla dosya var; dosyayı yeniden adlandırın.',
+  MIC_DENIED: 'Mikrofon izni verilmedi veya mikrofon bulunamadı.',
+  PLAYBACK_FAILED: 'Ses bu cihazda oynatılamadı; indirip açmayı deneyin.',
+};
+
 export function describeError(e: unknown): string {
   if (e instanceof OcsError) {
+    if (e.errorCode && CODE_TEXT[e.errorCode]) return CODE_TEXT[e.errorCode]!;
+    if (e.status === 507) return CODE_TEXT.QUOTA_EXCEEDED!;
     switch (e.kind) {
+      case 'aborted':
+        return 'İptal edildi.';
       case 'unauthorized':
         return 'Oturum geçersiz veya uygulama parolası iptal edilmiş. Lütfen tekrar giriş yapın.';
       case 'forbidden':

@@ -1,5 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { AccountSummary, AppRoute, Backend, RoutedTarget } from '@workhub-devices/core';
+import type { AccountSummary, AppRoute, Backend, PickedFile, RoutedTarget } from '@workhub-devices/core';
+
+/** Microphone → finished voice note (WAV, staged in the shell; the UI only gets a handle). */
+export interface VoiceRecorder {
+  /** Rejects when the microphone permission is denied or no input device exists. */
+  start(): Promise<void>;
+  /** `null` when the recording was too short/empty. */
+  stop(): Promise<PickedFile | null>;
+  cancel(): Promise<void>;
+}
+
+export interface AudioPlayback {
+  stop(): void;
+  /** Resolves when playback ends (or was stopped). */
+  ended: Promise<void>;
+}
 
 /** Platform capabilities the shared UI needs; each shell implements these at its trust boundary. */
 export interface PlatformServices {
@@ -19,6 +34,19 @@ export interface PlatformServices {
    * share sheet. Absent → the UI hides export actions. Content is data from the server only.
    */
   saveFile?(filename: string, content: string, mime: 'text/csv'): Promise<'saved' | 'cancelled'>;
+  /**
+   * Talk attachments: the OS file picker. Returns opaque handles (+ name/size/type); the file
+   * itself stays in the shell (Electron main / native module). Absent → no attach button.
+   */
+  files?: {
+    pick(): Promise<PickedFile[]>;
+    /** Drop a picked file that will not be sent. */
+    release(handle: string): Promise<void>;
+  };
+  /** Voice notes; absent → no record button. */
+  voice?: VoiceRecorder;
+  /** Play a downloaded voice note (bytes from the Backend, never a URL with credentials). */
+  playAudio?(clip: { mime: string; base64: string }): Promise<AudioPlayback>;
 }
 
 interface Ctx {

@@ -117,7 +117,12 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         if (!(await type('input[aria-label="Sohbet adı"]', roomName))) throw new Error('room name input');
         if (!(await click('Sohbeti oluştur'))) throw new Error('create');
         await waitText(roomName, 15_000);
-        if (!(await click('Sohbet bilgileri'))) throw new Error('info button');
+        // The info button appears once the fresh room read has returned.
+        const endI = Date.now() + 10_000;
+        while (!(await click('Sohbet bilgileri'))) {
+          if (Date.now() > endI) throw new Error('info button');
+          await sleep(300);
+        }
         await waitText('Katılımcılar', 10_000);
         if (!(await type('textarea[aria-label="Açıklama"]', 'Masaüstü smoke açıklaması'))) throw new Error('description');
         if (!(await click('Bilgileri kaydet'))) throw new Error('save info');
@@ -229,6 +234,81 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         const after = await asB<Array<{ id: number; messageType: string }>>('GET', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}?lookIntoFuture=0&limit=30`);
         if (after.find((x) => x.id === firstId)?.messageType !== 'comment_deleted') throw new Error('B does not see the deletion');
         return 'B: edit + 🎉/👍 + quote + deletion confirmed';
+      });
+      // Talk files (GENE-58): upload with caption + progress tray, download/open of B's file, voice note.
+      const bAuth = `Basic ${Buffer.from(`${bUser}:${bPass}`).toString('base64')}`;
+      const davB = (method: string, path: string, body?: Uint8Array) =>
+        fetch(`${process.env.WORKHUB_SMOKE_SERVER}/remote.php/dav/files/${encodeURIComponent(bUser)}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+          method, headers: { Authorization: bAuth }, ...(body ? { body: body as BodyInit } : {}),
+        });
+      type Msg = { id: number; message: string; messageType: string; messageParameters: Record<string, { type: string; name?: string }> | [] };
+      const fileName = (m: Msg) => (Array.isArray(m.messageParameters) ? undefined : m.messageParameters.file?.name);
+      const bFeed = () => asB<Msg[]>('GET', `/ocs/v2.php/apps/spreed/api/v1/chat/${token}?lookIntoFuture=0&limit=30`);
+      await step('talk files: attach (caption from composer) → progress tray → shared; B gets the file + caption', async () => {
+        const caption = `Ek açıklaması ${stamp}`;
+        await type('textarea', caption);
+        if (!(await click('Dosya ekle'))) throw new Error('attach button');
+        await waitText('Masaüstü ek', 10_000);
+        const end = Date.now() + 30_000;
+        let file: Msg | undefined;
+        while (!(file = (await bFeed()).find((m) => fileName(m)?.startsWith('Masaüstü ek')))) {
+          if (Date.now() > end) throw new Error('B does not see the file');
+          await sleep(500);
+        }
+        if (file.message !== caption) throw new Error('caption missing for B');
+        await waitText(caption, 10_000);
+        const trayGone = Date.now() + 10_000;
+        while (await js<boolean>(`!!document.querySelector('[aria-label="Dosya yüklemeleri"]')`)) {
+          if (Date.now() > trayGone) throw new Error('upload tray still visible');
+          await sleep(300);
+        }
+        if (await textareaValue()) throw new Error('composer not cleared');
+        await shot('03f-talk-file');
+        return `B: ${fileName(file)} + caption`;
+      });
+      await step('talk files: B shares a PDF → Download (main writes it; bytes identical) → Open (safe type)', async () => {
+        const name = `B rapor ${stamp}.pdf`;
+        const bytes = new TextEncoder().encode(`%PDF-1.4\n% GENE-58 ${stamp}\n`.repeat(100));
+        await davB('MKCOL', 'Talk');
+        const put = await davB('PUT', `Talk/${name}`, bytes);
+        if (!put.ok) throw new Error(`B upload ${put.status}`);
+        await asB('POST', '/ocs/v2.php/apps/files_sharing/api/v1/shares', { shareType: 10, shareWith: token, path: `/Talk/${name}`, talkMetaData: JSON.stringify({ messageType: 'comment' }) });
+        await waitText(name, 20_000);
+        if (!(await click(`İndir: ${name}`))) throw new Error('download button');
+        await waitText('Kaydedildi.', 20_000);
+        const saved = await fs.readFile(join(out, `saved-${name.replace(/:/g, '_')}`));
+        if (Buffer.compare(saved, Buffer.from(bytes)) !== 0) throw new Error('saved bytes differ');
+        if (!(await click(`Aç: ${name}`))) throw new Error('open button');
+        await waitText('Açıldı.', 20_000);
+        await fs.stat(join(out, `opened-${name.replace(/:/g, '_')}`));
+        await shot('03g-talk-download');
+        await davB('DELETE', `Talk/${name}`);
+        return `${saved.byteLength} bytes, sha match`;
+      });
+      await step('talk files: voice note (fake mic) → record → send → B gets voice-message (WAV) → play', async () => {
+        if (!(await click('Sesli not kaydet'))) throw new Error('record button');
+        await waitText('Kaydediliyor', 10_000);
+        await sleep(3000);
+        if (!(await click('Sesli notu gönder'))) throw new Error('send voice');
+        const end = Date.now() + 30_000;
+        let voice: Msg | undefined;
+        while (!(voice = (await bFeed()).find((m) => m.messageType === 'voice-message'))) {
+          if (Date.now() > end) throw new Error('B has no voice-message');
+          await sleep(500);
+        }
+        await waitText('🎤 Sesli not', 10_000);
+        await shot('03h-talk-voice');
+        const playClicked = await js<boolean>(`(() => { const els = [...document.querySelectorAll('[role=button]')].filter(e => (e.getAttribute('aria-label') || '').startsWith('Dinle: ')); const el = els[els.length - 1]; if (!el) return false; el.click(); return true; })()`);
+        if (!playClicked) throw new Error('play button');
+        const endP = Date.now() + 10_000;
+        let played = false;
+        while (Date.now() < endP && !played) {
+          played = await js<boolean>(`document.body.innerText.includes('■ Durdur')`);
+          if (!played) await sleep(150);
+        }
+        const err = await js<boolean>(`[...document.querySelectorAll('[role=alert]')].some(e => /hata|başarısız|ulaşılam/i.test(e.innerText))`);
+        if (err) throw new Error('playback error shown');
+        return `B: ${fileName(voice)} (${voice.messageType}); playback ${played ? 'started' : 'not observed (clip ended)'}`;
       });
       await step('talk: delete the conversation for everyone → gone from the list and for B', async () => {
         if (!(await click('Sohbet bilgileri'))) throw new Error('info');

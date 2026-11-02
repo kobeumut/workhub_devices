@@ -66,6 +66,31 @@ export interface OcsResponse<T> {
   headers: Headers;
 }
 
+/** WebDAV request (files / chunked uploads): binary body, no OCS envelope. */
+export interface DavRequest {
+  method: 'GET' | 'HEAD' | 'PUT' | 'MKCOL' | 'MOVE' | 'DELETE';
+  headers?: Record<string, string>;
+  body?: Uint8Array;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  /** Statuses that are NOT errors for this call (e.g. 404 for an existence probe, 405 for MKCOL of an existing folder). */
+  accept?: readonly number[];
+}
+
+/** Sabre/DAV error body → `<s:message>` (server text, used only as a diagnostic). */
+export function davErrorMessage(xml: string): string | undefined {
+  const m = /<s:message>([^<]{1,300})<\/s:message>/.exec(xml);
+  return m?.[1];
+}
+
+/** DAV status → typed error. Quota (507) and size (413) get stable codes the UI explains. */
+export function davError(status: number, message?: string, retryAfterMs?: number): OcsError {
+  if (status === 507) return new OcsError('client', 507, message, undefined, 'QUOTA_EXCEEDED');
+  if (status === 413) return new OcsError('client', 413, message, undefined, 'FILE_TOO_LARGE');
+  if (status === 423) return new OcsError('conflict', 423, message, undefined, 'FILE_LOCKED');
+  return new OcsError(kindForStatus(status), status, message, retryAfterMs);
+}
+
 export function encodeBasicAuth(user: string, password: string): string {
   const bytes = new TextEncoder().encode(`${user}:${password}`);
   let bin = '';
@@ -134,7 +159,7 @@ export class OcsClient {
    * Authenticated fetch to a relative path on THIS server only: no redirects followed, no
    * cookies, bounded time. Shared by OCS calls and plain app downloads (CSV).
    */
-  private async send(path: string, req: OcsRequest, accept: string, query: Record<string, QueryValue>): Promise<Response> {
+  private async send(path: string, req: Omit<OcsRequest, 'method'> & { method?: string; rawBody?: Uint8Array }, accept: string, query: Record<string, QueryValue>): Promise<Response> {
     assertSafeApiPath(path);
     const { loginName, appPassword } = await this.options.getCredentials();
     const headers: Record<string, string> = {
@@ -144,8 +169,11 @@ export class OcsClient {
       ...(this.options.userAgent ? { 'User-Agent': this.options.userAgent } : {}),
       ...req.headers,
     };
-    let body: string | undefined;
-    if (req.body !== undefined) {
+    let body: string | Uint8Array | undefined;
+    if (req.rawBody !== undefined) {
+      headers['Content-Type'] ??= 'application/octet-stream';
+      body = req.rawBody;
+    } else if (req.body !== undefined) {
       headers['Content-Type'] = 'application/json';
       body = JSON.stringify(req.body);
     }
@@ -170,7 +198,7 @@ export class OcsClient {
         credentials: 'omit',
         signal: controller.signal,
       };
-      if (body !== undefined) init.body = body;
+      if (body !== undefined) init.body = body as BodyInit;
       res = await this.fetchFn(url, init);
     } catch {
       throw new OcsError(timedOut ? 'timeout' : req.signal?.aborted ? 'aborted' : 'network');
@@ -214,6 +242,29 @@ export class OcsClient {
       );
     }
     return { text: await res.text(), contentType };
+  }
+
+  /**
+   * WebDAV call on this server (same credential/redirect rules as OCS). Non-2xx statuses throw
+   * typed errors unless listed in `accept`. The caller consumes the body (download streaming).
+   */
+  async dav(path: string, req: DavRequest): Promise<Response> {
+    const { accept, body, ...rest } = req;
+    const res = await this.send(path, { ...rest, ...(body ? { rawBody: body } : {}) }, '*/*', {});
+    if (res.ok || accept?.includes(res.status)) return res;
+    let text = '';
+    try {
+      text = req.method === 'HEAD' ? '' : await res.text();
+    } catch {
+      text = '';
+    }
+    throw davError(res.status, davErrorMessage(text), parseRetryAfter(res.headers.get('Retry-After')));
+  }
+
+  /** Absolute URL of a path on this server (WebDAV `Destination` header). */
+  url(path: string): string {
+    assertSafeApiPath(path);
+    return `${this.serverBase}${path}`;
   }
 
   async request<T>(path: string, req: OcsRequest = {}): Promise<OcsResponse<T>> {
