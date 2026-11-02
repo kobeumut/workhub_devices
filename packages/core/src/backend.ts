@@ -22,6 +22,10 @@ import {
   type WorkflowDetail, type WorkflowGraph, type WorkflowHandoff, type WorkflowHandoffInput, type WorkflowInput, type WorkflowPatch, type WorkflowRun,
   type WorkflowSample, type WorkflowStartInput, type WorkflowSummary,
 } from './workflows';
+import {
+  aiApi, aiInputError, proposalActions, isAiActive, AI_ACTIONS, AI_LIMITS, AI_REQUEST_ID_RE,
+  type AiAcceptResult, type AiProposal, type AiRequestBase, type AiRequestDetail, type AiRequestInput, type AiRequestSummary, type AiStatus,
+} from './ai';
 
 /**
  * The single domain API every UI talks to. It is implemented once here ("direct", used by the
@@ -198,6 +202,19 @@ export interface Backend {
   /** Hand over a pending step / retry a failed one; needs `canAct` on the CURRENT run's step. */
   workflowHandoff(accountId: AccountId, runId: number, stepId: number, input: WorkflowHandoffInput, idempotencyKey: string): Promise<WorkflowRun | null>;
   workflowSkip(accountId: AccountId, runId: number, stepId: number, reason: string): Promise<WorkflowRun | null>;
+
+  /** AI (gate: `modules.ai`, fail closed; requests and drafts are personal — others get 404). */
+  aiStatus(accountId: AccountId): Promise<AiStatus>;
+  aiRequests(accountId: AccountId): Promise<AiRequestSummary[]>;
+  /** Client-side rule check first (`AI_INVALID_SCOPE`), then the server re-checks READ/EDIT. */
+  aiCreate(accountId: AccountId, input: AiRequestInput, idempotencyKey: string): Promise<{ requestId: string; pollAfterMs: number } | null>;
+  aiRequest(accountId: AccountId, requestId: string): Promise<AiRequestDetail>;
+  /** Only for an active request of the caller (fresh read): `AI_REQUEST_FINISHED` 409 otherwise. */
+  aiCancel(accountId: AccountId, requestId: string): Promise<AiRequestBase | null>;
+  aiProposal(accountId: AccountId, proposalId: number): Promise<AiProposal>;
+  /** Fresh preview must be acceptable (ready, not stale/restricted, target editable). */
+  aiAccept(accountId: AccountId, proposalId: number, version: number, idempotencyKey: string): Promise<AiAcceptResult | null>;
+  aiDismiss(accountId: AccountId, proposalId: number, version: number): Promise<{ id: number; state: 'dismissed'; version: number } | null>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -340,6 +357,28 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     const d = await dashboardsApi.get(c, dashboardId);
     if (!dashboardRoleAtLeast(d.role, need)) throw new OcsError('forbidden', 403, undefined, undefined, need === 'manage' ? 'DASHBOARD_MANAGE_REQUIRED' : 'DASHBOARD_EDIT_REQUIRED');
     return { c, d };
+  };
+  /** AI gate (fail closed): the module must be on for this user. Provider state is the server's (503). */
+  const aiClient = async (id: AccountId): Promise<OcsClient> => {
+    const c = await client(id);
+    const b = await bootstrap(id, c);
+    if (!b.modules.ai) throw new OcsError('forbidden', 403, undefined, undefined, 'AI_DISABLED');
+    return c;
+  };
+  /** Gate on the CURRENT draft preview: never act on a cached list row. */
+  const proposalFor = async (id: AccountId, proposalId: number, version: number, need: 'accept' | 'dismiss') => {
+    const c = await aiClient(id);
+    const p = await aiApi.proposal(c, proposalId);
+    if (p.version !== version) throw new OcsError('conflict', 409, undefined, undefined, 'VERSION_CONFLICT');
+    const can = proposalActions(p);
+    if (need === 'accept' && !can.accept) {
+      if (p.restricted) throw new OcsError('not_found', 404);
+      if (p.stale) throw new OcsError('conflict', 409, undefined, undefined, 'SOURCE_CHANGED');
+      if (p.state === 'ready') throw new OcsError('forbidden', 403, undefined, undefined, 'ACTION_FORBIDDEN');
+      throw new OcsError('conflict', 409, undefined, undefined, p.state === 'expired' ? 'PROPOSAL_EXPIRED' : 'PROPOSAL_NOT_READY');
+    }
+    if (need === 'dismiss' && !can.dismiss) throw new OcsError('conflict', 409, undefined, undefined, 'PROPOSAL_NOT_READY');
+    return c;
   };
   /** Role gate on the CURRENT template (fresh detail): graph/header writes need `edit`, delete `manage`. */
   const workflowFor = async (id: AccountId, workflowId: number, need: 'view' | 'edit' | 'manage') => {
@@ -833,6 +872,37 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       const { c } = await stepFor(accountId, runId, stepId);
       return workflowsApi.skip(c, stepId, reason.trim());
     },
+    async aiStatus(accountId) {
+      return aiApi.status(await aiClient(accountId));
+    },
+    async aiRequests(accountId) {
+      return aiApi.list(await aiClient(accountId));
+    },
+    async aiCreate(accountId, input, idempotencyKey) {
+      const message = input.message?.trim();
+      const body: AiRequestInput = { action: input.action, scope: { ...input.scope }, ...(message ? { message } : {}) };
+      if (aiInputError(body)) throw new OcsError('client', 422, undefined, undefined, 'AI_INVALID_SCOPE');
+      const r = await aiApi.create(await aiClient(accountId), body, idempotencyKey);
+      return r ? { requestId: r.requestId, pollAfterMs: r.pollAfterMs } : null;
+    },
+    async aiRequest(accountId, requestId) {
+      return aiApi.get(await aiClient(accountId), requestId);
+    },
+    async aiCancel(accountId, requestId) {
+      const c = await aiClient(accountId);
+      const current = await aiApi.get(c, requestId);
+      if (!isAiActive(current.state)) throw new OcsError('conflict', 409, undefined, undefined, 'AI_REQUEST_FINISHED');
+      return aiApi.cancel(c, requestId);
+    },
+    async aiProposal(accountId, proposalId) {
+      return aiApi.proposal(await aiClient(accountId), proposalId);
+    },
+    async aiAccept(accountId, proposalId, version, idempotencyKey) {
+      return aiApi.accept(await proposalFor(accountId, proposalId, version, 'accept'), proposalId, version, idempotencyKey);
+    },
+    async aiDismiss(accountId, proposalId, version) {
+      return aiApi.dismiss(await proposalFor(accountId, proposalId, version, 'dismiss'), proposalId, version);
+    },
   };
 }
 
@@ -856,6 +926,7 @@ export const BACKEND_METHODS = [
   'dashboardWidgetAdd', 'dashboardWidgetUpdate', 'dashboardWidgetDelete', 'dashboardQuery', 'dashboardDrilldown', 'dashboardCsv',
   'workflows', 'workflowSamples', 'workflow', 'workflowCreate', 'workflowUpdate', 'workflowDelete', 'workflowStart',
   'workflowRuns', 'workflowRun', 'workflowCancel', 'workflowHandoffs', 'cardWorkflowHandoffs', 'workflowHandoff', 'workflowSkip',
+  'aiStatus', 'aiRequests', 'aiCreate', 'aiRequest', 'aiCancel', 'aiProposal', 'aiAccept', 'aiDismiss',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -1123,6 +1194,19 @@ export const isValidWorkflowStart = (v: unknown): v is WorkflowStartInput =>
 export const isValidHandoffInput = (v: unknown): v is WorkflowHandoffInput =>
   isObj(v) && fieldsOk(v as Record<string, unknown>, { assigneeUid: (x) => x === null || isWfUid(x), title: isStr(L.stepTitle), description: isStr(L.stepDescription), dueDate: isDueDay }, []);
 
+// ---- AI wire validation: exact body shape, server limits and per-action rules (`AiRequestService`) ----
+const isIdList = (max: number) => (x: unknown) => Array.isArray(x) && x.length <= max && x.every(isInt) && new Set(x).size === x.length;
+const isAiScope = (v: unknown) => isObj(v) && fieldsOk(v as Record<string, unknown>, {
+  cardIds: isIdList(AI_LIMITS.cardIds), boardIds: isIdList(AI_LIMITS.boardIds), stackId: isInt, includeComments: (x) => typeof x === 'boolean',
+}, ['cardIds', 'boardIds']);
+export const isValidAiRequestInput = (v: unknown): v is AiRequestInput =>
+  isObj(v)
+  && fieldsOk(v as Record<string, unknown>, { action: (x) => (AI_ACTIONS as readonly unknown[]).includes(x), scope: isAiScope, message: isStr(AI_LIMITS.message) }, ['action', 'scope'])
+  && aiInputError(v as AiRequestInput) === null;
+const isAiRequestId = (v: unknown) => typeof v === 'string' && AI_REQUEST_ID_RE.test(v);
+/** The server requires a UUID Idempotency-Key for AI create/accept. */
+const isUuidKey = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -1227,6 +1311,14 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   cardWorkflowHandoffs: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   workflowHandoff: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidHandoffInput(a[3]) && isKey(a[4]),
   workflowSkip: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isStr(L.skipReason)(a[3]),
+  aiStatus: (a) => a.length === 1 && isAccountId(a[0]),
+  aiRequests: (a) => a.length === 1 && isAccountId(a[0]),
+  aiCreate: (a) => a.length === 3 && isAccountId(a[0]) && isValidAiRequestInput(a[1]) && isUuidKey(a[2]),
+  aiRequest: (a) => a.length === 2 && isAccountId(a[0]) && isAiRequestId(a[1]),
+  aiCancel: (a) => a.length === 2 && isAccountId(a[0]) && isAiRequestId(a[1]),
+  aiProposal: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  aiAccept: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isUuidKey(a[3]),
+  aiDismiss: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */

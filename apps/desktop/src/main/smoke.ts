@@ -25,6 +25,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       const els = [...document.querySelectorAll('[role=button],[role=tab],[role=checkbox],button')];
       const el = els.find(e => ${exact ? `e.innerText.trim() === ${JSON.stringify(text)} || e.getAttribute('aria-label') === ${JSON.stringify(text)}` : `e.innerText.includes(${JSON.stringify(text)})`});
       if (!el) return false; el.click(); return true; })()`);
+  const webTab = () => js<boolean>(`[...document.querySelectorAll('[role=tab]')].some(e => ['Diğer', 'Yönetim'].includes(e.innerText.trim()))`);
   const type = (selector: string, value: string) =>
     js<boolean>(`(() => {
       const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false;
@@ -48,6 +49,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
   };
 
   let openBefore: number | null = null;
+  let firstBoardTitle = '';
   const firstProjectOpenCount = () =>
     js<number | null>(`(() => {
       const el = [...document.querySelectorAll('[role=button]')].find(e => / açık · /.test(e.innerText));
@@ -92,6 +94,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('açık', 20_000);
       await shot('04-projects');
       openBefore = await firstProjectOpenCount();
+      firstBoardTitle = await js<string>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => / açık · /.test(e.innerText)); return el ? el.innerText.split('\\n')[0].trim() : ''; })()`);
       if (!(await click('açık', false))) throw new Error('project row');
       await waitText('To Do', 20_000);
       await shot('05-board');
@@ -160,7 +163,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       if (!(await click('Pano'))) throw new Error('board tab');
       return `gantt label: "${row.slice(0, 80)}…"; activity ${paged}`;
     });
-    await step('workload matrix: person × day table with spoken cells; web links gone from "Diğer"', async () => {
+    await step('workload matrix: person × day table with spoken cells; no web-fallback tab', async () => {
       if (!(await click('İş yükü'))) throw new Error('workload tab');
       await waitText('Kişi', 20_000);
       const t = await js<{ headers: number; rows: number; cell: string | null }>(`(() => { const t = document.querySelector('[role=table]'); const c = t && [...t.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').includes('planlanan')); return { headers: t ? t.querySelectorAll('[role=columnheader]').length : 0, rows: t ? t.querySelectorAll('[role=row]').length : 0, cell: c ? c.getAttribute('aria-label') : null }; })()`);
@@ -172,8 +175,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click(t.cell);
       await sleep(800);
       await shot('21-workload');
-      if (!(await click('Diğer'))) throw new Error('more tab');
-      await sleep(800);
+      // GENE-56: the web-fallback tab ("Diğer") is gone; only admins get "Yönetim" (web, password confirmation).
+      if (await webTab()) throw new Error('web fallback tab visible for a non-admin');
       const links = await js<boolean>(`document.body.innerText.includes('İş yükü ↗') || document.body.innerText.includes('Gantt ve etkinlik')`);
       if (links) throw new Error('web fallback links still listed');
       await click('Projeler');
@@ -240,8 +243,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Yeni dashboard', 15_000);
       await sleep(1000);
       if (await js<boolean>(`document.body.innerText.includes(${JSON.stringify(dashTitle)})`)) throw new Error('dashboard still listed');
-      if (!(await click('Diğer'))) throw new Error('more tab');
-      await sleep(800);
+      // GENE-56: the web-fallback tab ("Diğer") is gone; only admins get "Yönetim" (web, password confirmation).
+      if (await webTab()) throw new Error('web fallback tab visible for a non-admin');
       if (await js<boolean>(`document.body.innerText.includes("Dashboard'lar ve widget'lar")`)) throw new Error('dashboard web link still listed');
       await click('Projeler');
       return `${t.tables} tables, "${t.kpi}", drill-down ${shown} cards → task; widget add/edit/CSV/remove; deleted`;
@@ -323,8 +326,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Yeni iş akışı', 15_000);
       await sleep(1000);
       if (await js<boolean>(`[...document.querySelectorAll('[role=button]')].some(e => e.getAttribute('aria-label') === ${JSON.stringify(`İş akışı: ${wfTitle}`)})`)) throw new Error('workflow still listed');
-      if (!(await click('Diğer'))) throw new Error('more tab');
-      await sleep(800);
+      // GENE-56: the web-fallback tab ("Diğer") is gone; only admins get "Yönetim" (web, password confirmation).
+      if (await webTab()) throw new Error('web fallback tab visible for a non-admin');
       if (await js<boolean>(`document.body.innerText.includes('İş akışları ↗')`)) throw new Error('workflow web link still listed');
       await click('Projeler');
       return `created "${wfTitle}", lists set, run → ${cardBtn.slice(0, 60)} → done → ${handoff}; second run cancelled; deleted`;
@@ -372,6 +375,75 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       }
       await waitText('Kayıt silindi.', 15_000);
       return 'entry created, edited, locked on submit, unlocked on withdraw, deleted';
+    });
+    await step('time entry linked to a task: add → task picker (project → search → task) → listed under the task → delete', async () => {
+      if (!firstBoardTitle) throw new Error('project title not captured');
+      if (!(await click('Kayıt ekle'))) throw new Error('add entry');
+      await waitText('Yeni kayıt', 10_000);
+      await type('input[aria-label="Başlangıç (SS:DD)"]', '05:00');
+      await type('input[aria-label="Bitiş (SS:DD)"]', '05:30');
+      if (!(await click('Görev bağla'))) throw new Error('link task button');
+      await waitText(firstBoardTitle, 10_000);
+      if (!(await click(firstBoardTitle))) throw new Error('project chip');
+      const end = Date.now() + 10_000;
+      while (!(await type('input[aria-label="Görev ara"]', editedTitle))) {
+        if (Date.now() > end) throw new Error('task search');
+        await sleep(300);
+      }
+      await sleep(500);
+      if (!(await click(editedTitle))) throw new Error('task chip');
+      await waitText('Görevi değiştir', 5_000);
+      await shot('12b-time-task-link');
+      if (!(await click('Kaydı ekle'))) throw new Error('save new');
+      await waitText('05:00–05:30', 15_000);
+      const end2 = Date.now() + 10_000;
+      while (!(await click(`Kaydı sil: ${editedTitle}`))) {
+        if (Date.now() > end2) throw new Error('entry not listed under the task title');
+        await sleep(300);
+      }
+      await waitText('Kayıt silindi.', 15_000);
+      return `entry linked to "${editedTitle}" in "${firstBoardTitle}", deleted`;
+    });
+    await step('AI: status + quota → project summary request → polled to a terminal state with the server explanation → history; client-side rule; no admin tab', async () => {
+      if (!firstBoardTitle) throw new Error('project title not captured');
+      await click('İşler');
+      await sleep(500);
+      if (!(await click('AI'))) throw new Error('AI tab');
+      await waitText('Bugün kalan', 15_000);
+      if (await webTab()) throw new Error('admin/web tab visible for a non-admin');
+      // Client-side rule: a question needs text (never sent).
+      if (!(await click('Soru sor'))) throw new Error('question chip');
+      await waitText(firstBoardTitle, 10_000);
+      await click(firstBoardTitle);
+      if (!(await click('Soru sor isteğini gönder'))) throw new Error('send question');
+      await waitText('Soru veya talimat yazın.', 5_000);
+      if (!(await click('Proje özeti'))) throw new Error('board summary chip');
+      await sleep(300);
+      if (!(await click(firstBoardTitle))) throw new Error('project chip');
+      if (!(await click('Proje özeti isteğini gönder'))) throw new Error('send');
+      await waitText('Kaynaklar', 15_000);
+      const end = Date.now() + 90_000;
+      let state = '';
+      while (Date.now() < end) {
+        state = await js<string>(`(() => { const t = document.body.innerText; return ['Tamamlandı', 'Başarısız', 'İptal edildi'].find(s => t.includes(s + ' · ')) || ''; })()`);
+        if (state) break;
+        await sleep(1000);
+      }
+      if (!state) throw new Error('request did not finish');
+      const detail = await js<{ alert: string; answer: boolean; source: boolean }>(`(() => ({ alert: [...document.querySelectorAll('[role=alert]')].map(e => e.innerText).join(' | '), answer: !!document.querySelector('[aria-label="AI yanıtı"]'), source: document.body.innerText.includes(${JSON.stringify(`Proje: ${firstBoardTitle}`)}) }))()`);
+      if (!detail.source) throw new Error('source project not listed');
+      if (state === 'Başarısız' && !detail.alert) throw new Error('failure without explanation');
+      if (state === 'Tamamlandı' && !detail.answer) throw new Error('answer missing');
+      await shot('24-ai-request');
+      if (!(await click('AI listesine dön'))) throw new Error('back');
+      await waitText('Geçmiş', 10_000);
+      if (!(await click('Geçmiş'))) throw new Error('history tab');
+      await waitText(`${state} · `, 10_000);
+      await shot('25-ai-history');
+      // Back to Time for the CSV step that follows.
+      if (!(await click('Zaman'))) throw new Error('time tab');
+      await waitText('Zamanlayıcı', 15_000);
+      return `request ${state}${detail.alert ? ` — "${detail.alert.slice(0, 80)}"` : ''}; listed in history`;
     });
     await step('own CSV export → save (smoke: written to the output dir)', async () => {
       if (!(await click('CSV indir'))) throw new Error('own csv');

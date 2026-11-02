@@ -188,3 +188,21 @@ test('IPC validation: time entry bodies, patches, decisions and ranges', async (
   const ok = await dispatchWire(b, 'timeCsv', ['acc', 'own', '2026-01-01', '2026-11-02']);
   assert.equal(ok.ok === false && ok.error.kind, 'unauthorized');
 });
+
+test('task link: create with a task, change / remove the link on edit, allowTaskless=false policy', () => {
+  const base = { kind: 'range' as const, date: '2026-11-02', start: '09:00', end: '10:30', hours: '', description: '', billable: false };
+  const created = buildTimeEntry(base, IST, { ...opts, cardId: 50 });
+  assert.ok('create' in created && created.create.cardId === 50 && created.create.description === null);
+  assert.deepEqual(buildTimeEntry(base, IST, { ...opts, allowTaskless: false }), { error: 'task_required' });
+  const e = entry();
+  const form = timeEntryFormOf(e, IST, '');
+  assert.deepEqual(buildTimeEntry(form, IST, opts, e), { patch: { version: 3 } });
+  assert.deepEqual(buildTimeEntry(form, IST, { ...opts, cardId: 51 }, e), { patch: { version: 3, cardId: 51 } });
+  const linked = entry({ cardId: 51 });
+  assert.deepEqual(buildTimeEntry(form, IST, { ...opts, cardId: null }, linked), { patch: { version: 3, cardId: null } });
+  // Removing the task needs a description (server: DESCRIPTION_REQUIRED) and is refused under allowTaskless=false.
+  assert.deepEqual(buildTimeEntry({ ...form, description: '' }, IST, { ...opts, cardId: null }, linked), { error: 'description_required' });
+  assert.deepEqual(buildTimeEntry(form, IST, { ...opts, allowTaskless: false, cardId: null }, linked), { error: 'task_required' });
+  // An existing taskless entry stays editable under the stricter policy.
+  assert.deepEqual(buildTimeEntry({ ...form, billable: true }, IST, { ...opts, allowTaskless: false }, e), { patch: { version: 3, billable: true } });
+});
