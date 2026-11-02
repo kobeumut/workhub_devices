@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { OcsError, type AccountId, type ProjectSummary, type ServerBase, type WorkhubBootstrap } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { ProjectsScreen } from './workhub';
+import { SharesEditor } from './projectAdmin';
 import { Button, Empty, ErrorBanner, Loading, Row, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
 import { formatDate } from './i18n';
@@ -23,7 +24,7 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
   serverBase: ServerBase;
   workhub: WorkhubBootstrap;
   selectedProject?: number;
-  onOpenProject: (p: ProjectSummary) => void;
+  onOpenProject: (p: Pick<ProjectSummary, 'id' | 'title'>) => void;
 }) {
   const sections = (
     [
@@ -198,6 +199,7 @@ export function RequestsScreen({ accountId }: { accountId: AccountId }) {
 export function GoalsScreen({ accountId }: { accountId: AccountId }) {
   const { backend } = useServices();
   const s = useAsync(() => backend.goals(accountId), [accountId]);
+  const [sharing, setSharing] = useState<number | null>(null);
   if (s.loading && !s.data) return <Loading />;
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }}>
@@ -209,12 +211,14 @@ export function GoalsScreen({ accountId }: { accountId: AccountId }) {
           <View key={g.id} style={card} accessible accessibilityLabel={`${g.title}, ilerleme ${pct ?? 'bilinmiyor'} yüzde`}>
             <Text style={{ fontWeight: '700', color: colors.text }}>{g.title}</Text>
             <Text style={{ color: colors.muted }}>
-              {g.owner} · {g.state}
+              {g.owner.displayName} · {g.state}
             </Text>
             <View style={{ height: 8, backgroundColor: colors.surface, borderRadius: 4, marginTop: space(2), overflow: 'hidden' }}>
               <View style={{ height: 8, width: `${Math.min(100, Math.max(0, pct ?? 0))}%`, backgroundColor: colors.primary }} />
             </View>
             <Text style={{ color: colors.muted, fontSize: font.small, marginTop: 2 }}>{pct === null ? '—' : `%${pct}`}</Text>
+            {g.canManage && sharing !== g.id ? <Button title="Paylaş" accessibilityLabel={`Paylaş: ${g.title}`} kind="secondary" onPress={() => setSharing(g.id)} /> : null}
+            {sharing === g.id ? <SharesEditor accountId={accountId} type="goal" objectId={g.id} onClose={() => setSharing(null)} /> : null}
           </View>
         );
       })}

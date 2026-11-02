@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node scripts/run-tests.mjs",
     "smoke:live": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.smoke.js",
-    "smoke:tasks": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.tasks.smoke.js"
+    "smoke:tasks": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.tasks.smoke.js",
+    "smoke:projects": "node scripts/run-tests.mjs --compile-only && node .test-dist/test/live.projects.smoke.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

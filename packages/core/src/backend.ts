@@ -7,7 +7,8 @@ import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './se
 import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
 import {
   openTaskFromNotification, workhubApi, workhubModulesApi,
-  type BoardPayload, type GoalSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
+  SHARE_OBJECT_TYPES, SHARE_ROLES,
+  type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
 
 /**
@@ -74,6 +75,15 @@ export interface Backend {
   deleteSubtask(accountId: AccountId, cardId: number, index: number, expectedText: string): Promise<SubtaskList | null>;
   addDependency(accountId: AccountId, predecessorId: number, successorId: number): Promise<{ id: number } | null>;
   removeDependency(accountId: AccountId, cardId: number, dependencyId: number): Promise<void>;
+
+  createProject(accountId: AccountId, title: string, color: string | null, idempotencyKey: string): Promise<{ id: number; title: string } | null>;
+  renameProject(accountId: AccountId, boardId: number, title: string): Promise<{ id: number; title: string } | null>;
+  addProjectMember(accountId: AccountId, boardId: number, grant: MemberGrant, idempotencyKey: string): Promise<{ id: number } | null>;
+  createStack(accountId: AccountId, boardId: number, title: string, order: number): Promise<StackSummary | null>;
+  renameStack(accountId: AccountId, stackId: number, title: string): Promise<{ id: number; title: string } | null>;
+  principals(accountId: AccountId, query: string): Promise<Principal[]>;
+  objectShares(accountId: AccountId, type: ShareObjectType, objectId: number): Promise<ObjectShares>;
+  setObjectShares(accountId: AccountId, type: ShareObjectType, objectId: number, shares: Array<Pick<ObjectShare, 'principalType' | 'principalId' | 'role'>>): Promise<{ shares: ObjectShare[] } | null>;
 
   timer(accountId: AccountId): Promise<{ timer: Timer | null; serverTime: string }>;
   timerStart(accountId: AccountId, cardId: number | null, description: string, idempotencyKey: string): Promise<{ timer: Timer } | null>;
@@ -312,6 +322,30 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async removeDependency(accountId, cardId, dependencyId) {
       await workhubApi.removeDependency(await client(accountId), cardId, dependencyId);
     },
+    async createProject(accountId, title, color, idempotencyKey) {
+      return workhubApi.createProject(await client(accountId), title, color ?? undefined, idempotencyKey);
+    },
+    async renameProject(accountId, boardId, title) {
+      return workhubApi.renameProject(await client(accountId), boardId, title);
+    },
+    async addProjectMember(accountId, boardId, grant, idempotencyKey) {
+      return workhubApi.addProjectMember(await client(accountId), boardId, grant, idempotencyKey);
+    },
+    async createStack(accountId, boardId, title, order) {
+      return workhubApi.createStack(await client(accountId), boardId, title, order);
+    },
+    async renameStack(accountId, stackId, title) {
+      return workhubApi.renameStack(await client(accountId), stackId, title);
+    },
+    async principals(accountId, query) {
+      return workhubApi.principals(await client(accountId), query);
+    },
+    async objectShares(accountId, type, objectId) {
+      return workhubApi.objectShares(await client(accountId), type, objectId);
+    },
+    async setObjectShares(accountId, type, objectId, shares) {
+      return workhubApi.setObjectShares(await client(accountId), type, objectId, shares);
+    },
 
     async timer(accountId) {
       return workhubModulesApi.timer(await client(accountId));
@@ -349,6 +383,7 @@ export const BACKEND_METHODS = [
   'notifications', 'dismissNotification',
   'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
   'addSubtask', 'updateSubtask', 'deleteSubtask', 'addDependency', 'removeDependency',
+  'createProject', 'renameProject', 'addProjectMember', 'createStack', 'renameStack', 'principals', 'objectShares', 'setObjectShares',
   'timer', 'timerStart', 'timerStop', 'timeWeek', 'requests', 'requestContext', 'createRequest', 'goals',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
@@ -388,6 +423,25 @@ const isSubtaskChange = (v: unknown) => {
   return keys.length > 0 && keys.every((k) => k === 'text' || k === 'done') && (o.text === undefined || isStr(1000)(o.text)) && (o.done === undefined || typeof o.done === 'boolean');
 };
 
+const isTitle = (max: number) => (v: unknown) => isStr(max)(v) && (v as string).trim().length > 0;
+const isKey = (v: unknown) => typeof v === 'string' && /^[0-9a-fA-F-]{8,64}$/.test(v);
+const isPrincipalId = (v: unknown) => isStr(64)(v) && (v as string).length > 0;
+const isPrincipalType = (v: unknown) => v === 'user' || v === 'group';
+const hasOnly = (o: Record<string, unknown>, keys: string[]) => Object.keys(o).every((k) => keys.includes(k)) && keys.every((k) => Object.hasOwn(o, k));
+export const isValidMemberGrant = (v: unknown): v is MemberGrant => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return hasOnly(o, ['type', 'participant', 'edit', 'share', 'manage']) && isPrincipalType(o.type) && isPrincipalId(o.participant)
+    && typeof o.edit === 'boolean' && typeof o.share === 'boolean' && typeof o.manage === 'boolean';
+};
+export const isValidShareList = (v: unknown): boolean =>
+  Array.isArray(v) && v.length <= 100 && v.every((x) => {
+    if (!isObj(x)) return false;
+    const o = x as Record<string, unknown>;
+    return hasOnly(o, ['principalType', 'principalId', 'role']) && isPrincipalType(o.principalType) && isPrincipalId(o.principalId) && (SHARE_ROLES as readonly unknown[]).includes(o.role);
+  });
+const isShareType = (v: unknown) => (SHARE_OBJECT_TYPES as readonly unknown[]).includes(v);
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -416,6 +470,14 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   deleteSubtask: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isIndex(a[2]) && isStr(4000)(a[3]),
   addDependency: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && a[1] !== a[2],
   removeDependency: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
+  createProject: (a) => a.length === 4 && isAccountId(a[0]) && isTitle(255)(a[1]) && (a[2] === null || (typeof a[2] === 'string' && /^#?[0-9a-fA-F]{6}$/.test(a[2]))) && isKey(a[3]),
+  renameProject: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isTitle(100)(a[2]),
+  addProjectMember: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isValidMemberGrant(a[2]) && isKey(a[3]),
+  createStack: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isTitle(255)(a[2]) && isIndex(a[3]),
+  renameStack: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isTitle(100)(a[2]),
+  principals: (a) => a.length === 2 && isAccountId(a[0]) && isStr(64)(a[1]),
+  objectShares: (a) => a.length === 3 && isAccountId(a[0]) && isShareType(a[1]) && isInt(a[2]),
+  setObjectShares: (a) => a.length === 4 && isAccountId(a[0]) && isShareType(a[1]) && isInt(a[2]) && isValidShareList(a[3]),
   timer: (a) => a.length === 1 && isAccountId(a[0]),
   timerStart: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === null || isInt(a[1])) && isStr(1000)(a[2]) && isStr(128)(a[3]),
   timerStop: (a) => a.length === 1 && isAccountId(a[0]),

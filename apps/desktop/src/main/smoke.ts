@@ -100,7 +100,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     const subtask = `Alt iş ${new Date().toISOString().slice(11, 19)}`;
     const taskTitle = `Masaüstü görevi ${new Date().toISOString().slice(11, 19)}`;
     await step('task: create → open detail → comment', async () => {
-      await type('input', taskTitle);
+      if (!(await type('input[aria-label="Yeni görev"]', taskTitle))) throw new Error('new task input');
       if (!(await click('+'))) throw new Error('add task');
       await waitText(taskTitle, 15_000);
       if (!(await click(taskTitle, false))) throw new Error('task row');
@@ -153,6 +153,59 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('Durdur');
       await waitText('Başlat', 15_000);
     });
+    const stamp = new Date().toISOString().slice(11, 19);
+    const projectTitle = `Masaüstü projesi ${stamp}`;
+    await step('project management: create → rename → add/rename column → add member', async () => {
+      await click('İşler');
+      await sleep(500);
+      if (!(await click('Projeler'))) throw new Error('projects tab');
+      if (!(await type('input[aria-label="Yeni proje"]', projectTitle))) throw new Error('new project input');
+      if (!(await click('Oluştur'))) throw new Error('create project');
+      await waitText('To Do', 20_000);
+      if (!(await click('Proje ayarları'))) throw new Error('manage button');
+      await waitText('Sütunlar', 10_000);
+      if (!(await type('input[aria-label="Proje adı"]', `${projectTitle} (yeni ad)`))) throw new Error('project name input');
+      if (!(await click('Projeyi yeniden adlandır'))) throw new Error('rename project');
+      await waitText(`${projectTitle} (yeni ad)`, 15_000);
+      if (!(await type('input[aria-label="Yeni sütun"]', 'İnceleme'))) throw new Error('new column input');
+      if (!(await click('Sütun ekle'))) throw new Error('add column');
+      await waitText('İnceleme (0)', 15_000);
+      if (!(await type('input[aria-label="Sütun adı: İnceleme"]', 'QA'))) throw new Error('column name input');
+      if (!(await click('Yeniden adlandır: İnceleme'))) throw new Error('rename column');
+      await waitText('QA (0)', 15_000);
+      const member = process.env.WORKHUB_SMOKE_MEMBER ?? '';
+      if (member) {
+        if (!(await type('input[aria-label="Üye ekle: kişi veya grup ara"]', member))) throw new Error('member search');
+        const end = Date.now() + 10_000;
+        while (!(await click(`Seç: ${member}`))) {
+          if (Date.now() > end) throw new Error('member result');
+          await sleep(300);
+        }
+        await waitText('projeye eklendi.', 15_000);
+      }
+      await shot('10-project-admin');
+      return member ? `member ${member} added` : 'member step skipped (no WORKHUB_SMOKE_MEMBER)';
+    });
+    const goal = process.env.WORKHUB_SMOKE_GOAL ?? '';
+    if (goal) {
+      await step('goal shares: share with a group → save → server list reloaded', async () => {
+        if (!(await click('Hedefler'))) throw new Error('goals tab');
+        await waitText(goal, 15_000);
+        if (!(await click(`Paylaş: ${goal}`))) throw new Error('share button');
+        await waitText('Henüz kimseyle paylaşılmadı.', 15_000);
+        const group = process.env.WORKHUB_SMOKE_GROUP ?? 'staff';
+        if (!(await type('input[aria-label="Paylaş: kişi veya grup ara"]', group))) throw new Error('share search');
+        const end = Date.now() + 10_000;
+        while (!(await click(`Seç: ${group}`))) {
+          if (Date.now() > end) throw new Error('group result');
+          await sleep(300);
+        }
+        if (!(await click('Kaydet'))) throw new Error('save shares');
+        await waitText('Paylaşımlar kaydedildi.', 15_000);
+        await shot('11-goal-shares');
+        return `shared with group ${group}`;
+      });
+    }
     await step('inbox', async () => {
       await click('Bildirimler');
       await sleep(2500);

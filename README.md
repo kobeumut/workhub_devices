@@ -44,8 +44,9 @@ Geliştirme derlemeleri (`__DEV__`, masaüstünde `WORKHUB_ALLOW_HTTP=1`) yerel 
 
 - `npm run smoke:live -w @workhub-devices/core`: API uçtan uca testi (14 adım).
 - `npm run smoke:tasks -w @workhub-devices/core`: görev düzenleme / alt iş / bağımlılık canlı testi (aynı ortam değişkenleri; `WH_A_REVOKE_PASS` gerekmez).
+- `npm run smoke:projects -w @workhub-devices/core`: proje oluşturma/yeniden adlandırma, sütun, üye ekleme, kişi/grup arama ve hedef paylaşımları canlı testi (aynı ortam değişkenleri; isteğe bağlı `WH_GROUP`, varsayılan `staff`).
 - `services/push-relay/test/e2e.live.ts`: Nextcloud → relay → çözme zinciri.
-- `apps/desktop/scripts/smoke.mjs`: başsız masaüstü UI testi. Gerçek Login Flow v2 ile giriş, mesaj gönderme, proje panosu, görev oluşturma ve yorum, zamanlayıcı, bildirimler ve hesap ekranlarını tıklayarak dolaşır ve ekran görüntüsü alır.
+- `apps/desktop/scripts/smoke.mjs`: başsız masaüstü UI testi. Gerçek Login Flow v2 ile giriş, mesaj gönderme, proje panosu, görev oluşturma ve yorum, zamanlayıcı, proje yönetimi (oluştur, yeniden adlandır, sütun, üye), hedef paylaşımı, bildirimler ve hesap ekranlarını tıklayarak dolaşır ve ekran görüntüsü alır. Paylaşım adımı için geçici bir hedef oluşturur ve sonunda siler (`WH_SMOKE_MEMBER`, `WH_SMOKE_GROUP` isteğe bağlı).
 
 Ayrıntılar `docs/dev-server.md`'de.
 

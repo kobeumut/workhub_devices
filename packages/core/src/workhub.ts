@@ -15,6 +15,8 @@ export interface ProjectSummary {
   archived: boolean;
   edit: boolean;
   manage: boolean;
+  /** May add members (Deck "share" permission). */
+  share?: boolean;
   openCount: number;
   doneCount: number;
   overdueCount: number;
@@ -91,6 +93,47 @@ export interface BoardPayload {
   tasks: Task[];
 }
 
+export interface StackSummary {
+  id: number;
+  title: string;
+  order: number;
+  isDone: boolean;
+}
+
+/** User or group returned by the share-subject search (`GET /principals?q=`). */
+export interface Principal {
+  principalType: 'user' | 'group';
+  principalId: string;
+  displayName: string;
+}
+
+/** A project ACL row to add. Grants above the actor's own permissions are clamped by the server. */
+export interface MemberGrant {
+  type: 'user' | 'group';
+  participant: string;
+  edit: boolean;
+  share: boolean;
+  manage: boolean;
+}
+
+/** Objects with Workhub's own ACL (projects use Deck/native board ACL instead). */
+export const SHARE_OBJECT_TYPES = ['dashboard', 'goal', 'workflow'] as const;
+export type ShareObjectType = (typeof SHARE_OBJECT_TYPES)[number];
+export const SHARE_ROLES = ['view', 'edit', 'manage'] as const;
+export type ShareRole = (typeof SHARE_ROLES)[number];
+
+export interface ObjectShare {
+  principalType: 'user' | 'group';
+  principalId: string;
+  displayName: string;
+  role: ShareRole;
+}
+
+export interface ObjectShares {
+  owner: { uid: string; displayName: string };
+  shares: ObjectShare[];
+}
+
 export interface SubtaskList {
   cardId: number;
   subtasks: SubtaskItem[];
@@ -131,6 +174,17 @@ const idx = (n: number) => {
 
 const uuid = (): string => crypto.randomUUID();
 
+const text = (v: string, max: number) => {
+  const s = v.trim();
+  if (!s || s.length > max) throw new OcsError('client', undefined, 'invalid title');
+  return s;
+};
+
+const shareType = (t: string): ShareObjectType => {
+  if (!(SHARE_OBJECT_TYPES as readonly string[]).includes(t)) throw new OcsError('client', undefined, 'invalid object type');
+  return t as ShareObjectType;
+};
+
 export const workhubApi = {
   projects: async (c: OcsClient, includeArchived = false) =>
     (await c.get<{ projects: ProjectSummary[] }>(`${BASE}/projects`, { query: { includeArchived } })).projects,
@@ -161,7 +215,60 @@ export const workhubApi = {
   },
   moveTask: async (c: OcsClient, cardId: number, stackId: number, order: number) =>
     (await c.request<Task>(`${BASE}/tasks/${id(cardId)}/move`, { method: 'POST', body: { stackId: id(stackId), order } })).data,
+
+  // ---- Project management. The server checks `manage` (rename, columns) and `share` (members). ----
+  /** Creates the project with To Do / In Progress / Done columns. Idempotent with the same key. */
+  createProject: async (c: OcsClient, title: string, color: string | undefined, idempotencyKey: string = uuid()) =>
+    (await c.request<Pick<ProjectSummary, 'id' | 'title' | 'color' | 'openCount' | 'doneCount' | 'overdueCount'>>(`${BASE}/projects`, {
+      method: 'POST',
+      body: { title: text(title, PROJECT_TITLE_MAX), ...(color ? { color } : {}) },
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })).data,
+  renameProject: async (c: OcsClient, boardId: number, title: string) =>
+    (await c.request<{ id: number; title: string }>(`${BASE}/projects/${id(boardId)}`, { method: 'PATCH', body: { title: text(title, RENAME_MAX) } })).data,
+  /** 409 `PROJECT_MEMBER_EXISTS` when the user/group already has direct access. There is no remove API. */
+  addProjectMember: async (c: OcsClient, boardId: number, grant: MemberGrant, idempotencyKey: string = uuid()) =>
+    (await c.request<{ id: number }>(`${BASE}/projects/${id(boardId)}/members`, {
+      method: 'POST',
+      body: { type: grant.type, participant: grant.participant, edit: grant.edit, share: grant.share, manage: grant.manage },
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })).data,
+  createStack: async (c: OcsClient, boardId: number, title: string, order: number) =>
+    (await c.request<StackSummary>(`${BASE}/projects/${id(boardId)}/stacks`, { method: 'POST', body: { title: text(title, STACK_TITLE_MAX), order: idx(order) } })).data,
+  renameStack: async (c: OcsClient, stackId: number, title: string) =>
+    (await c.request<{ id: number; title: string }>(`${BASE}/stacks/${id(stackId)}`, { method: 'PATCH', body: { title: text(title, RENAME_MAX) } })).data,
+
+  // ---- Users/groups search and Workhub object shares (dashboard, goal, workflow). ----
+  /** Local users and groups by display name; empty query → no request. */
+  principals: async (c: OcsClient, q: string): Promise<Principal[]> => {
+    const query = q.trim().slice(0, 64);
+    if (!query) return [];
+    return (await c.get<{ principals: Principal[] }>(`${BASE}/principals`, { query: { q: query } })).principals;
+  },
+  /** Requires the `manage` role on the object (owner or a manage share). */
+  objectShares: async (c: OcsClient, type: ShareObjectType, objectId: number) =>
+    c.get<ObjectShares>(`${BASE}/objects/${shareType(type)}/${id(objectId)}/shares`),
+  /** Replaces the whole share list (the owner is implicit and never listed). */
+  setObjectShares: async (c: OcsClient, type: ShareObjectType, objectId: number, shares: Array<Pick<ObjectShare, 'principalType' | 'principalId' | 'role'>>) =>
+    (await c.request<{ shares: ObjectShare[] }>(`${BASE}/objects/${shareType(type)}/${id(objectId)}/shares`, {
+      method: 'PUT',
+      body: { shares: shares.map((s) => ({ principalType: s.principalType, principalId: s.principalId, role: s.role })) },
+    })).data,
 };
+
+/** Server limits: project create 255, rename (project/column) 100, column create 255. */
+export const PROJECT_TITLE_MAX = 255;
+export const RENAME_MAX = 100;
+export const STACK_TITLE_MAX = 255;
+
+/** Next column position: after the last existing column (the server default 999 would also work but drifts). */
+export const nextStackOrder = (stacks: Array<{ order: number }>) => (stacks.length ? Math.max(...stacks.map((s) => s.order)) + 1 : 0);
+
+/** Replace-or-add one principal in a share list (the server replaces the whole list on save). */
+export function upsertShare(list: ObjectShare[], p: Principal, role: ShareRole): ObjectShare[] {
+  const rest = list.filter((s) => !(s.principalType === p.principalType && s.principalId === p.principalId));
+  return [...rest, { principalType: p.principalType, principalId: p.principalId, displayName: p.displayName, role }];
+}
 
 export type TaskOpenResult =
   | { state: 'ok'; task: TaskDetail }
@@ -240,7 +347,11 @@ export interface GoalSummary {
   title: string;
   progressBp: number | null;
   state: string;
-  owner: string;
+  owner: { uid: string; displayName: string };
+  role: ShareRole;
+  canEdit: boolean;
+  /** Owner or a `manage` share: may change shares. */
+  canManage: boolean;
 }
 
 export const workhubModulesApi = {

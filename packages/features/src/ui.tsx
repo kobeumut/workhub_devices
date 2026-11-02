@@ -3,8 +3,9 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View, type T
 import { colors, font, space } from './theme';
 import { describeError, t } from './i18n';
 
-export function Button({ title, onPress, kind = 'primary', disabled, busy, accessibilityHint }: {
+export function Button({ title, onPress, kind = 'primary', disabled, busy, accessibilityHint, accessibilityLabel }: {
   title: string;
+  accessibilityLabel?: string;
   onPress: () => void;
   kind?: 'primary' | 'secondary' | 'danger';
   disabled?: boolean;
@@ -17,6 +18,7 @@ export function Button({ title, onPress, kind = 'primary', disabled, busy, acces
       accessibilityRole="button"
       accessibilityState={{ disabled: !!off, busy: !!busy }}
       {...(accessibilityHint ? { accessibilityHint } : {})}
+      {...(accessibilityLabel ? { accessibilityLabel } : {})}
       onPress={off ? undefined : onPress}
       style={({ pressed }) => [
         styles.button,

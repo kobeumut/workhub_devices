@@ -6,16 +6,24 @@ import { Button, Empty, ErrorBanner, Header, Loading, Row, card, styles as ui } 
 import { colors, font, space } from './theme';
 import { describeError, formatDate, t } from './i18n';
 import { DependencySection, SubtaskSection, TaskEditor } from './taskEdit';
+import { CreateProjectForm, ProjectAdminPanel } from './projectAdmin';
 
 const PRIORITY: Record<string, string> = { urgent: 'Acil', high: 'Yüksek', normal: 'Normal', low: 'Düşük' };
 const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 /** `version` changes whenever a task changes elsewhere, so open/done counters never stay stale. */
-export function ProjectsScreen({ accountId, selected, onOpen, version = 0 }: { accountId: AccountId; selected?: number; onOpen: (p: ProjectSummary) => void; version?: number }) {
+export function ProjectsScreen({ accountId, selected, onOpen, version = 0 }: { accountId: AccountId; selected?: number; onOpen: (p: Pick<ProjectSummary, 'id' | 'title'>) => void; version?: number }) {
   const { backend } = useServices();
   const s = useAsync(() => backend.projects(accountId), [accountId, version]);
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <CreateProjectForm
+        accountId={accountId}
+        onCreated={(p) => {
+          s.reload();
+          onOpen(p);
+        }}
+      />
       <ErrorBanner error={s.error} onRetry={s.reload} />
       {s.loading && !s.data ? (
         <Loading />
@@ -57,8 +65,11 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
   const [moving, setMoving] = useState<Task | null>(null);
+  const [managing, setManaging] = useState(false);
   const board = s.data as BoardPayload | undefined;
   const canEdit = board?.project.permissions.edit ?? false;
+  // Settings are offered only for permissions the server granted (fail closed until the board loads).
+  const canAdmin = !!board && (board.project.permissions.manage || board.project.permissions.share);
   const sections = (board?.project.stacks ?? [])
     .slice()
     .sort((a, b) => a.order - b.order)
@@ -95,8 +106,31 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged 
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <Header title={project.title} {...(onBack ? { onBack } : {})} />
+      <Header
+        title={board?.project.board.title ?? project.title}
+        {...(onBack ? { onBack } : {})}
+        right={
+          canAdmin ? (
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: managing }} accessibilityLabel={t.projectSettings} onPress={() => setManaging((m) => !m)} hitSlop={8}>
+              <Text style={{ color: colors.primary, fontWeight: '600' }}>{managing ? t.close : t.manage}</Text>
+            </Pressable>
+          ) : undefined
+        }
+      />
       <ErrorBanner error={s.error ?? err} onRetry={s.reload} />
+      {managing && board && canAdmin ? (
+        <ScrollView style={{ flexGrow: 0, maxHeight: '60%' }}>
+          <ProjectAdminPanel
+            key={`${board.project.board.title}|${board.project.stacks.map((x) => `${x.id}:${x.title}`).join(',')}`}
+            accountId={accountId}
+            board={board.project}
+            onChanged={() => {
+              s.reload();
+              onChanged?.();
+            }}
+          />
+        </ScrollView>
+      ) : null}
       {canEdit ? (
         <View style={{ flexDirection: 'row', gap: space(2), padding: space(2), backgroundColor: colors.bg }}>
           <TextInput accessibilityLabel={t.newTask} placeholder={`${t.newTask} (${sections[0]?.title ?? ''})`} placeholderTextColor={colors.muted} value={newTitle} onChangeText={setNewTitle} onSubmitEditing={() => void create()} style={[ui.input, { flex: 1 }]} />
