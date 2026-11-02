@@ -20,12 +20,14 @@ Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış o
 
 | Faz | Durum | Kanıt |
 |---|---|---|
-| 0 — sürüm/push kapısı | Sunucu doğrulandı (canlı smoke 14/14). Taşıma kararı: Web Push `talk,workhub` → Firebase relay (ADR 0001); bundle `com.next.workhub`; Web Push açık. Gerçek Nextcloud → relay → decrypt e2e geçti. **Kalan:** Firebase projesi + APNs anahtarı, native push kodu ve fiziksel cihaz kabulü | `docs/phase0-status.md`, `docs/adr/0001-push-transport.md`, `services/push-relay` |
-| 1 — temel/auth | Kısmi: `packages/core` (URL doğrulama, OCS istemcisi/hata normalizasyonu, Login Flow v2, hesap izolasyonu, logout, capability gate) + CI. RN/Electron kabukları, OS secret store, beş OS build'i yok | `npm run check` (35 test), `npm run smoke:live` |
-| 2 — Talk | Kısmi: core oda/sohbet/gönderim/merge/rich-render mantığı; UI ve gerçek sunucu testi yok | `packages/core/src/talk.ts` |
-| 3 — bildirim | Kısmi: saf dispatcher, push payload yorumlama, deep link, gizli önizleme; native push/quick reply yok (Faz 0'a bağlı) | `packages/core/src/routing.ts` |
-| 4 — Workhub | Kısmi: API v1 istemcisinin task/proje/yorum alt kümesi, bildirimden ACL'li açılış; UI yok | `packages/core/src/workhub.ts` |
-| 5–7 | Başlamadı | — |
+| 0 — sürüm/push kapısı | Sunucu doğrulandı (NC 35.0.2 / Talk 25.0.6 / Notifications 8.0.1 / Workhub 0.5.0). Taşıma: Web Push `talk,workhub` → Firebase relay (ADR 0001). Nextcloud → relay → çözme e2e geçti. **Kalan (sahibi ekleyecek):** Firebase projesi, APNs anahtarı, `relayBase`; fiziksel cihaz kabulü | `docs/phase0-status.md`, `services/push-relay` |
+| 1 — temel/auth | `packages/core` + `Backend`; masaüstü (Electron+RNW) ve mobil (RN 0.88) kabukları; Keystore/Keychain/safeStorage; çoklu hesap; logout + revoke | `npm run check`, masaüstü smoke |
+| 2 — Talk | Oda listesi + arama + delta, geçmiş, long-poll, okundu, optimistic gönderim/`referenceId` uzlaştırma, rich-object (HTML'siz). Eksik: reply/edit/delete/reaction UI, dosya/ses notu, oda yönetimi | masaüstü smoke |
+| 3 — bildirim | Inbox + yönlendirme; Android FCM servisi, native çözme, RemoteInput yanıt, kanallar, kilit ekranında gizli içerik; iOS NSE + yanıt (**derlenmedi**); masaüstü bildirim + tepsi, macOS inline yanıt, diğerlerinde odaklı compose | Kotlin RFC testi, push e2e |
+| 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li) | masaüstü smoke, API smoke |
+| 5 — modüller | Zaman (zamanlayıcı/hafta), Talepler (liste/oluştur), Hedefler (liste) native; diğerleri web fallback | `docs/workhub-modules.md` |
+| 6 — dağıtım | electron-builder ve gradle yapılandırması var; imzalama/mağaza yok | README |
+| 7 — çağrılar | Başlamadı (kapsam onayı gerekli) | — |
 
 Aşağıdaki checkbox'lar yalnız madde gerçek ortamda tamamlanınca işaretlenir; core mantığının mock testleri bir maddeyi tek başına tamamlamaz.
 

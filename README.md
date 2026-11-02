@@ -1,38 +1,60 @@
 # Workhub Devices
 
-Talk merkezli mesajlaşma ve mevcut Nextcloud Workhub özellikleri için iOS, Android, Windows, macOS ve Linux istemcisi.
+Talk merkezli mesajlaşma ve mevcut Nextcloud Workhub özellikleri için iOS, Android, Windows, macOS ve Linux istemcisi. Kullanıcı kendi Nextcloud sunucu adresini girer; giriş, Talk uygulamalarındaki gibi Nextcloud Login Flow v2 ile yapılır.
 
-**Durum: uygulama başladı (GENE-48). Henüz kullanıcıya kurulabilir uygulama yok.** İlk dilim, platformdan bağımsız `packages/core` TypeScript katmanı ve `services/push-relay` (Web Push → Firebase relay) bileşenidir. Mobil (bare React Native) ve masaüstü (Electron + React Native Web) kabukları sonraki PR'larda gelecek. Push taşıması seçildi (Web Push → Firebase); gerçek APNs/FCM bilgileri ve cihaz testi bekleniyor: [docs/phase0-status.md](docs/phase0-status.md).
+- [PLAN.md](PLAN.md): mimari, işler ve kabul ölçütleri; ilerleme tablosu en üstte.
+- [docs/workhub-modules.md](docs/workhub-modules.md): Workhub modül/endpoint/ekran matrisi ve açık boşluklar.
+- [docs/adr/0001-push-transport.md](docs/adr/0001-push-transport.md): push kararı. [docs/phase0-status.md](docs/phase0-status.md): sunucu doğrulaması.
+- [docs/dev-server.md](docs/dev-server.md): yerel test sunucusu ve canlı testler. [docs/ios-setup.md](docs/ios-setup.md): Xcode adımları.
 
-- [PLAN.md](PLAN.md): mimari, ayrıntılı işler, bağımlılıklar ve kabul/test ölçütleri (ilerleme bölümüyle).
-- [RESEARCH.md](RESEARCH.md): incelenen kaynakların SHA'ları, API sözleşmeleri ve kritik bildirim bulguları.
+## Yapı
+
+| Dizin | İçerik |
+|---|---|
+| `packages/core` | Platformdan bağımsız TypeScript: güvenli OCS istemcisi, Login Flow v2, hesaplar, Talk, bildirim yönlendirme, Web Push, Workhub API, tek `Backend` arayüzü ve masaüstü IPC doğrulaması |
+| `packages/features` | Ortak React Native arayüzü: giriş, sohbetler, sohbet, Workhub (projeler/pano/görev/zaman/talepler/hedefler), bildirimler, hesap. Mobilde native, masaüstünde React Native Web ile çalışır |
+| `apps/mobile` | iOS + Android (bare React Native 0.88). Native: Keystore/Keychain, FCM servisi, RFC 8291 çözme, bildirimden yanıt (Android `RemoteInput`, iOS `UNTextInputNotificationAction` + Notification Service Extension) |
+| `apps/desktop` | Windows/macOS/Linux: Electron + React Native Web. Kimlik bilgisi yalnız main process'te; renderer dar, doğrulanan IPC kullanır |
+| `services/push-relay` | Web Push → Firebase (FCM/APNs) relay'i; Firebase Cloud Function |
+| `config/app-identity.json` | Uygulama kimliği (`com.next.workhub`) ve push relay adresi — tek kaynak |
 
 ## Geliştirme
 
-Gereksinim: Node.js ≥ 22, npm (workspace + `package-lock.json`).
+Gereksinim: Node.js ≥ 22. Mobil için ayrıca: Android SDK + JDK 17; iOS için macOS + Xcode.
 
 ```bash
-npm ci            # temiz kurulum
-npm run typecheck # TypeScript strict
-npm test          # node:test ile core sözleşme/regression testleri
-npm run check     # ikisi birden (CI bunu çalıştırır)
+npm ci                       # core, features, relay, desktop (workspace)
+npm run check                # typecheck + birim testleri (core 43, relay 8)
+
+# Masaüstü
+npm run start -w @workhub-devices/desktop          # derle + çalıştır
+npm run dist -w @workhub-devices/desktop           # electron-builder paketleri (imza: bkz. Dağıtım)
+
+# Mobil (ayrı lockfile)
+cd apps/mobile && npm ci
+npx react-native start                             # Metro
+JAVA_HOME=<jdk17> npx react-native run-android     # emülatör/cihaz
+cd android && ./gradlew :app:testDebugUnitTest     # Kotlin Web Push testleri
+# iOS: docs/ios-setup.md
 ```
 
-## `packages/core` içeriği
+Geliştirme derlemeleri (`__DEV__`, masaüstünde `WORKHUB_ALLOW_HTTP=1`) yerel test için `http://` sunuculara izin verir. Üretim derlemeleri yalnız HTTPS kabul eder.
 
-| Modül | Sorumluluk |
-|---|---|
-| `serverUrl` | Sunucu adresi normalizasyonu: HTTPS zorunlu; userinfo/query/fragment reddedilir; alt dizin korunur; origin+path sınır kontrolü |
-| `ocs` | OCS istemcisi: app password Basic auth (UTF-8), `OCS-APIRequest`, redirect takip edilmez (credential sızıntısı yok), 401/403/404/409/429/5xx/timeout normalizasyonu, Workhub hata kodları, güvenli path |
-| `loginFlow` | Nextcloud Login Flow v2: login/poll URL'leri sunucu içinde olmalı, sınırlı ve iptal edilebilir polling, farklı origin sonucu reddedilir; logout'ta app password revoke |
-| `accounts` | Hesap kimliği (`login|server`), hesap kapsamlı anahtarlar, `SecretStore` arayüzü (Keychain/Keystore/OS store; düz metin fallback yok), offline-güvenli logout |
-| `capabilities` | Core/Talk/Notifications/Workhub capability ayrıştırma, uyumluluk kontrolü, Workhub kullanıcı modül gate'i (fail-closed) |
-| `talk` | Oda listesi + delta, sohbet geçmişi/long-poll (`setReadMarker=0`), mesaj gönderimi (`referenceId`), optimistic timeline merge/duplicate önleme, HTML'siz rich-object render |
-| `routing` | Notifications inbox normalizasyonu, `shouldNotify`, push payload yorumlama (delete kontrolleri), app/object dispatcher, pretty + `/index.php` + alt dizin deep link parser, kilit ekranı gizli önizleme |
-| `webpush` | Web Push v2 aboneliği (anahtar üretimi, kayıt/aktivasyon/silme), RFC 8291 decrypt (native iOS/Android portları için referans), relay mesajı çözme |
-| `workhub` | Workhub OCS API v1 istemcisi (proje/board/task/comment), bildirimden task açarken güncel ACL ile yeniden getirme |
+### Canlı testler (gerçek Nextcloud'a karşı)
 
-`npm test` kaydedilmiş `fetch` yanıtlarıyla çalışır. Gerçek sunucuya karşı uçtan uca kontrol için `npm run smoke:live -w @workhub-devices/core` var; yerel test sunucusu ve ortam değişkenleri: [docs/dev-server.md](docs/dev-server.md). Bunlar cihaz/push doğrulaması değildir.
+- `npm run smoke:live -w @workhub-devices/core`: API uçtan uca testi (14 adım).
+- `services/push-relay/test/e2e.live.ts`: Nextcloud → relay → çözme zinciri.
+- `apps/desktop/scripts/smoke.mjs`: başsız masaüstü UI testi. Gerçek Login Flow v2 ile giriş, mesaj gönderme, proje panosu, görev oluşturma ve yorum, zamanlayıcı, bildirimler ve hesap ekranlarını tıklayarak dolaşır ve ekran görüntüsü alır.
+
+Ayrıntılar `docs/dev-server.md`'de.
+
+## Masaüstü bildirim davranışı
+
+- Pencere kapatılınca uygulama **tepside çalışmaya devam eder** ve bildirimler gelir (60 sn'de bir kontrol). Tepsi menüsündeki "Çıkış" ile tamamen kapanır; kapalıyken bildirim **gelmez**.
+- macOS: bildirimden doğrudan yanıt (inline reply) desteklenir.
+- Windows/Linux: Electron'da bildirim içi yazma alanı yok. "Yanıtla"/tıklama uygulamayı ilgili sohbette açar (odaklı yazma alanı).
+- Kilit ekranı/önizleme varsayılan olarak gizlidir. Sunucu başka bir istemcinin göstereceğine karar verdiyse (`shouldNotify=false`) ve açık olan sohbet için uyarı gösterilmez.
+- Linux'ta kimlik bilgileri libsecret/KWallet ile saklanır. İkisi de yoksa uygulama düz metne düşmez, giriş reddedilir.
 
 ## Push bildirimleri: Firebase kurulumu (APNs + FCM sonradan eklenir)
 
@@ -51,7 +73,7 @@ FCM, Android'e doğrudan, iOS'a ise APNs üzerinden ulaştırır. Ayrı bir sunu
 1. [Firebase Console](https://console.firebase.google.com) → yeni proje (ör. `workhub-push`). Cloud Functions için faturalandırmayı **Blaze** planına geçirin; kullandıkça ödenir ve bildirim hacminde maliyet düşüktür.
 2. **Android uygulaması ekle** → paket adı `com.next.workhub` → `google-services.json` indirin.
 3. **iOS uygulaması ekle** → bundle ID `com.next.workhub` → `GoogleService-Info.plist` indirin.
-4. Bu iki dosya istemci yapılandırmasıdır; gizli anahtar değildir ama repoya koymayın. CI'da secret olarak saklanır ve build sırasında `apps/mobile/android/app/` ile `apps/mobile/ios/Workhub/` altına yazılır.
+4. Dosyaları koyun: `google-services.json` → `apps/mobile/android/app/`, `GoogleService-Info.plist` → `apps/mobile/ios/Workhub/` (Xcode'da hedefe ekleyin). İkisi de `.gitignore`'da; CI'da secret olarak saklanır. Dosya varken Android derlemesi Google Services eklentisini otomatik uygular; yokken push kapalı derlenir.
 
 ### 2. APNs (iOS)
 
@@ -76,7 +98,7 @@ firebase deploy --only functions:workhub-push-relay
 
 - Fonksiyon URL'si `https://europe-west1-<proje-id>.cloudfunctions.net/webpush`. Uygulamaların kaydettiği endpoint `…/webpush/wp/<FCM token>?k=<sunucu VAPID anahtarı>` olur.
 - `RELAY_ORIGIN`, fonksiyon URL'sinin **origin** kısmıdır (path olmadan). Özel alan adı (Firebase Hosting rewrite) kullanılırsa o origin yazılır.
-- Uygulamanın derleme ayarına relay tabanı girilir: `WORKHUB_PUSH_RELAY_BASE=https://europe-west1-<proje-id>.cloudfunctions.net/webpush`.
+- Relay adresini `config/app-identity.json` → `push.relayBase` alanına yazın: `https://europe-west1-<proje-id>.cloudfunctions.net/webpush`. Alan boşken uygulamalar çalışır ama push kaydı yapılmaz.
 
 ### 5. Nextcloud sunucusu
 
@@ -94,4 +116,8 @@ Yalnız bu ayar gerekir; Workhub, Talk ve Notifications kodunda değişiklik yok
 
 ## Sınırlar
 
-Workhub deposunda değişiklik öngörülmez. Markalı uygulamanın arka plan bildirimleri için kendi APNs/FCM yetkileri, uygun push altyapısı ve Talk + Workhub birlikte teslimatının gerçek sunucuda doğrulanması gerekir. Mevcut Talk uygulamasını kopyalamak veya yalnızca push URL'sini değiştirmek yeterli değildir. Upstream Talk/Workhub kodu kopyalanmadı; yalnız belgelenmiş protokoller uygulanır.
+Workhub deposunda değişiklik yapılmadı (sıfır diff). Markalı uygulamanın arka plan bildirimleri için kendi APNs/FCM yetkileri, uygun push altyapısı ve Talk + Workhub birlikte teslimatının gerçek sunucuda doğrulanması gerekir. Mevcut Talk uygulamasını kopyalamak veya yalnızca push URL'sini değiştirmek yeterli değildir. Upstream Talk/Workhub kodu kopyalanmadı; yalnız belgelenmiş protokoller uygulanır.
+
+### Bilinen güvenlik sınırı (mobil)
+
+React Native'in `fetch`'i yönlendirmeleri kapatamaz. İstemci, sunucu dışına yönlenen yanıtı reddeder. Android (OkHttp) farklı host'a yönlendirmede `Authorization` başlığını zaten düşürür; iOS'ta bu davranış cihazda doğrulanmalıdır. Native yollar (push, hızlı yanıt) yönlendirme izlemez. Masaüstünde yönlendirmeler hiç izlenmez.
