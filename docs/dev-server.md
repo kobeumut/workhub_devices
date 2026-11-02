@@ -45,6 +45,8 @@ npm run smoke:live -w @workhub-devices/core
 
 `WH_A_REVOKE_PASS` test sırasında revoke edilir; her koşu için yenisi gerekir.
 
+Talepler: `npm run smoke:requests -w @workhub-devices/core` (aynı `WH_*`; zincir `carol → alice → bob`).
+
 Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
 ## Push relay uçtan uca testi (dev)

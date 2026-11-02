@@ -41,6 +41,18 @@ Sözleşme `nextcloud_workhub@a359a4c` `TimeController`/`SubmissionController`/`
 | Android | `./gradlew :app:assembleDebug` | Derlendi (FileProvider + `shareFile`). Emülatörde paylaşım sayfası bu dilimde çalıştırılmadı |
 | iOS | — | `shareFile` (UIActivityViewController) yazıldı, derlenmedi (macOS yok) |
 
+## GENE-51 — Talepler: yanıt, çözme, göreve dönüştürme, geçmiş, rapor (2026-11-02)
+
+Sözleşme `nextcloud_workhub@a359a4c` `RequestController`, `RequestService`, `RequestRepository`, `RequestReportService` kodundan okundu; yanıt şekilleri canlı sunucuda doğrulandı. Workhub reposu değişmedi. Test verisi: yönetici zinciri `carol → alice → bob` (bkz. `docs/dev-server.md`).
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit` | core 62/62 (yeni 5: eylem türetimi yalnız sunucu bayrakları + durumdan; yol/gövde/Idempotency-Key/imleç/rapor sorgusu; 409 → `conflict`; Backend gate'i — modül kapalıyken istek yok, yönetici olmayanın çözme/dönüştürme isteği hiç gönderilmez, boş red/çözüm gerekçesi reddi; IPC — bilinmeyen alan/kapsam/durum, 366 gün, negatif sürüm, geçersiz kimlik reddi), relay 8/8; typecheck temiz (mobil dahil) |
+| Canlı API | `npm run smoke:requests -w @workhub-devices/core` | 9/9: C → A üç talep (`pending`); yalnız alıcı yanıtlayabilir, bekleyen talebi B göremez (404); talep eden yanıtı 404, gerekçesiz red 422 `FIELD_REQUIRED`, eski sürüm 409 `VERSION_CONFLICT`; gerekçeli red → talep eden gerekçeyi görür; aynı Idempotency-Key ile iki onay tek geçiş; B ekip görünümünde çöz/dönüştür bayrakları, A'da yok; çözmede talep eden/alıcı 404, eski sürüm 409; dönüştürmede alıcı 404, başka projenin sütunu 422 `INVALID_STACK`, eski sürüm 409, görev panoda, talep edene `cardRestricted`; geçmiş olayları (`created → approved → resolved/converted`, red gerekçesi); rapor: B ekip satırları + `byState`, C'de ekip satırı yok, 366 gün aşımı 422 `RANGE_TOO_LARGE` |
+| **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 17/17. Yeni adımlar: "Talepler → Bana gelenler → Onayla; gerekçesiz Reddet reddedilir → gerekçeyle Reddet; alıcıda Çöz/Göreve dönüştür yok" ve "Ekibim → proje ara + seç → ilk sütun önseçili → Görev oluştur → bağlı görev + geçmiş; gerekçesiz Çöz reddedilir → gerekçeyle çöz → Rapor → Ekip (5 sütunlu tablo)". Sunucu kontrolü: `reject=rejected convert=converted resolve=resolved` (onaylanan talep `open`, yöneticisine geçti) |
+| Erişilebilirlik düzeltmesi | masaüstü smoke | Ortak `Chip` seçimi RN Web'de `accessibilityState` ile DOM'a yansımıyordu (ekran okuyucu seçili durumu duymuyordu); `aria-checked`/`aria-disabled` eklendi ve smoke `aria-checked` ile doğruluyor |
+| Android | — | Bu dilimde çalıştırılmadı (yalnız ortak RN/TS değişikliği, native kod yok; mobil typecheck temiz) |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.

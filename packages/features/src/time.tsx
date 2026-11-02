@@ -92,7 +92,7 @@ function TimeError({ error, onRetry }: { error: unknown; onRetry?: () => void })
   );
 }
 
-function Tabs<T extends string>({ value, items, onChange }: { value: T; items: Array<[T, string]>; onChange: (v: T) => void }) {
+export function Tabs<T extends string>({ value, items, onChange }: { value: T; items: Array<[T, string]>; onChange: (v: T) => void }) {
   return (
     <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: space(2), marginBottom: space(3), flexWrap: 'wrap' }}>
       {items.map(([k, label]) => (

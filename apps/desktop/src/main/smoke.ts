@@ -274,6 +274,88 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         return `shared with group ${group}`;
       });
     }
+    const reqApprove = process.env.WORKHUB_SMOKE_REQ_APPROVE ?? '';
+    const reqReject = process.env.WORKHUB_SMOKE_REQ_REJECT ?? '';
+    const until = async (fn: () => Promise<boolean>, what: string, ms = 15_000) => {
+      const end = Date.now() + ms;
+      while (!(await fn())) {
+        if (Date.now() > end) throw new Error(what);
+        await sleep(300);
+      }
+    };
+    const has = (label: string) => js<boolean>(`!!document.querySelector(${JSON.stringify(`[aria-label="${label}"]`)})`);
+    if (reqApprove && reqReject) {
+      await step('requests: recipient approves one, reject needs a reason, no manager actions', async () => {
+        await click('İşler');
+        await sleep(500);
+        if (!(await click('Talepler'))) throw new Error('requests tab');
+        await until(() => click('Bana gelenler'), 'received tab');
+        await waitText(reqApprove, 15_000);
+        await until(() => click(`Ayrıntı: ${reqApprove}`), 'open approve request');
+        await until(() => click(`Onayla: ${reqApprove}`), 'approve button');
+        await waitText('Talep onaylandı; yöneticiye iletildi.', 15_000);
+        await waitText('Alıcı onayladı', 15_000);
+        // A is the recipient, not the requester's manager here → no resolve / convert.
+        if ((await has(`Çöz: ${reqApprove}`)) || (await has(`Göreve dönüştür: ${reqApprove}`))) throw new Error('manager actions visible to recipient');
+        await shot('15-request-approved');
+        if (!(await click('Kapat'))) throw new Error('close');
+        await until(() => click(`Ayrıntı: ${reqReject}`), 'open reject request');
+        await until(() => click(`Reddet: ${reqReject}`), 'reject button');
+        await waitText('Reddetmek için gerekçe yazın.', 5_000);
+        if (!(await type(`textarea[aria-label="Gerekçe: ${reqReject}"]`, 'Smoke: bütçe yok'))) throw new Error('reason input');
+        if (!(await click(`Reddet: ${reqReject}`))) throw new Error('reject button 2');
+        await waitText('Talep reddedildi.', 15_000);
+        await waitText('Ret gerekçesi: Smoke: bütçe yok', 15_000);
+        await shot('16-request-rejected');
+        if (!(await click('Kapat'))) throw new Error('close 2');
+        return 'approve ✓, reject reason enforced ✓, resolve/convert hidden for recipient ✓';
+      });
+    }
+    const reqConvert = process.env.WORKHUB_SMOKE_REQ_CONVERT ?? '';
+    const reqResolve = process.env.WORKHUB_SMOKE_REQ_RESOLVE ?? '';
+    if (reqConvert && reqResolve) {
+      await step('requests (manager): convert → project/column picker → task; resolve needs a reason; report table', async () => {
+        await click('İşler');
+        await sleep(500);
+        if (!(await click('Talepler'))) throw new Error('requests tab');
+        await until(() => click('Ekibim'), 'team tab (manager only)');
+        await waitText(reqConvert, 15_000);
+        await until(() => click(`Ayrıntı: ${reqConvert}`), 'open convert request');
+        await waitText('Göreve dönüştür', 15_000);
+        // Destination: the project created above (A can edit it), first open column preselected.
+        await type(`input[aria-label="Proje ara: ${reqConvert}"]`, projectTitle);
+        await until(() => click(`${projectTitle} (yeni ad)`), 'project chip');
+        await waitText('Sütun', 15_000);
+        const checked = () => js<string[]>(`[...document.querySelectorAll('[role=checkbox]')].filter(e => e.getAttribute('aria-checked') === 'true').map(e => e.innerText.trim())`);
+        try {
+          await until(async () => (await checked()).includes('To Do'), 'default column', 10_000);
+        } catch {
+          throw new Error(`default column; checked=${JSON.stringify(await checked())}`);
+        }
+        if (!(await click(`Göreve dönüştür: ${reqConvert}`))) throw new Error('convert button');
+        await waitText('Görev oluşturuldu.', 20_000);
+        await waitText(`Görev: ${reqConvert} · ${projectTitle} (yeni ad) / To Do`, 15_000);
+        await waitText('Göreve dönüştürüldü', 15_000);
+        await shot('17-request-converted');
+        if (!(await click('Kapat'))) throw new Error('close');
+        await until(() => click(`Ayrıntı: ${reqResolve}`), 'open resolve request');
+        await until(() => click(`Çöz: ${reqResolve}`), 'resolve button');
+        await waitText('Çözüm gerekçesi yazın.', 5_000);
+        if (!(await type(`textarea[aria-label="Çözüm gerekçesi: ${reqResolve}"]`, 'Smoke: görev gerekmiyor'))) throw new Error('resolve reason');
+        if (!(await click(`Çöz: ${reqResolve}`))) throw new Error('resolve button 2');
+        await waitText('Talep görevsiz çözüldü.', 15_000);
+        await waitText('Görevsiz çözüldü', 15_000);
+        if (!(await click('Kapat'))) throw new Error('close 2');
+        if (!(await click('Rapor'))) throw new Error('report tab');
+        await waitText('Talep eden', 15_000);
+        await until(() => click('Ekip'), 'report team scope');
+        await waitText(reqConvert, 15_000);
+        const table = await js<{ headers: number; rows: number }>(`(() => { const t = document.querySelector('[role=table]'); return { headers: t ? t.querySelectorAll('[role=columnheader]').length : 0, rows: t ? t.querySelectorAll('[role=row]').length : 0 }; })()`);
+        if (table.headers !== 5 || table.rows < 3) throw new Error(`report table ${JSON.stringify(table)}`);
+        await shot('18-request-report');
+        return `converted into "${projectTitle} (yeni ad)" / To Do; resolved; report ${table.headers} columns × ${table.rows} rows`;
+      });
+    }
     await step('inbox', async () => {
       await click('Bildirimler');
       await sleep(2500);

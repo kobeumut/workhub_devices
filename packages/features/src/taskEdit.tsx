@@ -28,6 +28,9 @@ export function Chip({ label, selected, onPress, disabled }: { label: string; se
     <Pressable
       accessibilityRole="checkbox"
       accessibilityState={{ checked: selected, disabled: !!disabled }}
+      // RN Web ignores accessibilityState; aria-* exposes the selection to desktop screen readers.
+      aria-checked={selected}
+      aria-disabled={!!disabled}
       accessibilityLabel={label}
       onPress={disabled ? undefined : onPress}
       style={{ paddingVertical: space(1), paddingHorizontal: space(3), borderRadius: 16, borderWidth: 1, borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.bg, minHeight: 32, justifyContent: 'center', opacity: disabled ? 0.5 : 1 }}
