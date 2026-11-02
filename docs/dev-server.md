@@ -53,6 +53,8 @@ Proje görünümleri (Gantt, etkinlik, iş yükü): `npm run smoke:views -w @wor
 
 Dashboard'lar: `npm run smoke:dashboards -w @workhub-devices/core` (aynı `WH_*`; `bob` paylaşılan dashboard'u okur, kaynak projeye erişemez → sonuçlar `restricted`; zorunlu yenileme sınırı nedeniyle koşu ~15 sn sürer).
 
+İş akışları: `npm run smoke:workflows -w @workhub-devices/core` (aynı `WH_*`; `alice` `bob`'un projesine salt okunur üye eklenir → otomatik adım `failed` olur, `edit` paylaşımlı `bob` yeniden dener).
+
 Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
 ## Push relay uçtan uca testi (dev)

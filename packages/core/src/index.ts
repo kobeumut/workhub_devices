@@ -8,3 +8,4 @@ export * from './routing';
 export * from './workhub';
 export * from './webpush';
 export * from './backend';
+export * from './workflows';

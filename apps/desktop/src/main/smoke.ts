@@ -246,6 +246,89 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('Projeler');
       return `${t.tables} tables, "${t.kpi}", drill-down ${shown} cards → task; widget add/edit/CSV/remove; deleted`;
     });
+    await step('workflows: create from sample → set lists → save → start run → task → complete → hand-off from task screen; cancel a run; delete', async () => {
+      const wfTitle = `Masaüstü akış ${new Date().toISOString().slice(11, 19)}`;
+      const until = async (fn: () => Promise<boolean>, what: string, ms = 15_000) => {
+        const end = Date.now() + ms;
+        while (Date.now() < end) {
+          if (await fn()) return;
+          await sleep(300);
+        }
+        throw new Error(what);
+      };
+      /** Clicks the n-th control whose aria-label starts with `prefix`; returns its label. */
+      const nth = (prefix: string, n = 0) => js<string | null>(`(() => { const els = [...document.querySelectorAll('[role=button],[role=checkbox],[role=tab]')].filter(e => (e.getAttribute('aria-label') || '').startsWith(${JSON.stringify(prefix)})); const el = els[${n}]; if (!el) return null; el.click(); return el.getAttribute('aria-label'); })()`);
+      const pickList = async () => {
+        await until(async () => !!(await nth('Kartın oluşturulacağı liste: liste seç')), 'list picker');
+        await until(async () => !!(await nth('Proje: ')), 'project chip', 20_000);
+        await until(async () => !!(await nth('Liste: ')), 'stack chip', 20_000);
+      };
+      await click('İşler');
+      await sleep(500);
+      if (!(await click('İş akışları'))) throw new Error('workflows tab');
+      await waitText('Sizi bekleyenler', 20_000);
+      await shot('24-workflows-pending');
+      if (!(await click('Şablonlar'))) throw new Error('templates tab');
+      await waitText('Yeni iş akışı', 20_000);
+      if (!(await type('input[aria-label="İş akışı başlığı"]', wfTitle))) throw new Error('title input');
+      // Third sample = "prepare and review" (2 steps: fixed → hand-off → chosen).
+      await until(async () => !!(await nth('Örnek: ', 2)), 'sample chip', 20_000);
+      if (!(await click('İş akışı oluştur'))) throw new Error('create');
+      await waitText('Çalıştırmalar', 20_000);
+      await waitText('hedef listesi yok', 10_000);
+      if (!(await click('Adımlar'))) throw new Error('steps');
+      await pickList();
+      if (!(await nth('Adım: ', 1))) throw new Error('second step chip');
+      await pickList();
+      await shot('25-workflow-editor');
+      if (!(await click('Adımları kaydet'))) throw new Error('save steps');
+      await waitText('Adımlar kaydedildi.', 15_000);
+      await sleep(800);
+      if (await js<boolean>(`document.body.innerText.includes('hedef listesi yok')`)) throw new Error('issues still listed after save');
+      // Run 1 → open its first card → complete → hand over from the task screen.
+      if (!(await click('Çalıştırmayı başlat'))) throw new Error('start panel');
+      if (!(await type('input[aria-label="Çalıştırma başlığı (boş = iş akışı başlığı)"]', `${wfTitle} koşu`))) throw new Error('run title');
+      if (!(await click('Başlat'))) throw new Error('start');
+      await waitText('Çalıştırma başlatıldı', 20_000);
+      await waitText('— Açık', 15_000);
+      await shot('26-workflow-run');
+      const cardBtn = await nth('Kart: ');
+      if (!cardBtn) throw new Error('card button in run');
+      await waitText('Yorumlar', 20_000);
+      if (!(await click('Tamamlandı olarak işaretle'))) throw new Error('mark done');
+      await waitText('İş akışı: sizi bekleyen devirler', 20_000);
+      const handoff = await js<string | null>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').endsWith(': devret')); if (!el) return null; el.click(); return el.getAttribute('aria-label'); })()`);
+      if (!handoff) throw new Error('handoff button on task screen');
+      await until(() => click('Devret ve kartı oluştur'), 'handoff submit');
+      await waitText('devredildi; kart oluşturuldu', 20_000);
+      await shot('27-workflow-handoff');
+      // Back in the workflow: run 1 shows the new open step; run 2 is cancelled.
+      await until(() => click(`Çalıştırma: ${wfTitle} koşu, Çalışıyor`), 'run row');
+      await sleep(1500);
+      await until(() => click(`Çalıştırma: ${wfTitle} koşu, Çalışıyor`), 'run row re-open');
+      await waitText('— Tamamlandı', 15_000);
+      if (!(await click('Çalıştırmayı başlat'))) throw new Error('start panel 2');
+      if (!(await click('Başlat'))) throw new Error('start 2');
+      // The start message of run 1 is still on screen: wait for the second running run instead.
+      await waitText('2 çalışıyor', 20_000);
+      await until(async () => (await js<number>(`[...document.querySelectorAll('[role=button]')].filter(e => (e.getAttribute('aria-label') || '') === 'Çalıştırmayı iptal et' || e.innerText.trim() === 'Çalıştırmayı iptal et').length`)) === 1, 'only the new run is expanded', 20_000);
+      await until(() => click('Çalıştırmayı iptal et'), 'cancel run');
+      if (!(await click('Evet, iptal et'))) throw new Error('confirm cancel');
+      await waitText('Çalıştırma iptal edildi', 15_000);
+      await waitText('1 çalışıyor', 15_000);
+      if (!(await js<boolean>(`document.body.innerText.includes(${JSON.stringify(`${wfTitle} koşu`)}) && [...document.querySelectorAll('[role=button]')].some(e => e.getAttribute('aria-label') === ${JSON.stringify(`Çalıştırma: ${wfTitle} koşu, Çalışıyor`)})`))) throw new Error('run 1 must still be running');
+      await shot('28-workflow-cancelled');
+      if (!(await click('Sil'))) throw new Error('delete');
+      if (!(await click('Evet, sil'))) throw new Error('confirm delete');
+      await waitText('Yeni iş akışı', 15_000);
+      await sleep(1000);
+      if (await js<boolean>(`[...document.querySelectorAll('[role=button]')].some(e => e.getAttribute('aria-label') === ${JSON.stringify(`İş akışı: ${wfTitle}`)})`)) throw new Error('workflow still listed');
+      if (!(await click('Diğer'))) throw new Error('more tab');
+      await sleep(800);
+      if (await js<boolean>(`document.body.innerText.includes('İş akışları ↗')`)) throw new Error('workflow web link still listed');
+      await click('Projeler');
+      return `created "${wfTitle}", lists set, run → ${cardBtn.slice(0, 60)} → done → ${handoff}; second run cancelled; deleted`;
+    });
     await step('time module: start → stop timer', async () => {
       await click('İşler');
       await sleep(500);
