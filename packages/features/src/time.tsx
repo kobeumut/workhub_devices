@@ -6,6 +6,7 @@ import {
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { Button, Field, Loading, card, styles as ui } from './ui';
+import { TaskPicker, type PickedTask } from './taskPicker';
 import { Chip } from './taskEdit';
 import { colors, font, space } from './theme';
 import { describeError, formatDate } from './i18n';
@@ -45,6 +46,7 @@ const FORM_ERROR: Record<TimeFormError, string> = {
   time_invalid: 'Saatleri SS:DD biçiminde girin (ör. 09:30).',
   duration_invalid: 'Süreyi saat olarak girin (ör. 1,5 veya 1:30).',
   too_long: 'Bir kayıt en fazla politika sınırı kadar olabilir.',
+  task_required: 'Zaman politikası görevsiz kayda izin vermiyor; bir görev bağlayın.',
   description_required: 'Görev bağlı olmayan kayıt için açıklama gerekli.',
   description_too_long: 'Açıklama en fazla 1000 karakter olabilir.',
 };
@@ -111,13 +113,13 @@ type Tab = 'week' | 'review' | 'team';
  * whose Workhub bootstrap grants `canViewTeamReport` (direct manager) — the review queue and the
  * team report. CSV export is offered only when the shell can save/share files.
  */
-export function TimeScreen({ accountId, canReview }: { accountId: AccountId; canReview: boolean }) {
+export function TimeScreen({ accountId, canReview, projectsEnabled = false }: { accountId: AccountId; canReview: boolean; projectsEnabled?: boolean }) {
   const [tab, setTab] = useState<Tab>('week');
   const tabs: Array<[Tab, string]> = [['week', 'Haftam'], ...(canReview ? ([['review', 'İnceleme'], ['team', 'Takım raporu']] as Array<[Tab, string]>) : [])];
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }} keyboardShouldPersistTaps="handled">
       {tabs.length > 1 ? <Tabs value={tab} items={tabs} onChange={setTab} /> : null}
-      {tab === 'week' ? <WeekView accountId={accountId} /> : null}
+      {tab === 'week' ? <WeekView accountId={accountId} projectsEnabled={projectsEnabled} /> : null}
       {tab === 'review' && canReview ? <ReviewQueue accountId={accountId} /> : null}
       {tab === 'team' && canReview ? <TeamReportView accountId={accountId} /> : null}
     </ScrollView>
@@ -170,7 +172,7 @@ function TimerCard({ accountId, week, onChanged }: { accountId: AccountId; week:
   );
 }
 
-function WeekView({ accountId }: { accountId: AccountId }) {
+function WeekView({ accountId, projectsEnabled }: { accountId: AccountId; projectsEnabled: boolean }) {
   const { backend, platform } = useServices();
   const [date, setDate] = useState<string | undefined>();
   const week = useAsync(() => backend.timeWeek(accountId, date), [accountId, date]);
@@ -233,14 +235,14 @@ function WeekView({ accountId }: { accountId: AccountId }) {
           {w.entries.length === 0 ? <Text style={{ color: colors.muted }}>Bu hafta kayıt yok.</Text> : null}
           {w.entries.map((e) =>
             editing !== 'new' && editing?.id === e.id ? (
-              <EntryForm key={e.id} accountId={accountId} week={w} entry={e} onDone={() => { setEditing(null); week.reload(); }} />
+              <EntryForm key={e.id} accountId={accountId} projectsEnabled={projectsEnabled} week={w} entry={e} onDone={() => { setEditing(null); week.reload(); }} />
             ) : (
               <EntryRow key={e.id} entry={e} zone={zone} editable={entryEditable(w, e)} busy={busy === `del:${e.id}`}
                 onEdit={() => setEditing(e)}
                 onDelete={() => void act(`del:${e.id}`, () => backend.timeEntryDelete(accountId, e.id, e.version), 'Kayıt silindi.')} />
             ),
           )}
-          {editing === 'new' ? <EntryForm accountId={accountId} week={w} entry={null} onDone={() => { setEditing(null); week.reload(); }} /> : null}
+          {editing === 'new' ? <EntryForm accountId={accountId} projectsEnabled={projectsEnabled} week={w} entry={null} onDone={() => { setEditing(null); week.reload(); }} /> : null}
           {actions?.canEdit && editing === null ? <Button title="Kayıt ekle" kind="secondary" onPress={() => setEditing('new')} /> : null}
         </View>
       ) : null}
@@ -304,7 +306,7 @@ function EntryRow({ entry: e, zone, editable, busy, onEdit, onDelete }: { entry:
   );
 }
 
-function EntryForm({ accountId, week, entry, onDone }: { accountId: AccountId; week: TimeWeek; entry: TimeEntry | null; onDone: () => void }) {
+function EntryForm({ accountId, projectsEnabled, week, entry, onDone }: { accountId: AccountId; projectsEnabled: boolean; week: TimeWeek; entry: TimeEntry | null; onDone: () => void }) {
   const { backend } = useServices();
   const zone = week.period.zone;
   const today = week.navigation.today >= week.period.localStartDate && week.navigation.today <= week.period.localEndDate ? week.navigation.today : week.period.localStartDate;
@@ -313,8 +315,14 @@ function EntryForm({ accountId, week, entry, onDone }: { accountId: AccountId; w
   const [err, setErr] = useState<string>();
   const [warn, setWarn] = useState<string>();
   const set = (p: Partial<TimeEntryForm>) => setForm((f) => ({ ...f, ...p }));
+  // Linked task: undefined = unchanged; [] = none; [task] = link (server re-checks card access).
+  const initialTask: PickedTask[] = entry?.card ? [{ id: entry.card.id, boardId: entry.card.boardId ?? 0, title: entry.card.title }] : [];
+  const [task, setTask] = useState<PickedTask[] | undefined>(undefined);
+  const [picking, setPicking] = useState(false);
+  const shownTask = task ?? initialTask;
   const save = async () => {
-    const r = buildTimeEntry(form, zone, { maxEntrySeconds: week.policy.maxEntrySeconds, allowTaskless: week.policy.allowTaskless }, entry ?? undefined);
+    const cardId = task === undefined ? undefined : (task[0]?.id ?? null);
+    const r = buildTimeEntry(form, zone, { maxEntrySeconds: week.policy.maxEntrySeconds, allowTaskless: week.policy.allowTaskless, ...(cardId !== undefined ? { cardId } : {}) }, entry ?? undefined);
     if ('error' in r) return setErr(FORM_ERROR[r.error]);
     setErr(undefined);
     if ('patch' in r && Object.keys(r.patch).length === 1) return onDone();
@@ -357,6 +365,17 @@ function EntryForm({ accountId, week, entry, onDone }: { accountId: AccountId; w
         <Field label="Süre (saat)" value={form.hours} onChangeText={(v) => set({ hours: v })} placeholder="ör. 1,5 veya 1:30" />
       )}
       <Field label="Açıklama" value={form.description} onChangeText={(v) => set({ description: v })} multiline />
+      <View accessibilityLabel="Bağlı görev" style={{ marginBottom: space(2) }}>
+        <Text style={ui.label}>Görev</Text>
+        <Text>{shownTask[0] ? (entry?.card?.restricted && task === undefined ? 'Erişiminiz olmayan bir görev' : shownTask[0].title) : 'Görev bağlı değil'}</Text>
+        {projectsEnabled ? (
+          <View style={{ flexDirection: 'row', gap: space(2), marginTop: space(1) }}>
+            <Button title={picking ? 'Seçimi kapat' : shownTask[0] ? 'Görevi değiştir' : 'Görev bağla'} kind="secondary" onPress={() => setPicking(!picking)} />
+            {shownTask[0] ? <Button title="Bağlantıyı kaldır" kind="secondary" onPress={() => { setTask([]); setPicking(false); }} /> : null}
+          </View>
+        ) : null}
+        {picking ? <TaskPicker accountId={accountId} selected={shownTask} onChange={(t) => { setTask(t); if (t.length) setPicking(false); }} /> : null}
+      </View>
       <View style={{ flexDirection: 'row', marginBottom: space(2) }}>
         <Chip label="Faturalanabilir" selected={form.billable} onPress={() => set({ billable: !form.billable })} />
       </View>

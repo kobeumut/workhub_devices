@@ -499,7 +499,7 @@ export interface TimeEntryForm {
   billable: boolean;
 }
 
-export type TimeFormError = 'date_invalid' | 'time_invalid' | 'duration_invalid' | 'too_long' | 'description_required' | 'description_too_long';
+export type TimeFormError = 'task_required' | 'date_invalid' | 'time_invalid' | 'duration_invalid' | 'too_long' | 'description_required' | 'description_too_long';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const isValidLocalDate = (d: string) => {
@@ -562,7 +562,10 @@ export function buildTimeEntry(form: TimeEntryForm, zone: string, opts: { maxEnt
   if (!isValidLocalDate(form.date)) return { error: 'date_invalid' };
   const description = form.description.trim();
   if (description.length > 1000) return { error: 'description_too_long' };
-  const cardId = entry ? entry.cardId : (opts.cardId ?? null);
+  // `opts.cardId`: undefined = keep the entry's link; null = no task; a number = link to that task.
+  const cardId = opts.cardId !== undefined ? opts.cardId : entry ? entry.cardId : null;
+  // Policy `allowTaskless=false`: new entries and changed links need a task (an existing taskless entry may stay).
+  if (!opts.allowTaskless && cardId === null && (!entry || entry.cardId !== null)) return { error: 'task_required' };
   if (!description && cardId === null) return { error: 'description_required' };
   let time: { startUtc: string; endUtc: string } | { localDate: string; durationSeconds: number };
   if (form.kind === 'range') {
@@ -598,6 +601,7 @@ export function buildTimeEntry(form: TimeEntryForm, zone: string, opts: { maxEnt
   if (Object.keys(patch).length > 1 && zone !== entry.zone) patch.timezone = zone;
   if ((description || null) !== (entry.description ?? null)) patch.description = description || null;
   if (form.billable !== entry.billable) patch.billable = form.billable;
+  if (cardId !== entry.cardId) patch.cardId = cardId;
   return { patch };
 }
 

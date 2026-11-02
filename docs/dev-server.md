@@ -55,6 +55,10 @@ Dashboard'lar: `npm run smoke:dashboards -w @workhub-devices/core` (aynı `WH_*`
 
 İş akışları: `npm run smoke:workflows -w @workhub-devices/core` (aynı `WH_*`; `alice` `bob`'un projesine salt okunur üye eklenir → otomatik adım `failed` olur, `edit` paylaşımlı `bob` yeniden dener).
 
+AI: `npm run smoke:ai -w @workhub-devices/core` (aynı `WH_*`; `ai` modülü `staff` grubuna açık → `carol` 403; yönetici AI'yı etkinleştirmiş ve bir sağlayıcı tanımlamış olmalı). Dev sunucuda sağlayıcı "Dev mock" (`http://172.17.0.1.sslip.io:11435/v1`, `authMode=none`, `allowHttpPrivate`, izin listesinde `host:port`) tanımlı ama container'lar host'a ulaşamadığı için istekler `failed` `PROVIDER_TIMEOUT` ile biter (~6 sn). Not: AI worker (`occ workhub:worker --wait=30`) ayarları süreç başında okur; yönetim değişikliğinden hemen sonraki ilk istek eski ayarla `AI_DISABLED` ile iptal olabilir — bir sonraki istek doğru çalışır.
+
+Yönetim (admin) yazma uçları parola onayı ister: yönetici **uygulama parolasıyla** 403 döner; dev hazırlığında yönetici asıl parolasıyla (repo dışı secret dosyası) çağrıldı.
+
 Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
 ## Push relay uçtan uca testi (dev)
