@@ -2,9 +2,12 @@ package com.next.workhub
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -117,6 +120,39 @@ class WorkhubNativeModule(private val ctx: ReactApplicationContext) : ReactConte
   }
 
   // Required by NativeEventEmitter
+  /**
+   * Share a generated export (CSV) through the system share sheet. The file is written to a
+   * private cache dir (previous exports removed) and exposed read-only via FileProvider.
+   */
+  @ReactMethod
+  fun shareFile(filename: String, content: String, mime: String, p: Promise) {
+    if (mime != "text/csv" || !Regex("^[\\w.-]{1,120}\\.csv$").matches(filename) || content.length > 50 * 1024 * 1024) {
+      p.reject("E_WORKHUB", "invalid")
+      return
+    }
+    val activity = ctx.currentActivity
+    if (activity == null) {
+      p.reject("E_WORKHUB", "no_activity")
+      return
+    }
+    run(p) {
+      val dir = File(ctx.cacheDir, "exports")
+      dir.deleteRecursively()
+      dir.mkdirs()
+      val file = File(dir, filename)
+      file.writeText(content, Charsets.UTF_8)
+      val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.exports", file)
+      val send = Intent(Intent.ACTION_SEND).apply {
+        type = mime
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_TITLE, filename)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      activity.startActivity(Intent.createChooser(send, filename))
+      "saved"
+    }
+  }
+
   @ReactMethod fun addListener(eventName: String) {}
   @ReactMethod fun removeListeners(count: Double) {}
 }

@@ -6,8 +6,9 @@ import { dismissNotification, listNotifications, type InboxNotification } from '
 import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './serverUrl';
 import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
 import {
-  openTaskFromNotification, workhubApi, workhubModulesApi,
+  openTaskFromNotification, timeApi, workhubApi, workhubModulesApi,
   SHARE_OBJECT_TYPES, SHARE_ROLES,
+  type CsvScope, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
   type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
 
@@ -89,6 +90,18 @@ export interface Backend {
   timerStart(accountId: AccountId, cardId: number | null, description: string, idempotencyKey: string): Promise<{ timer: Timer } | null>;
   timerStop(accountId: AccountId): Promise<{ entries: TimeEntry[]; totalSec: number } | null>;
   timeWeek(accountId: AccountId, date?: string): Promise<TimeWeek>;
+  timeEntryCreate(accountId: AccountId, input: TimeEntryInput, idempotencyKey: string): Promise<TimeEntryResult | null>;
+  /** Range ↔ duration conversion is refused by the server (`KIND_IMMUTABLE`). */
+  timeEntryUpdate(accountId: AccountId, entryId: number, patch: TimeEntryPatch): Promise<TimeEntryResult | null>;
+  timeEntryDelete(accountId: AccountId, entryId: number, version: number): Promise<void>;
+  timeSubmit(accountId: AccountId, periodId: number, periodVersion: number, idempotencyKey: string): Promise<SubmissionResult | null>;
+  timeWithdraw(accountId: AccountId, submissionId: number, periodVersion: number, idempotencyKey: string): Promise<SubmissionResult | null>;
+  /** Reviewer only (`permissions.canViewTeamReport`); fails closed with 403 otherwise. */
+  timeReviews(accountId: AccountId, status: 'pending' | 'approved'): Promise<ReviewItem[]>;
+  timeDecide(accountId: AccountId, submissionId: number, action: ReviewAction, periodVersion: number, reason: string | null, idempotencyKey: string): Promise<SubmissionResult | null>;
+  timeTeam(accountId: AccountId, from: string, to: string): Promise<TeamReport>;
+  /** CSV text from the server; the shell saves it (desktop dialog / mobile share sheet). */
+  timeCsv(accountId: AccountId, scope: CsvScope, from: string, to: string): Promise<{ filename: string; csv: string }>;
   requests(accountId: AccountId, scope: 'mine' | 'received' | 'team'): Promise<WorkRequest[]>;
   requestContext(accountId: AccountId): Promise<RequestContext>;
   createRequest(accountId: AccountId, title: string, description: string, recipientUid: string | null, idempotencyKey: string): Promise<{ id: number } | null>;
@@ -150,6 +163,27 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
   };
   const summary = (a: Account): AccountSummary => ({ id: a.id, serverBase: a.serverBase, loginName: a.loginName });
 
+  /** Per-user Workhub bootstrap, cached briefly so gated calls don't double every request. */
+  const bootstraps = new Map<AccountId, { at: number; value: WorkhubBootstrap }>();
+  const bootstrap = async (id: AccountId, c: OcsClient) => {
+    const hit = bootstraps.get(id);
+    if (hit && Date.now() - hit.at < 30_000) return hit.value;
+    const value = await fetchWorkhubBootstrap(c);
+    bootstraps.set(id, { at: Date.now(), value });
+    return value;
+  };
+  /**
+   * Time module gate (fail closed): the module must be on for this user, and reviewer-only calls
+   * need `permissions.canViewTeamReport` (native direct management). The server re-checks both.
+   */
+  const timeClient = async (id: AccountId, reviewer = false): Promise<OcsClient> => {
+    const c = await client(id);
+    const b = await bootstrap(id, c);
+    if (!b.modules.time) throw new OcsError('forbidden', 403, undefined, undefined, 'TIME_DISABLED');
+    if (reviewer && !b.permissions.canViewTeamReport) throw new OcsError('forbidden', 403, undefined, undefined, 'TEAM_REPORT_FORBIDDEN');
+    return c;
+  };
+
   return {
     async listAccounts() {
       return (await readAccounts()).map(summary);
@@ -196,6 +230,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
         wipeLocalData: (id) => deps.plain.deletePrefix(scopedKey(id)),
       });
       clients.delete(accountId);
+      bootstraps.delete(accountId);
       await writeAccounts((await readAccounts()).filter((a) => a.id !== accountId));
       return report;
     },
@@ -357,7 +392,35 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       return workhubModulesApi.timerStop(await client(accountId));
     },
     async timeWeek(accountId, date) {
-      return workhubModulesApi.week(await client(accountId), date);
+      return timeApi.week(await timeClient(accountId), date);
+    },
+    async timeEntryCreate(accountId, input, idempotencyKey) {
+      return timeApi.createEntry(await timeClient(accountId), input, idempotencyKey);
+    },
+    async timeEntryUpdate(accountId, entryId, patch) {
+      return timeApi.updateEntry(await timeClient(accountId), entryId, patch);
+    },
+    async timeEntryDelete(accountId, entryId, version) {
+      await timeApi.deleteEntry(await timeClient(accountId), entryId, version);
+    },
+    async timeSubmit(accountId, periodId, periodVersion, idempotencyKey) {
+      return timeApi.submit(await timeClient(accountId), periodId, periodVersion, idempotencyKey);
+    },
+    async timeWithdraw(accountId, submissionId, periodVersion, idempotencyKey) {
+      return timeApi.withdraw(await timeClient(accountId), submissionId, periodVersion, idempotencyKey);
+    },
+    async timeReviews(accountId, status) {
+      return timeApi.reviews(await timeClient(accountId, true), status);
+    },
+    async timeDecide(accountId, submissionId, action, periodVersion, reason, idempotencyKey) {
+      if (action !== 'approve' && !reason?.trim()) throw new OcsError('client', 422, undefined, undefined, 'REASON_REQUIRED');
+      return timeApi.decide(await timeClient(accountId, true), submissionId, action, periodVersion, reason?.trim() || null, idempotencyKey);
+    },
+    async timeTeam(accountId, from, to) {
+      return timeApi.team(await timeClient(accountId, true), from, to);
+    },
+    async timeCsv(accountId, scope, from, to) {
+      return timeApi.csv(await timeClient(accountId, scope === 'team'), scope, from, to);
     },
     async requests(accountId, scope) {
       return workhubModulesApi.requests(await client(accountId), scope);
@@ -384,7 +447,9 @@ export const BACKEND_METHODS = [
   'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
   'addSubtask', 'updateSubtask', 'deleteSubtask', 'addDependency', 'removeDependency',
   'createProject', 'renameProject', 'addProjectMember', 'createStack', 'renameStack', 'principals', 'objectShares', 'setObjectShares',
-  'timer', 'timerStart', 'timerStop', 'timeWeek', 'requests', 'requestContext', 'createRequest', 'goals',
+  'timer', 'timerStart', 'timerStop', 'timeWeek',
+  'timeEntryCreate', 'timeEntryUpdate', 'timeEntryDelete', 'timeSubmit', 'timeWithdraw', 'timeReviews', 'timeDecide', 'timeTeam', 'timeCsv',
+  'requests', 'requestContext', 'createRequest', 'goals',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -442,6 +507,38 @@ export const isValidShareList = (v: unknown): boolean =>
   });
 const isShareType = (v: unknown) => (SHARE_OBJECT_TYPES as readonly unknown[]).includes(v);
 
+// ---- Time entry wire validation: exact field sets, server formats, no unknown keys ----
+const isIsoUtc = (v: unknown) => typeof v === 'string' && v.length <= 40 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})$/.test(v);
+const isDay = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isZone = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 64 && /^[A-Za-z0-9_+\-/]+$/.test(v);
+const isSeconds = (v: unknown) => Number.isInteger(v) && (v as number) > 0 && (v as number) <= 7 * 86400;
+const isVersion = (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) < 2 ** 31;
+const ENTRY_COMMON: Record<string, (v: unknown) => boolean> = {
+  timezone: isZone,
+  description: (v) => v === null || isStr(1000)(v),
+  billable: (v) => typeof v === 'boolean',
+  cardId: (v) => v === null || isInt(v),
+};
+const ENTRY_RANGE = { ...ENTRY_COMMON, kind: (v: unknown) => v === 'range', startUtc: isIsoUtc, endUtc: isIsoUtc };
+const ENTRY_DURATION = { ...ENTRY_COMMON, kind: (v: unknown) => v === 'duration', localDate: isDay, durationSeconds: isSeconds };
+const fieldsOk = (o: Record<string, unknown>, spec: Record<string, (v: unknown) => boolean>, required: string[]) =>
+  Object.entries(o).every(([k, x]) => Object.hasOwn(spec, k) && spec[k]!(x)) && required.every((k) => Object.hasOwn(o, k));
+export const isValidTimeEntryInput = (v: unknown): v is TimeEntryInput => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (o.kind === 'range') return fieldsOk(o, ENTRY_RANGE, ['kind', 'startUtc', 'endUtc', 'timezone']);
+  if (o.kind === 'duration') return fieldsOk(o, ENTRY_DURATION, ['kind', 'localDate', 'durationSeconds', 'timezone']);
+  return false;
+};
+const ENTRY_PATCH: Record<string, (v: unknown) => boolean> = { ...ENTRY_COMMON, version: isVersion, startUtc: isIsoUtc, endUtc: isIsoUtc, localDate: isDay, durationSeconds: isSeconds };
+export const isValidTimeEntryPatch = (v: unknown): v is TimeEntryPatch => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return fieldsOk(o, ENTRY_PATCH, ['version']) && !((o.startUtc !== undefined || o.endUtc !== undefined) && (o.localDate !== undefined || o.durationSeconds !== undefined));
+};
+const isDayRange = (from: unknown, to: unknown, maxDays: number) =>
+  isDay(from) && isDay(to) && (from as string) <= (to as string) && (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 < maxDays;
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -482,6 +579,16 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   timerStart: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === null || isInt(a[1])) && isStr(1000)(a[2]) && isStr(128)(a[3]),
   timerStop: (a) => a.length === 1 && isAccountId(a[0]),
   timeWeek: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && (a[1] === undefined || (typeof a[1] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a[1]))),
+  timeEntryCreate: (a) => a.length === 3 && isAccountId(a[0]) && isValidTimeEntryInput(a[1]) && isKey(a[2]),
+  timeEntryUpdate: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidTimeEntryPatch(a[2]),
+  timeEntryDelete: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
+  timeSubmit: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
+  timeWithdraw: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
+  timeReviews: (a) => a.length === 2 && isAccountId(a[0]) && (a[1] === 'pending' || a[1] === 'approved'),
+  timeDecide: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && ['approve', 'request_changes', 'reopen'].includes(a[2] as string) && isVersion(a[3])
+    && (a[4] === null || isStr(2000)(a[4])) && (a[2] === 'approve' || (typeof a[4] === 'string' && a[4].trim().length > 0)) && isKey(a[5]),
+  timeTeam: (a) => a.length === 3 && isAccountId(a[0]) && isDayRange(a[1], a[2], 93),
+  timeCsv: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === 'own' || a[1] === 'team') && isDayRange(a[2], a[3], 366),
   requests: (a) => a.length === 2 && isAccountId(a[0]) && ['mine', 'received', 'team'].includes(a[1] as string),
   requestContext: (a) => a.length === 1 && isAccountId(a[0]),
   createRequest: (a) => a.length === 5 && isAccountId(a[0]) && isStr(255)(a[1]) && isStr(10000)(a[2]) && (a[3] === null || isStr(64)(a[3])) && isStr(128)(a[4]),

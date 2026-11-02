@@ -57,4 +57,28 @@ final class WorkhubNative: RCTEventEmitter {
       r(ok)
     }
   }
+
+  /// Share a generated export (CSV) via the system share sheet; file lives in a private temp dir.
+  @objc func shareFile(_ filename: String, content: String, mime: String, resolver r: @escaping RCTPromiseResolveBlock, rejecter j: @escaping RCTPromiseRejectBlock) {
+    guard mime == "text/csv", filename.range(of: "^[A-Za-z0-9_.-]{1,120}\\.csv$", options: .regularExpression) != nil, content.utf8.count <= 50 * 1024 * 1024 else {
+      j("E_WORKHUB", "invalid", nil)
+      return
+    }
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("exports", isDirectory: true)
+    try? FileManager.default.removeItem(at: dir)
+    do {
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let url = dir.appendingPathComponent(filename)
+      try content.write(to: url, atomically: true, encoding: .utf8)
+      DispatchQueue.main.async {
+        guard let root = RCTPresentedViewController() else { j("E_WORKHUB", "no_view", nil); return }
+        let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        vc.popoverPresentationController?.sourceView = root.view
+        vc.completionWithItemsHandler = { _, completed, _, _ in r(completed ? "saved" : "cancelled") }
+        root.present(vc, animated: true)
+      }
+    } catch {
+      j("E_WORKHUB", "write_failed", nil)
+    }
+  }
 }

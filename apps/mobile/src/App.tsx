@@ -28,6 +28,7 @@ export default function App() {
         await Linking.openURL(url);
       },
       appVersion: '0.1.0',
+      saveFile: (filename, content, mime) => native.shareFile(filename, content, mime),
       onAccountsChanged: (accounts) => {
         for (const a of accounts) {
           backend

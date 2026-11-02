@@ -25,7 +25,7 @@ Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış o
 | 2 — Talk | Oda listesi + arama + delta, geçmiş, long-poll, okundu, optimistic gönderim/`referenceId` uzlaştırma, rich-object (HTML'siz). Eksik: reply/edit/delete/reaction UI, dosya/ses notu, oda yönetimi | masaüstü smoke |
 | 3 — bildirim | Inbox + yönlendirme; Android FCM servisi, native çözme, RemoteInput yanıt, kanallar, kilit ekranında gizli içerik; iOS NSE + yanıt (**derlenmedi**); masaüstü bildirim + tepsi, macOS inline yanıt, diğerlerinde odaklı compose | Kotlin RFC testi, push e2e |
 | 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li). GENE-49: görev alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, proje sayaçlarının yenilenmesi. GENE-61: proje/sütun/üye yönetimi, hedef paylaşımları | masaüstü smoke, API smoke, `smoke:tasks`, `smoke:projects` |
-| 5 — modüller | Zaman (zamanlayıcı/hafta), Talepler (liste/oluştur), Hedefler (liste) native; diğerleri web fallback | `docs/workhub-modules.md` |
+| 5 — modüller | Zaman native (GENE-50: zamanlayıcı, hafta, kayıt CRUD, dönem gönder/geri çek, inceleme, takım raporu, CSV), Talepler (liste/oluştur), Hedefler (liste) native; diğerleri web fallback | `docs/workhub-modules.md`, `smoke:time` |
 | 6 — dağıtım | electron-builder ve gradle yapılandırması var; imzalama/mağaza yok | README |
 | 7 — çağrılar | Başlamadı (kapsam onayı gerekli) | — |
 
@@ -183,7 +183,7 @@ Her satır ayrı küçük PR/dikey dilim olabilir. Tek bir Tasks ekranını tüm
 | [ ] Dashboard | Dashboard/widget CRUD, query/drilldown, kaydetme ve CSV; yetkili filtre/rol; dosya export içerik tipi/indirimi. |
 | [ ] Goals | Goal/target/check-in, ownership transfer, card link/unlink; edit izinleri ve zaman aralıkları. |
 | [ ] Requests | Context/rapor/list/detail/history, oluştur/yanıtla/resolve/convert; her state'te geçerli action. |
-| [ ] Time | Timer start/stop, entry CRUD, week/team/report, period submission/withdraw, review approve/change/reopen; tek aktif timer/sunucu state ve DST/timezone. |
+| [x] Time | Timer start/stop, entry CRUD, week/team/report, period submission/withdraw, review approve/change/reopen; tek aktif timer/sunucu state ve DST/timezone. **GENE-50:** kayıt oluştur/düzenle/sil (aralık + süre, dönem saat diliminde duvar saati → UTC, DST testli; kilitli dönemde salt okunur), dönem gönder/geri çek, yönetici incelemesi (onay, gerekçeli değişiklik isteme/yeniden açma; `canViewTeamReport` gate'i fail-closed), erişilebilir takım raporu tablosu, CSV (own/team; masaüstü kaydetme penceresi, mobil paylaşım sayfası). `smoke:time` 11/11, masaüstü smoke 15/15. Açık iş: kayda kart bağlama seçicisi; politika yönetimi admin web'de. |
 | [ ] Automations / workflows | Stack kuralları, workflow CRUD/sample/handoff/runs, start/cancel/step handoff/skip; read-only durumlar ve denetim izi. |
 | [ ] AI | Status/request/proposal/accept/dismiss/cancel; gate kapalı varsayılan, provider hazır değil mesajı; öneri otomatik mutasyon değildir. |
 | [ ] Yönetim | Feature/workload/time policy/AI provider/deck import UI yalnız admin. API parola doğrulaması veya güvenli credential adımı desktop/native'de sağlanamıyorsa açık web yönetim bağlantısı + gap kaydı; admin parolası saklanmaz. |

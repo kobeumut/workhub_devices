@@ -9,6 +9,7 @@ Bu makinedeki Nextcloud AIO master container'ı (`:8080`) hiç yapılandırılma
 | Adres | `http://192.168.0.64:18081` (trusted: `localhost`, `192.168.0.64`, `grisoft-server.local`, Android emulator `10.0.2.2`, hepsi `:18081`) |
 | Uygulamalar | Talk (spreed) 25.0.6, Notifications 8.0.1, Deck 1.19.1, Tasks 0.18.1, Workhub 0.5.0 (backend `native`) |
 | Test kullanıcıları | `admin`, `alice` + `bob` (grup `staff`), `carol` (kısıtlı: `module_projects_groups=["staff"]`) |
+| Yönetici alanı (zaman incelemesi) | `alice`'in yöneticisi `bob`, `carol`'ın yöneticisi `alice` (`PUT /ocs/v2.php/cloud/users/<uid>` `key=manager`, admin ile). `smoke:time` ve masaüstü inceleme adımı buna dayanır |
 | Web Push | `webpush_enabled=true` (onaylı). Yalnız dev: `allow_local_remote_servers=true` ve yerel relay'in self-signed sertifikası `occ security:certificates:import` ile güvenilir |
 | Secret'lar | Repo dışında, yerel `0600` dosyada; issue/Git/log'a yazılmaz |
 
@@ -43,6 +44,8 @@ npm run smoke:live -w @workhub-devices/core
 ```
 
 `WH_A_REVOKE_PASS` test sırasında revoke edilir; her koşu için yenisi gerekir.
+
+Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
 ## Push relay uçtan uca testi (dev)
 

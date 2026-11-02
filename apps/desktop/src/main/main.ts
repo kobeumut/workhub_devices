@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray, type WebContents } from 'electron';
-import { join } from 'node:path';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, shell, Tray, type WebContents } from 'electron';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
 import { createDirectBackend, dispatchWire, isWithinServer, unregisterWebPush, type RoutedTarget } from '@workhub-devices/core';
@@ -130,6 +130,27 @@ ipcMain.handle('workhub:openExternal', async (e, url: unknown) => {
   }
   await shell.openExternal(url);
   return true;
+});
+
+/**
+ * Save a generated export through the OS save dialog. Only a plain `.csv` basename and bounded
+ * text are accepted; the user picks the location. The renderer never gets a path or fs access.
+ */
+ipcMain.handle('workhub:saveFile', async (e, filename: unknown, content: unknown, mime: unknown) => {
+  if (!isOurFrame(e.sender, e.senderFrame?.url) || !win) return 'cancelled';
+  if (mime !== 'text/csv' || typeof content !== 'string' || content.length > 50 * 1024 * 1024) return 'cancelled';
+  if (typeof filename !== 'string' || basename(filename) !== filename || !/^[\w.-]{1,120}\.csv$/.test(filename)) return 'cancelled';
+  if (smokeOut) {
+    await fs.writeFile(join(smokeOut, filename), content, 'utf8');
+    return 'saved';
+  }
+  const r = await dialog.showSaveDialog(win, {
+    defaultPath: join(app.getPath('downloads'), filename),
+    filters: [{ name: 'CSV', extensions: ['csv'] }],
+  });
+  if (r.canceled || !r.filePath) return 'cancelled';
+  await fs.writeFile(r.filePath, content, 'utf8');
+  return 'saved';
 });
 
 ipcMain.on('workhub:foreground', (e, target: unknown) => {

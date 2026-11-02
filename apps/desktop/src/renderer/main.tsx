@@ -7,6 +7,7 @@ declare global {
     workhub: {
       invoke(method: BackendMethod, args: unknown[]): Promise<WireResult>;
       openExternal(url: string): Promise<boolean>;
+      saveFile(filename: string, content: string, mime: string): Promise<'saved' | 'cancelled'>;
       setForeground(target: RoutedTarget | null): void;
       onRoute(cb: (t: RoutedTarget) => void): () => void;
       platform: string;
@@ -21,6 +22,7 @@ const platform: PlatformServices = {
   openExternal: async (url) => {
     await bridge.openExternal(url);
   },
+  saveFile: (filename, content, mime) => bridge.saveFile(filename, content, mime),
   onForegroundRoute: (t) => bridge.setForeground(t),
   subscribeRoutes: (cb) => bridge.onRoute(cb),
   appVersion: '0.1.0',

@@ -1,6 +1,8 @@
 // Headless desktop UI smoke against a real Nextcloud (see docs/dev-server.md).
 // Env: WH_SERVER, WH_A_USER, WH_A_PASS (app password used to approve the login flow),
 //      WH_SMOKE_ROOM (display name of a room the user has). Writes screenshots to WH_SMOKE_OUT.
+//      Optional WH_C_USER/WH_C_PASS: a user whose Nextcloud manager is WH_A_USER — seeds a pending
+//      timesheet for the review step (display name WH_SMOKE_SUBJECT, default "Carol").
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +25,37 @@ const ocs = async (method, path, body) => {
 };
 const goalTitle = `Masaüstü hedefi ${new Date().toISOString().slice(11, 19)}`;
 const goal = process.env.WH_A_PASS ? await ocs('POST', '/goals', { title: goalTitle }).catch(() => null) : null;
+// A pending timesheet of a subject (WH_C_*, whose Nextcloud manager is WH_A_USER) for the review step.
+const ocsAs = async (user, pass, method, path, body, extra = {}) => {
+  const r = await fetch(`${process.env.WH_SERVER}/ocs/v2.php/apps/workhub/api/v1${path}`, {
+    method,
+    headers: { Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`, 'OCS-APIRequest': 'true', Accept: 'application/json', 'Content-Type': 'application/json', ...extra },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  return (await r.json()).ocs?.data;
+};
+let subjectName = '';
+if (process.env.WH_C_USER && process.env.WH_C_PASS) {
+  const C = (m, p, b, h) => ocsAs(process.env.WH_C_USER, process.env.WH_C_PASS, m, p, b, h).catch(() => null);
+  let week = await C('GET', '/time/week');
+  const pending = week?.submissions?.find((s) => s.status === 'pending' && s.revision === week.period.revision);
+  const approved = week?.period?.state === 'approved' ? week.submissions.find((s) => s.status === 'approved') : null;
+  if (approved) {
+    // Left approved by an interrupted run: the manager (A) reopens it.
+    await ocsAs(process.env.WH_A_USER, process.env.WH_A_PASS, 'POST', `/time/submissions/${approved.id}/reopen`, { version: week.period.version, reason: 'smoke reset' }, { 'Idempotency-Key': crypto.randomUUID() }).catch(() => null);
+    week = await C('GET', '/time/week');
+  }
+  if (pending) {
+    await C('POST', `/time/submissions/${pending.id}/withdraw`, { version: week.period.version }, { 'Idempotency-Key': crypto.randomUUID() });
+    week = await C('GET', '/time/week');
+  }
+  if (week?.period?.open) {
+    await C('POST', '/time/entries', { entryKind: 'duration', localDate: week.navigation.today, durationSeconds: 3600, timezone: week.period.zone, description: 'Smoke review entry' }, { 'Idempotency-Key': crypto.randomUUID() });
+    week = await C('GET', '/time/week');
+    const sub = await C('POST', `/time/periods/${week.period.id}/submit`, { version: week.period.version }, { 'Idempotency-Key': crypto.randomUUID() });
+    if (sub?.submission) subjectName = process.env.WH_SMOKE_SUBJECT ?? 'Carol';
+  }
+}
 const profile = mkdtempSync(join(tmpdir(), 'workhub-smoke-'));
 const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platform=headless', '--disable-gpu', '--no-sandbox'], {
   env: {
@@ -35,6 +68,7 @@ const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platf
     WORKHUB_SMOKE_MEMBER: process.env.WH_SMOKE_MEMBER ?? 'Bob',
     WORKHUB_SMOKE_GROUP: process.env.WH_SMOKE_GROUP ?? 'staff',
     WORKHUB_SMOKE_GOAL: goal?.id ? goalTitle : '',
+    WORKHUB_SMOKE_SUBJECT: subjectName,
   },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
@@ -55,7 +89,24 @@ if (goal?.id) {
   const current = await ocs('GET', `/goals/${goal.id}`).catch(() => null);
   await ocs('DELETE', `/goals/${goal.id}`, { version: current?.version ?? goal.version }).catch(() => null);
 }
+if (process.env.WH_C_USER && process.env.WH_C_PASS) {
+  // Leave the subject's week open and without the smoke entry.
+  const C = (m, p, b, h) => ocsAs(process.env.WH_C_USER, process.env.WH_C_PASS, m, p, b, h).catch(() => null);
+  const week = await C('GET', '/time/week');
+  const pending = week?.submissions?.find((s) => s.status === 'pending' && s.revision === week.period.revision);
+  if (pending) await C('POST', `/time/submissions/${pending.id}/withdraw`, { version: week.period.version }, { 'Idempotency-Key': crypto.randomUUID() });
+  const now = await C('GET', '/time/week');
+  for (const e of now?.entries ?? []) if (e.description === 'Smoke review entry') await C('DELETE', `/time/entries/${e.id}`, { version: e.version });
+}
+// CSV files saved by the UI: BOM + header, and never any credential.
+const { readdirSync } = await import('node:fs');
+for (const f of readdirSync(out).filter((x) => x.endsWith('.csv'))) {
+  const text = readFileSync(join(out, f), 'utf8');
+  const leaks = [process.env.WH_A_PASS, process.env.WH_B_PASS, process.env.WH_C_PASS].filter((p) => p && text.includes(p)).length + (/Authorization|Basic /.test(text) ? 1 : 0);
+  console.log(`csv ${f}: ${text.trim().split('\n').length - 1} rows, bom=${text.startsWith('\uFEFF')}, header=${text.replace('\uFEFF', '').startsWith('entry_id,user_uid,')}, credential leaks=${leaks}`);
+  if (leaks || !text.startsWith('\uFEFF')) process.exitCode = 1;
+}
 const result = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
 for (const s of result.steps) console.log(`${s.ok ? '✔' : '✘'} ${s.step}${s.note ? ` — ${s.note}` : ''}`);
-process.exitCode = result.steps.every((s) => s.ok) && result.steps.length >= 10 ? 0 : 1;
+process.exitCode = process.exitCode || (result.steps.every((s) => s.ok) && result.steps.length >= 10 ? 0 : 1);
 console.log(`electron exit ${code}; screenshots in ${out}`);

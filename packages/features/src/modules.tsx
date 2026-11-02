@@ -1,19 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { OcsError, type AccountId, type ProjectSummary, type ServerBase, type WorkhubBootstrap } from '@workhub-devices/core';
+import { type AccountId, type ProjectSummary, type ServerBase, type WorkhubBootstrap } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { ProjectsScreen } from './workhub';
 import { SharesEditor } from './projectAdmin';
 import { Button, Empty, ErrorBanner, Loading, Row, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
 import { formatDate } from './i18n';
+import { TimeScreen } from './time';
 
 const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-const hms = (sec: number) => {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return `${h} sa ${String(m).padStart(2, '0')} dk`;
-};
 
 type Section = 'projects' | 'time' | 'requests' | 'goals' | 'more';
 
@@ -46,84 +42,11 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
         ))}
       </ScrollView>
       {section === 'projects' ? <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} onOpen={onOpenProject} /> : null}
-      {section === 'time' ? <TimeScreen accountId={accountId} /> : null}
+      {section === 'time' ? <TimeScreen accountId={accountId} canReview={workhub.permissions.canViewTeamReport} /> : null}
       {section === 'requests' ? <RequestsScreen accountId={accountId} /> : null}
       {section === 'goals' ? <GoalsScreen accountId={accountId} /> : null}
       {section === 'more' ? <MoreScreen serverBase={serverBase} workhub={workhub} /> : null}
     </View>
-  );
-}
-
-export function TimeScreen({ accountId }: { accountId: AccountId }) {
-  const { backend } = useServices();
-  const week = useAsync(() => backend.timeWeek(accountId), [accountId]);
-  const [desc, setDesc] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>();
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(id);
-  }, []);
-  const w = week.data;
-  const timer = w?.timer ?? null;
-  const elapsed = timer ? Math.max(0, Math.floor((now - Date.parse(timer.startedAt)) / 1000)) : 0;
-
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    setErr(undefined);
-    try {
-      await fn();
-      week.reload();
-    } catch (e) {
-      // 409 TIMER_ALREADY_RUNNING etc: refresh to show the server's single active timer.
-      setErr(e);
-      if (e instanceof OcsError && e.kind === 'conflict') week.reload();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (week.loading && !w) return <Loading />;
-  return (
-    <ScrollView contentContainerStyle={{ padding: space(3) }}>
-      <ErrorBanner error={week.error ?? err} onRetry={week.reload} />
-      <View style={card}>
-        <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
-          Zamanlayıcı
-        </Text>
-        {timer ? (
-          <>
-            <Text style={{ fontSize: font.title, color: colors.text }}>⏱ {hms(elapsed)}</Text>
-            <Text style={{ color: colors.muted }}>{timer.card?.title ?? timer.description ?? ''}</Text>
-            <Button title="Durdur" kind="danger" busy={busy} onPress={() => void act(() => backend.timerStop(accountId))} />
-          </>
-        ) : (
-          <>
-            <TextInput accessibilityLabel="Açıklama" placeholder="Ne üzerinde çalışıyorsunuz?" placeholderTextColor={colors.muted} value={desc} onChangeText={setDesc} style={ui.input} />
-            <Button title="Başlat" busy={busy} onPress={() => void act(async () => { await backend.timerStart(accountId, null, desc.trim(), uuid()); setDesc(''); })} />
-          </>
-        )}
-      </View>
-      {w ? (
-        <View style={card}>
-          <Text accessibilityRole="header" style={{ fontWeight: '700' }}>
-            Bu hafta: {hms(w.totals.totalSec)}
-          </Text>
-          <Text style={{ color: colors.muted, marginBottom: space(2) }}>
-            {formatDate(w.period.localStartDate)} – {formatDate(w.period.localEndDate)} · {w.period.open ? 'açık dönem' : `durum: ${w.period.state}`}
-          </Text>
-          {w.entries.length === 0 ? <Text style={{ color: colors.muted }}>Kayıt yok.</Text> : null}
-          {w.entries.map((e) => (
-            <Text key={e.id} style={{ color: colors.text, paddingVertical: 2 }}>
-              {formatDate(e.localDate)} · {hms(e.durationSec)} · {e.card?.title ?? (e.description || '—')}
-              {e.locked ? ' 🔒' : ''}
-            </Text>
-          ))}
-          <Text style={{ color: colors.muted, marginTop: space(2), fontSize: font.small }}>Kayıt düzenleme, dönem gönderme ve onay akışı şimdilik web'de (Diğer → Zaman).</Text>
-        </View>
-      ) : null}
-    </ScrollView>
   );
 }
 
@@ -235,7 +158,7 @@ export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; wo
     ['İş yükü', 'workload', 'Ekip kapasite matrisi', workhub.modules.projects],
     ['Gantt ve etkinlik', 'projects', 'Proje Gantt ve etkinlik akışı', workhub.modules.projects],
     ['İş akışları', 'workflows', 'Şablonlar, çalıştırmalar, devir', workhub.modules.projects],
-    ['Zaman: düzenleme ve onay', 'time', 'Kayıt düzenleme, dönem gönderme, inceleme', workhub.modules.time],
+    ['Zaman: görev bağlama ve panolar', 'time', 'Kayda görev bağlama, zaman widget\'ları', workhub.modules.time],
     ['Talepler: yanıt ve dönüştürme', 'requests', 'Onay/red, göreve dönüştürme, rapor', workhub.modules.requests],
     ['Hedefler: düzenleme', 'goals', 'Hedef/target, check-in, kart bağlantısı', workhub.modules.goals],
     ['AI', 'ai', 'Öneri ve taslaklar', workhub.modules.ai],

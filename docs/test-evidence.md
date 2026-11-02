@@ -29,6 +29,18 @@ Sunucu: yerel Docker dev (Nextcloud 35.0.2, Talk 25.0.6, Notifications 8.0.1, Wo
 | **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 12/12. Yeni adımlar: "Yeni proje → Yönet → yeniden adlandır → sütun ekle + yeniden adlandır → Bob'u üye ekle" ve "Hedefler → Paylaş → `staff` grubu → Kaydet". Sunucu kontrolü: `group:staff=view` |
 | Android | — | Bu dilimde çalıştırılmadı (AVD var ama kapalı; ortak RN bileşenleri, mobil typecheck temiz) |
 
+## GENE-50 — Zaman modülü: kayıt CRUD, dönem, inceleme, takım raporu, CSV (2026-11-02)
+
+Sözleşme `nextcloud_workhub@a359a4c` `TimeController`/`SubmissionController`/`TimeCsvController` ve servislerinden okundu; yanıt şekilleri canlı sunucuda doğrulandı. Workhub reposu değişmedi. Test verisi: Nextcloud yönetici alanı `alice → bob` ve `carol → alice` (provisioning API, yalnız dev sunucusu; bkz. `docs/dev-server.md`).
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit` | core 57/57 (yeni 8: saat dilimi/DST dönüşümü, form → oluşturma gövdesi ve minimal PATCH, kilit/eylem türetimi, yol/gövde/Idempotency-Key, CSV indirme — yönlendirme reddi + JSON hata + BOM korunur, Backend gate'i — modül kapalıyken istek yok, yönetici olmayan için 403, IPC — bilinmeyen alan/tür karışımı/gerekçesiz karar/aralık sınırı reddi), relay 8/8; typecheck temiz (mobil dahil) |
+| Canlı API | `npm run smoke:time -w @workhub-devices/core` | 11/11: aralık + süre kaydı; çakışmada `TIME_OVERLAP` uyarısı (politika `warn`); minimal PATCH, eski sürüm 409 `VERSION_CONFLICT`, tür değişimi 422 `KIND_IMMUTABLE`; başka kullanıcı 404; gönder → kayıtlar `locked` + güncelle/sil 409 `PERIOD_LOCKED` → geri çek; sahibin kararı 403 `SELF_APPROVAL`, yönetici olmayan 404/403; yönetici kuyruğu → gerekçesiz değişiklik isteği 422 → gerekçeli → sahibi düzeltip yeniden gönderir → onay → onaylananlar listesi → gerekçeli yeniden açma; takım raporu toplamları; CSV own/team (BOM, başlık, app password yok), yönetici olmayan team CSV 403 |
+| **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 15/15. Yeni adımlar: "Kayıt ekle → düzenle → dönemi gönder (kilit, Sil düğmesi yok) → geri çek → sil", "CSV indir", "İnceleme → Onayla → Onaylananlar → gerekçesiz Yeniden aç reddedilir → gerekçeyle yeniden aç → Takım raporu tablosu (5 sütun başlığı, satırlar `role` semantiğiyle) → Takım CSV". Kaydedilen CSV'ler: BOM ✓, başlık ✓, credential sızıntısı 0 |
+| Android | `./gradlew :app:assembleDebug` | Derlendi (FileProvider + `shareFile`). Emülatörde paylaşım sayfası bu dilimde çalıştırılmadı |
+| iOS | — | `shareFile` (UIActivityViewController) yazıldı, derlenmedi (macOS yok) |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.
