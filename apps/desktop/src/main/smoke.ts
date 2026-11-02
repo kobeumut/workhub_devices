@@ -22,7 +22,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
   };
   const click = (text: string, exact = true) =>
     js<boolean>(`(() => {
-      const els = [...document.querySelectorAll('[role=button],[role=tab],button')];
+      const els = [...document.querySelectorAll('[role=button],[role=tab],[role=checkbox],button')];
       const el = els.find(e => ${exact ? `e.innerText.trim() === ${JSON.stringify(text)} || e.getAttribute('aria-label') === ${JSON.stringify(text)}` : `e.innerText.includes(${JSON.stringify(text)})`});
       if (!el) return false; el.click(); return true; })()`);
   const type = (selector: string, value: string) =>
@@ -46,6 +46,12 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       throw e;
     }
   };
+
+  let openBefore: number | null = null;
+  const firstProjectOpenCount = () =>
+    js<number | null>(`(() => {
+      const el = [...document.querySelectorAll('[role=button]')].find(e => / açık · /.test(e.innerText));
+      const m = el && el.innerText.match(/(\\d+) açık/); return m ? Number(m[1]) : null; })()`);
 
   try {
     await new Promise<void>((r) => (wc.isLoading() ? wc.once('did-finish-load', () => r()) : r()));
@@ -85,10 +91,13 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('İşler');
       await waitText('açık', 20_000);
       await shot('04-projects');
+      openBefore = await firstProjectOpenCount();
       if (!(await click('açık', false))) throw new Error('project row');
       await waitText('To Do', 20_000);
       await shot('05-board');
     });
+    const editedTitle = `Düzenlendi ${new Date().toISOString().slice(11, 19)}`;
+    const subtask = `Alt iş ${new Date().toISOString().slice(11, 19)}`;
     const taskTitle = `Masaüstü görevi ${new Date().toISOString().slice(11, 19)}`;
     await step('task: create → open detail → comment', async () => {
       await type('input', taskTitle);
@@ -100,6 +109,35 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       if (!(await click('Yorum ekle'))) throw new Error('comment');
       await waitText('Masaüstünden yorum', 15_000);
       await shot('06-task');
+    });
+    await step('task: edit fields + subtask, project counter refreshes', async () => {
+      if (!(await click('Düzenle'))) throw new Error('edit button');
+      await waitText('Görevi düzenle', 10_000);
+      if (!(await type('input[aria-label="Başlık"]', editedTitle))) throw new Error('title input');
+      if (!(await type('input[aria-label="Bitiş (YYYY-AA-GG)"]', '2026-12-31'))) throw new Error('due input');
+      if (!(await type('input[aria-label="Tahmini süre (saat)"]', '1,5'))) throw new Error('estimate input');
+      if (!(await click('Yüksek'))) throw new Error('priority chip');
+      if (!(await click('Kaydet'))) throw new Error('save');
+      await waitText(editedTitle, 15_000);
+      await waitText('Tahmini: 1.5 sa', 15_000);
+      if (!(await type('input[aria-label="Yeni alt iş"]', subtask))) throw new Error('subtask input');
+      if (!(await click('Alt iş ekle'))) throw new Error('add subtask');
+      await waitText(subtask, 15_000);
+      if (!(await click(subtask))) throw new Error('subtask checkbox');
+      await waitText('(1/1)', 15_000);
+      await shot('06b-task-edit');
+      // Wide layout keeps the project list visible: its open counter must include the new task.
+      if (openBefore !== null) {
+        const end = Date.now() + 15_000;
+        let now = await firstProjectOpenCount();
+        while (now !== openBefore + 1 && Date.now() < end) {
+          await sleep(500);
+          now = await firstProjectOpenCount();
+        }
+        if (now !== openBefore + 1) throw new Error(`counter stale: ${openBefore} → ${now}`);
+        return `open counter ${openBefore} → ${now}`;
+      }
+      return 'counter not visible';
     });
     await step('time module: start → stop timer', async () => {
       await click('İşler');

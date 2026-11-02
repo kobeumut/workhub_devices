@@ -44,17 +44,71 @@ export interface Task {
   subtasks: { done: number; total: number };
 }
 
+export interface SubtaskItem {
+  index: number;
+  text: string;
+  done: boolean;
+}
+
+export interface TaskLink {
+  id: number;
+  title: string;
+  done: boolean;
+  stackId: number;
+  dependencyId: number;
+  type: string;
+  lagDays: number;
+}
+
 export interface TaskDetail extends Task {
+  /** Description WITHOUT checklist lines; the server preserves the checklist on PATCH. */
   description: string;
+  estimateSec: number | null;
+  subtaskItems: SubtaskItem[];
+  /** Tasks this task waits for. */
+  predecessors: TaskLink[];
+  /** Tasks waiting for this task. */
+  successors: TaskLink[];
+}
+
+export interface ProjectLabel {
+  id: number;
+  title: string;
+  color: string;
+  /** Non-null for the labels that encode priority; edit those via `priority`, not `labels`. */
+  priority: Priority | null;
 }
 
 export interface BoardPayload {
   project: {
     board: { id: number; title: string; color: string };
     stacks: { id: number; title: string; order: number; isDone: boolean }[];
+    labels: ProjectLabel[];
+    members: { uid: string; displayName: string }[];
     permissions: { read: boolean; edit: boolean; manage: boolean; share: boolean };
+    features?: { dependencies?: boolean; doneColumn?: boolean };
   };
   tasks: Task[];
+}
+
+export interface SubtaskList {
+  cardId: number;
+  subtasks: SubtaskItem[];
+  progress: { done: number; total: number };
+}
+
+export interface TaskPatch {
+  title?: string;
+  description?: string;
+  done?: boolean;
+  /** Complete set of user ids (replaces). */
+  assignees?: string[];
+  /** Complete set of label ids INCLUDING the current priority label (the server replaces the whole set). */
+  labels?: number[];
+  startDate?: string | null;
+  dueDate?: string | null;
+  estimateSec?: number | null;
+  priority?: Priority | null;
 }
 
 export interface TaskComment {
@@ -67,6 +121,11 @@ export interface TaskComment {
 
 const id = (n: number) => {
   if (!Number.isInteger(n) || n <= 0) throw new OcsError('client', undefined, 'invalid id');
+  return n;
+};
+
+const idx = (n: number) => {
+  if (!Number.isInteger(n) || n < 0) throw new OcsError('client', undefined, 'invalid index');
   return n;
 };
 
@@ -83,8 +142,23 @@ export const workhubApi = {
   addComment: async (c: OcsClient, cardId: number, message: string, idempotencyKey: string = uuid()) =>
     (await c.request<TaskComment>(`${BASE}/tasks/${id(cardId)}/comments`, { method: 'POST', body: { message }, headers: { 'Idempotency-Key': idempotencyKey } })).data,
   /** `assignees`/`labels` replace the whole set — always send the complete list. */
-  updateTask: async (c: OcsClient, cardId: number, patch: Partial<Pick<TaskDetail, 'title' | 'description' | 'priority' | 'dueDate' | 'startDate'>> & { done?: boolean; assignees?: string[]; labels?: number[] }) =>
+  updateTask: async (c: OcsClient, cardId: number, patch: TaskPatch) =>
     (await c.request<Task>(`${BASE}/tasks/${id(cardId)}`, { method: 'PATCH', body: patch })).data,
+  // Subtasks are checklist lines of the description. Index-based writes carry the text the
+  // client saw at that index (`expectedText`), so a concurrent edit fails instead of hitting
+  // the wrong item.
+  addSubtask: async (c: OcsClient, cardId: number, text: string) =>
+    (await c.request<SubtaskList>(`${BASE}/tasks/${id(cardId)}/subtasks`, { method: 'POST', body: { text } })).data,
+  updateSubtask: async (c: OcsClient, cardId: number, index: number, expectedText: string, change: { text?: string; done?: boolean }) =>
+    (await c.request<SubtaskList>(`${BASE}/tasks/${id(cardId)}/subtasks/${idx(index)}`, { method: 'PUT', body: { expectedText, ...change } })).data,
+  deleteSubtask: async (c: OcsClient, cardId: number, index: number, expectedText: string) =>
+    (await c.request<SubtaskList>(`${BASE}/tasks/${id(cardId)}/subtasks/${idx(index)}`, { method: 'DELETE', query: { expectedText } })).data,
+  /** `predecessorId` must finish before `successorId` (same project; cycles → 409 DEPENDENCY_CYCLE). */
+  addDependency: async (c: OcsClient, predecessorId: number, successorId: number) =>
+    (await c.request<{ id: number }>(`${BASE}/tasks/${id(predecessorId)}/dependencies`, { method: 'POST', body: { successorCardId: id(successorId) } })).data,
+  removeDependency: async (c: OcsClient, cardId: number, dependencyId: number) => {
+    await c.request(`${BASE}/tasks/${id(cardId)}/dependencies/${id(dependencyId)}`, { method: 'DELETE' });
+  },
   moveTask: async (c: OcsClient, cardId: number, stackId: number, order: number) =>
     (await c.request<Task>(`${BASE}/tasks/${id(cardId)}/move`, { method: 'POST', body: { stackId: id(stackId), order } })).data,
 };
@@ -182,3 +256,75 @@ export const workhubModulesApi = {
     (await c.request<{ id: number }>(`${BASE}/requests`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
   goals: async (c: OcsClient) => (await c.get<{ items: GoalSummary[] }>(`${BASE}/goals`)).items,
 };
+
+// ---- Task edit form → minimal PATCH ----------------------------------------------
+
+export interface TaskForm {
+  title: string;
+  description: string;
+  priority: Priority | null;
+  /** `YYYY-MM-DD` or '' (no date). */
+  startDate: string;
+  dueDate: string;
+  /** Hours as typed ('' = no estimate); comma or dot decimals. */
+  estimateHours: string;
+  /** Selected NON-priority label ids. */
+  labels: number[];
+  /** Selected user ids (board members). */
+  assignees: string[];
+}
+
+export type TaskFormError = 'title_empty' | 'date_invalid' | 'date_range' | 'estimate_invalid';
+
+const dayOf = (iso: string | null) => (iso ? iso.slice(0, 10) : '');
+const sameSet = <T>(a: T[], b: T[]) => a.length === b.length && a.every((x) => b.includes(x));
+
+export function taskFormOf(task: TaskDetail, labels: ProjectLabel[]): TaskForm {
+  const priorityIds = new Set(labels.filter((l) => l.priority).map((l) => l.id));
+  return {
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    startDate: dayOf(task.startDate),
+    dueDate: dayOf(task.dueDate),
+    estimateHours: task.estimateSec == null ? '' : String(Math.round((task.estimateSec / 3600) * 100) / 100),
+    labels: task.labels.filter((id) => !priorityIds.has(id)),
+    assignees: task.assignees.filter((a) => a.type === 'user').map((a) => a.id),
+  };
+}
+
+/**
+ * Only changed fields are sent. Labels are a full replace on the server, so the task's current
+ * priority label ids are kept in the set (a priority change is applied after labels).
+ */
+export function buildTaskPatch(task: TaskDetail, labels: ProjectLabel[], form: TaskForm): { patch: TaskPatch } | { error: TaskFormError } {
+  const base = taskFormOf(task, labels);
+  const title = form.title.trim();
+  if (!title) return { error: 'title_empty' };
+  const date = /^\d{4}-\d{2}-\d{2}$/;
+  const valid = (d: string) => d === '' || (date.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d));
+  const start = form.startDate.trim();
+  const due = form.dueDate.trim();
+  if (!valid(start) || !valid(due)) return { error: 'date_invalid' };
+  if (start && due && start > due) return { error: 'date_range' };
+  let estimateSec: number | null = null;
+  const est = form.estimateHours.trim().replace(',', '.');
+  if (est) {
+    const h = Number(est);
+    if (!/^\d+(\.\d+)?$/.test(est) || !Number.isFinite(h) || h > 10_000) return { error: 'estimate_invalid' };
+    estimateSec = Math.round(h * 3600);
+  }
+  const patch: TaskPatch = {};
+  if (title !== task.title) patch.title = title;
+  if (form.description !== base.description) patch.description = form.description;
+  if (form.priority !== base.priority) patch.priority = form.priority;
+  if (start !== base.startDate) patch.startDate = start || null;
+  if (due !== base.dueDate) patch.dueDate = due || null;
+  if (estimateSec !== (task.estimateSec ?? null)) patch.estimateSec = estimateSec;
+  if (!sameSet(form.labels, base.labels)) {
+    const priorityIds = new Set(labels.filter((l) => l.priority).map((l) => l.id));
+    patch.labels = [...new Set([...form.labels.filter((id) => !priorityIds.has(id)), ...task.labels.filter((id) => priorityIds.has(id))])];
+  }
+  if (!sameSet(form.assignees, base.assignees)) patch.assignees = [...new Set(form.assignees)];
+  return { patch };
+}

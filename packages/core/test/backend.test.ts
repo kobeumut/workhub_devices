@@ -54,3 +54,31 @@ test('wire backend rethrows OcsError on the renderer side', async () => {
   const wb = createWireBackend(async () => ({ ok: false, error: { kind: 'forbidden', status: 403, errorCode: 'PROJECTS_DISABLED' } }));
   await assert.rejects(wb.projects('a' as never), (e: unknown) => e instanceof OcsError && e.kind === 'forbidden' && e.errorCode === 'PROJECTS_DISABLED');
 });
+
+test('task PATCH over the wire: only known, well-typed fields pass', async () => {
+  const b = createDirectBackend({ secrets: new Mem(), plain: new Mem(), fetch: scriptedFetch() });
+  const bad = { ok: false, error: { kind: 'client', message: 'invalid arguments' } };
+  for (const patch of [
+    {},
+    { title: '' },
+    { title: 'x', url: 'https://evil' },
+    { dueDate: 'tomorrow' },
+    { priority: 'critical' },
+    { assignees: 'bob' },
+    { assignees: [''] },
+    { labels: [1, -2] },
+    { estimateSec: -1 },
+    { estimateSec: 1.5 },
+    { __proto__: { done: true } },
+  ]) {
+    assert.deepEqual(await dispatchWire(b, 'updateTask', ['acc', 1, patch]), bad, JSON.stringify(patch));
+  }
+  // valid shapes reach the backend (unknown account → unauthorized, not a validation error)
+  for (const patch of [{ title: 'Yeni' }, { dueDate: null, startDate: '2026-11-03' }, { assignees: [], labels: [] }, { priority: null, estimateSec: 3600 }, { dueDate: '2026-11-03T09:00:00Z' }]) {
+    const r = await dispatchWire(b, 'updateTask', ['acc', 1, patch]);
+    assert.equal(r.ok === false && r.error.kind, 'unauthorized', JSON.stringify(patch));
+  }
+  assert.deepEqual(await dispatchWire(b, 'updateSubtask', ['acc', 1, 0, 'a', { text: 'b', url: 'x' }]), bad);
+  assert.deepEqual(await dispatchWire(b, 'updateSubtask', ['acc', 1, -1, 'a', { done: true }]), bad);
+  assert.deepEqual(await dispatchWire(b, 'addDependency', ['acc', 5, 5]), bad);
+});
