@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { createWireBackend, type BackendMethod, type PickedFile, type RoutedTarget, type WireResult } from '@workhub-devices/core';
 import { WorkhubApp, type PlatformServices } from '@workhub-devices/features';
 import { createVoiceRecorder, playAudio } from './voice';
+import identity from '../../../../config/app-identity.json';
 
 declare global {
   interface Window {
@@ -32,7 +33,7 @@ const platform: PlatformServices = {
   playAudio,
   onForegroundRoute: (t) => bridge.setForeground(t),
   subscribeRoutes: (cb) => bridge.onRoute(cb),
-  appVersion: '0.1.0',
+  appVersion: identity.version,
 };
 
 createRoot(document.getElementById('root')!).render(<WorkhubApp backend={backend} platform={platform} />);

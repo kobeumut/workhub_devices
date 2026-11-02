@@ -5,6 +5,8 @@
 //      timesheet for the review step (display name WH_SMOKE_SUBJECT, default "Carol") and two
 //      pending requests to WH_A_USER. Optional WH_B_USER/WH_B_PASS (manager of WH_A_USER): seeds two
 //      open requests to WH_C_USER that WH_A_USER manages (convert / resolve).
+// Optional WH_SMOKE_BIN: run a packaged build instead of the dev tree, e.g.
+//      release/workhub-<version>-x86_64.AppImage or the deb's /opt/Workhub/workhub (GENE-59).
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,7 +80,8 @@ if (process.env.WH_B_USER && process.env.WH_B_PASS && process.env.WH_C_USER) {
   }
 }
 const profile = mkdtempSync(join(tmpdir(), 'workhub-smoke-'));
-const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platform=headless', '--disable-gpu', '--no-sandbox'], {
+const bin = process.env.WH_SMOKE_BIN ? resolve(process.env.WH_SMOKE_BIN) : electron;
+const child = spawn(bin, [...(process.env.WH_SMOKE_BIN ? [] : ['.']), `--user-data-dir=${profile}`, '--ozone-platform=headless', '--disable-gpu', '--no-sandbox'], {
   env: {
     ...process.env,
     WORKHUB_SMOKE_OUT: out,

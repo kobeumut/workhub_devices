@@ -1,7 +1,16 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
 import { colors, font, space } from './theme';
 import { describeError, t } from './i18n';
+
+/**
+ * KeyboardAvoidingView behaviour per platform. Only iOS uses it: on Android (edge-to-edge is
+ * mandatory from Android 15/16, so `adjustResize` no longer shrinks the window) the mobile shell
+ * pads the whole app by the IME inset once (`apps/mobile/src/keyboard.ts`). KAV on Android
+ * measured its parent-relative frame and under-shot by the header/status-bar offset, so the
+ * composer sat partly under the keyboard. Desktop (RN Web) has no on-screen keyboard.
+ */
+export const keyboardAvoidBehavior: 'padding' | undefined = Platform.OS === 'ios' ? 'padding' : undefined;
 
 export function Button({ title, onPress, kind = 'primary', disabled, busy, accessibilityHint, accessibilityLabel }: {
   title: string;

@@ -2,8 +2,11 @@
   "$comment": "Single, human-approved source for app identity (GENE-48, approved 2026-11-02). Build configs must read from here.",
   "displayName": "Workhub",
   "bundleId": "com.next.workhub",
+  "version": "0.1.0",
+  "$comment_version": "Semver shown in the app and used by Android versionName, desktop packages (AppImage/deb) and user agents. Bump here only.",
   "android": {
     "applicationId": "com.next.workhub",
+    "versionCode": 1,
     "notificationChannels": [
       "chat",
       "workhub",
@@ -17,7 +20,11 @@
     "keychainAccessGroup": "com.next.workhub.shared"
   },
   "desktop": {
-    "appId": "com.next.workhub.desktop"
+    "appId": "com.next.workhub.desktop",
+    "executableName": "workhub",
+    "linuxCategory": "Network;Chat;InstantMessaging;",
+    "maintainer": "kobeumut <kobeumut@users.noreply.github.com>",
+    "homepage": "https://github.com/kobeumut/workhub_devices"
   },
   "push": {
     "transport": "webpush-via-fcm-relay",

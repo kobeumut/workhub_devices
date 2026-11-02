@@ -1,16 +1,21 @@
 import { useEffect, useMemo } from 'react';
-import { Linking, Platform, StatusBar } from 'react-native';
+import { Linking, Platform, StatusBar, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { createDirectBackend, type AccountSummary, type RoutedTarget } from '@workhub-devices/core';
 import { WorkhubApp, type PlatformServices } from '@workhub-devices/features';
 import { native, nativeEvents, parseNativeRoute, plainStore, secretStore } from './native';
 import { accountTag, ensurePush, removePush } from './push';
 import { filesSupported, mobileFileHost, mobileFileServices } from './files';
+import { useAndroidKeyboardPadding } from './keyboard';
+import { configureDevLogs } from './devLogs';
+import identity from '../../../config/app-identity.json';
+
+configureDevLogs();
 
 const backend = createDirectBackend({
   secrets: secretStore,
   plain: plainStore,
-  userAgent: `WorkhubMobile/0.1 (${Platform.OS})`,
+  userAgent: `WorkhubMobile/${identity.version} (${Platform.OS})`,
   // Plain http only for local development builds (emulator → dev server).
   ...(__DEV__ ? { urlOptions: { allowInsecureHttp: true } } : {}),
   onLogout: (a, client) => removePush(a, client),
@@ -29,7 +34,7 @@ export default function App() {
       openExternal: async (url) => {
         await Linking.openURL(url);
       },
-      appVersion: '0.1.0',
+      appVersion: identity.version,
       saveFile: (filename, content, mime) => native.shareFile(filename, content, mime),
       ...mobileFileServices(),
       onAccountsChanged: (accounts) => {
@@ -59,13 +64,16 @@ export default function App() {
     }),
     [],
   );
+  const keyboardPad = useAndroidKeyboardPadding();
   useEffect(() => {
     StatusBar.setBarStyle('dark-content');
   }, []);
   return (
     <SafeAreaProvider>
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'bottom']}>
-        <WorkhubApp backend={backend} platform={platform} />
+        <View style={{ flex: 1, paddingBottom: keyboardPad }}>
+          <WorkhubApp backend={backend} platform={platform} />
+        </View>
       </SafeAreaView>
     </SafeAreaProvider>
   );

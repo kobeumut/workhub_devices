@@ -20,6 +20,16 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     }
     throw new Error(`text not found: ${text}`);
   };
+  /** Like waitText, but scrolls virtualised lists (boards/Gantt grow with every smoke run on the dev server). */
+  const reveal = async (text: string, timeoutMs = 30_000) => {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      if (await js<boolean>(`document.body.innerText.includes(${JSON.stringify(text)})`)) return true;
+      await js(`(() => { for (const el of document.querySelectorAll('div')) if (el.scrollHeight > el.clientHeight + 10 && getComputedStyle(el).overflowY !== 'visible') el.scrollTop += 600; })()`);
+      await sleep(300);
+    }
+    throw new Error(`text not found: ${text}`);
+  };
   const click = (text: string, exact = true) =>
     js<boolean>(`(() => {
       const els = [...document.querySelectorAll('[role=button],[role=tab],[role=checkbox],button')];
@@ -341,7 +351,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     await step('task: create → open detail → comment', async () => {
       if (!(await type('input[aria-label="Yeni görev"]', taskTitle))) throw new Error('new task input');
       if (!(await click('+'))) throw new Error('add task');
-      await waitText(taskTitle, 15_000);
+      await reveal(taskTitle);
       if (!(await click(taskTitle, false))) throw new Error('task row');
       await waitText('Yorumlar', 15_000);
       await type('textarea', 'Masaüstünden yorum');
@@ -383,7 +393,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('To Do', 20_000);
       if (!(await click('Gantt'))) throw new Error('gantt tab');
       await waitText('Zaman çizelgesi', 20_000);
-      await waitText(editedTitle, 15_000);
+      await reveal(editedTitle);
       const row = await js<string | null>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').startsWith(${JSON.stringify(editedTitle)})); return el ? el.getAttribute('aria-label') : null; })()`);
       if (!row || !row.includes('Kilometre taşı')) throw new Error(`gantt row label: ${row}`);
       await shot('19-gantt');
@@ -471,8 +481,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await until(() => type('input[aria-label="Başlık (boş = Card list)"]', 'Smoke listesi 2'), 'edit title');
       if (!(await click('Kaydet'))) throw new Error('save widget');
       await waitText('Widget kaydedildi.', 15_000);
-      if (!(await click("Smoke listesi 2: widget'ı kaldır"))) throw new Error('remove widget');
-      if (!(await click('Evet, kaldır'))) throw new Error('confirm remove');
+      await until(() => click("Smoke listesi 2: widget'ı kaldır"), 'remove widget');
+      await until(() => click('Evet, kaldır'), 'confirm remove');
       await waitText('Widget kaldırıldı.', 15_000);
       if (!(await click('Sil'))) throw new Error('delete dashboard');
       if (!(await click('Evet, sil'))) throw new Error('confirm delete');
@@ -816,6 +826,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         await click('İşler');
         await sleep(500);
         if (!(await click('Projeler'))) throw new Error('projects tab');
+        // The project list is virtualised and grows with every smoke run: scroll it into view first.
+        await reveal(`${projectTitle} (yeni ad)`);
         await until(() => click(`${projectTitle} (yeni ad)`, false), 'project row');
         await waitText('To Do', 20_000);
         const linkTask = `Hedef görevi ${stamp}`;
