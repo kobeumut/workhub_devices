@@ -7,6 +7,7 @@ import { colors, font, space } from './theme';
 import { describeError, formatDate, t } from './i18n';
 import { DependencySection, SubtaskSection, TaskEditor } from './taskEdit';
 import { TaskGoalsSection } from './goals';
+import { TaskWorkflowSection } from './workflows';
 import { CreateProjectForm, ProjectAdminPanel } from './projectAdmin';
 import { ActivityView, GanttView } from './views';
 
@@ -319,6 +320,7 @@ export function TaskScreen({ accountId, cardId, onBack, timeEnabled, goalsEnable
         <SubtaskSection accountId={accountId} task={task} canEdit={canEdit} onChanged={changed} />
         {project ? <DependencySection accountId={accountId} task={task} board={project} tasks={board.data?.tasks ?? []} canEdit={canEdit} onChanged={changed} /> : null}
         {goalsEnabled ? <TaskGoalsSection accountId={accountId} cardId={cardId} /> : null}
+        <TaskWorkflowSection key={`wf-${task.done ?? 'open'}`} accountId={accountId} cardId={cardId} />
         <View style={card}>
           <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
             {t.assignees}

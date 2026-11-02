@@ -17,6 +17,11 @@ import {
   type CardGoal, type GoalCheckin, type GoalCheckinInput, type GoalCheckinResult, type GoalDetail, type GoalInput, type GoalListFilter, type GoalPatch, type GoalTarget, type GoalTargetInput, type GoalTargetPatch,
   type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
+import {
+  workflowsApi, workflowRoleAtLeast, stepActions, isActionableStep, WORKFLOW_CATEGORIES, WORKFLOW_ID_RE, WORKFLOW_LIMITS,
+  type WorkflowDetail, type WorkflowGraph, type WorkflowHandoff, type WorkflowHandoffInput, type WorkflowInput, type WorkflowPatch, type WorkflowRun,
+  type WorkflowSample, type WorkflowStartInput, type WorkflowSummary,
+} from './workflows';
 
 /**
  * The single domain API every UI talks to. It is implemented once here ("direct", used by the
@@ -168,6 +173,31 @@ export interface Backend {
   /** Cards behind a widget (optionally one distribution group), 50 per page. */
   dashboardDrilldown(accountId: AccountId, dashboardId: number, widgetId: number, options: DrilldownOptions): Promise<DrilldownPage>;
   dashboardCsv(accountId: AccountId, dashboardId: number, widgetId: number, filters: DashboardFilter | null): Promise<{ filename: string; csv: string }>;
+
+  /** Workflows (gate: `modules.projects`, fail closed; the server re-checks the object ACL and Deck access). */
+  workflows(accountId: AccountId): Promise<{ workflows: WorkflowSummary[]; pendingHandoffs: number }>;
+  /** Built-in starting points (no lists / people) and the placeholder names. */
+  workflowSamples(accountId: AccountId): Promise<{ items: WorkflowSample[]; placeholders: string[] }>;
+  workflow(accountId: AccountId, workflowId: number): Promise<WorkflowDetail>;
+  workflowCreate(accountId: AccountId, input: WorkflowInput, idempotencyKey: string): Promise<WorkflowDetail | null>;
+  /** Needs `edit` on the CURRENT template (fresh read); version CAS on the server. */
+  workflowUpdate(accountId: AccountId, workflowId: number, patch: WorkflowPatch): Promise<WorkflowDetail | null>;
+  /** Needs `manage`; refused when the template changed since `version` (the server has no CAS on delete). */
+  workflowDelete(accountId: AccountId, workflowId: number, version: number): Promise<void>;
+  /** Template must be enabled and have a first step (fresh read). */
+  workflowStart(accountId: AccountId, workflowId: number, input: WorkflowStartInput, idempotencyKey: string): Promise<WorkflowRun | null>;
+  /** Last 50 runs of a template, newest first. */
+  workflowRuns(accountId: AccountId, workflowId: number): Promise<WorkflowRun[]>;
+  workflowRun(accountId: AccountId, runId: number): Promise<WorkflowRun>;
+  /** Needs `canManage` on the CURRENT run (starter or workflow editor) and a running run. */
+  workflowCancel(accountId: AccountId, runId: number, version: number): Promise<WorkflowRun | null>;
+  /** Steps waiting for this user (hand-offs and failed steps to retry). */
+  workflowHandoffs(accountId: AccountId): Promise<WorkflowHandoff[]>;
+  /** Pending hand-offs that stem from one card (shown after completing it). */
+  cardWorkflowHandoffs(accountId: AccountId, cardId: number): Promise<WorkflowHandoff[]>;
+  /** Hand over a pending step / retry a failed one; needs `canAct` on the CURRENT run's step. */
+  workflowHandoff(accountId: AccountId, runId: number, stepId: number, input: WorkflowHandoffInput, idempotencyKey: string): Promise<WorkflowRun | null>;
+  workflowSkip(accountId: AccountId, runId: number, stepId: number, reason: string): Promise<WorkflowRun | null>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -311,6 +341,28 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     if (!dashboardRoleAtLeast(d.role, need)) throw new OcsError('forbidden', 403, undefined, undefined, need === 'manage' ? 'DASHBOARD_MANAGE_REQUIRED' : 'DASHBOARD_EDIT_REQUIRED');
     return { c, d };
   };
+  /** Role gate on the CURRENT template (fresh detail): graph/header writes need `edit`, delete `manage`. */
+  const workflowFor = async (id: AccountId, workflowId: number, need: 'view' | 'edit' | 'manage') => {
+    const c = await projectsClient(id);
+    const w = await workflowsApi.get(c, workflowId);
+    if (!workflowRoleAtLeast(w.role, need)) throw new OcsError('forbidden', 403, undefined, undefined, need === 'manage' ? 'WORKFLOW_MANAGE_REQUIRED' : 'WORKFLOW_EDIT_REQUIRED');
+    return { c, w };
+  };
+  /**
+   * Step gate on the CURRENT run: the step must belong to the run, still wait for a person on a
+   * running run (else 409 WORKFLOW_STEP_HANDLED) and the server must say this viewer can act.
+   */
+  const stepFor = async (id: AccountId, runId: number, stepId: number) => {
+    const c = await projectsClient(id);
+    const run = await workflowsApi.run(c, runId);
+    const step = run.steps.find((s) => s.id === stepId);
+    if (!step) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
+    if (run.state !== 'running' || !isActionableStep(step)) throw new OcsError('conflict', 409, undefined, undefined, 'WORKFLOW_STEP_HANDLED');
+    if (!stepActions(run, step).skip) throw new OcsError('forbidden', 403, undefined, undefined, 'ACTION_FORBIDDEN');
+    return { c, run, step };
+  };
+  const clientError = (code: string) => new OcsError('client', 422, undefined, undefined, code);
+
   const widgetOf = (d: Dashboard, widgetId: number) => {
     const w = d.widgets.find((x) => x.id === widgetId);
     if (!w) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
@@ -712,6 +764,75 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async dashboardCsv(accountId, dashboardId, widgetId, filters) {
       return dashboardsApi.csv(await dashboardClient(accountId), dashboardId, widgetId, filters ?? undefined);
     },
+
+    async workflows(accountId) {
+      return workflowsApi.list(await projectsClient(accountId));
+    },
+    async workflowSamples(accountId) {
+      return workflowsApi.samples(await projectsClient(accountId));
+    },
+    async workflow(accountId, workflowId) {
+      return workflowsApi.get(await projectsClient(accountId), workflowId);
+    },
+    async workflowCreate(accountId, input, idempotencyKey) {
+      const body: WorkflowInput = { ...input, title: input.title.trim() };
+      if (input.description !== undefined) body.description = input.description.trim();
+      if (!body.title) throw clientError('FIELD_REQUIRED');
+      return workflowsApi.create(await projectsClient(accountId), body, idempotencyKey);
+    },
+    async workflowUpdate(accountId, workflowId, patch) {
+      const { c } = await workflowFor(accountId, workflowId, 'edit');
+      return workflowsApi.update(c, workflowId, patch);
+    },
+    async workflowDelete(accountId, workflowId, version) {
+      const { c, w } = await workflowFor(accountId, workflowId, 'manage');
+      if (w.version !== version) throw new OcsError('conflict', 409, undefined, undefined, 'VERSION_CONFLICT');
+      await workflowsApi.remove(c, workflowId);
+    },
+    async workflowStart(accountId, workflowId, input, idempotencyKey) {
+      const { c, w } = await workflowFor(accountId, workflowId, 'view');
+      if (!w.enabled) throw new OcsError('forbidden', 403, undefined, undefined, 'WORKFLOW_DISABLED');
+      const entry = w.graph.start.nodeId ? w.graph.nodes.find((n) => n.id === w.graph.start.nodeId) : undefined;
+      if (!entry) throw clientError('WORKFLOW_NO_ENTRY');
+      if (input.cardId === undefined && entry.stackId === null) throw clientError('WORKFLOW_STEP_NO_LIST');
+      if (input.assigneeUid) {
+        // A fixed step ignores a chosen assignee; refuse instead of silently dropping it.
+        if (entry.assigneeMode !== 'choose' || input.cardId !== undefined) throw clientError('WORKFLOW_ASSIGNEE_FIXED');
+        if (entry.assignees.length && !entry.assignees.includes(input.assigneeUid)) throw clientError('WORKFLOW_ASSIGNEE_NOT_ALLOWED');
+      }
+      return workflowsApi.start(c, workflowId, input, idempotencyKey);
+    },
+    async workflowRuns(accountId, workflowId) {
+      return workflowsApi.runs(await projectsClient(accountId), workflowId);
+    },
+    async workflowRun(accountId, runId) {
+      return workflowsApi.run(await projectsClient(accountId), runId);
+    },
+    async workflowCancel(accountId, runId, version) {
+      const c = await projectsClient(accountId);
+      const run = await workflowsApi.run(c, runId);
+      if (!run.canManage) throw new OcsError('forbidden', 403, undefined, undefined, 'ACTION_FORBIDDEN');
+      if (run.state !== 'running') throw new OcsError('conflict', 409, undefined, undefined, 'WORKFLOW_RUN_FINISHED');
+      return workflowsApi.cancel(c, runId, version);
+    },
+    async workflowHandoffs(accountId) {
+      return workflowsApi.handoffs(await projectsClient(accountId));
+    },
+    async cardWorkflowHandoffs(accountId, cardId) {
+      return workflowsApi.cardHandoffs(await projectsClient(accountId), cardId);
+    },
+    async workflowHandoff(accountId, runId, stepId, input, idempotencyKey) {
+      const { c, step } = await stepFor(accountId, runId, stepId);
+      if (input.assigneeUid) {
+        if (step.node?.assigneeMode !== 'choose') throw clientError('WORKFLOW_ASSIGNEE_FIXED');
+        if (step.node.assignees.length && !step.node.assignees.some((p) => p.uid === input.assigneeUid)) throw clientError('WORKFLOW_ASSIGNEE_NOT_ALLOWED');
+      }
+      return workflowsApi.handoff(c, stepId, input, idempotencyKey);
+    },
+    async workflowSkip(accountId, runId, stepId, reason) {
+      const { c } = await stepFor(accountId, runId, stepId);
+      return workflowsApi.skip(c, stepId, reason.trim());
+    },
   };
 }
 
@@ -733,6 +854,8 @@ export const BACKEND_METHODS = [
   'projectGantt', 'projectActivity', 'workload',
   'dashboards', 'dashboardWidgetTypes', 'dashboard', 'dashboardCreate', 'dashboardUpdate', 'dashboardDelete',
   'dashboardWidgetAdd', 'dashboardWidgetUpdate', 'dashboardWidgetDelete', 'dashboardQuery', 'dashboardDrilldown', 'dashboardCsv',
+  'workflows', 'workflowSamples', 'workflow', 'workflowCreate', 'workflowUpdate', 'workflowDelete', 'workflowStart',
+  'workflowRuns', 'workflowRun', 'workflowCancel', 'workflowHandoffs', 'cardWorkflowHandoffs', 'workflowHandoff', 'workflowSkip',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -959,6 +1082,47 @@ const isGroupKey = (x: unknown) => typeof x === 'string' && x.length > 0 && x.le
 export const isValidDrilldownOptions = (v: unknown): v is DrilldownOptions =>
   isObj(v) && fieldsOk(v as Record<string, unknown>, { groupKey: isGroupKey, cursor: isDrillCursor, filters: isValidDashboardFilter }, []);
 
+// ---- Workflow wire validation: the server's graph shape and limits (`Graph`, `WorkflowService`) ----
+const L = WORKFLOW_LIMITS;
+const isWfId = (x: unknown) => typeof x === 'string' && WORKFLOW_ID_RE.test(x);
+const isIdOrNull = (x: unknown) => x === null || isInt(x);
+const isCoord = (x: unknown) => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= L.coord;
+const isWfUid = (x: unknown) => typeof x === 'string' && x.trim().length > 0 && x.length <= 64 && !/[\u0000-\u001f\u007f]/.test(x);
+const isNode = (v: unknown) => isObj(v) && fieldsOk(v as Record<string, unknown>, {
+  id: isWfId, type: (x) => x === 'task', label: isTitle(L.label), title: isStr(L.stepTitle), description: isStr(L.stepDescription),
+  stackId: isIdOrNull, boardId: isIdOrNull, assigneeMode: (x) => x === 'fixed' || x === 'choose',
+  assignees: (x) => Array.isArray(x) && x.length <= L.assignees && x.every(isWfUid) && new Set(x).size === x.length,
+  dueDays: (x) => x === null || (Number.isInteger(x) && (x as number) >= 0 && (x as number) <= L.dueDays), x: isCoord, y: isCoord,
+}, ['id', 'label']);
+const isEdge = (v: unknown) => isObj(v) && fieldsOk(v as Record<string, unknown>, { id: isWfId, from: isWfId, to: isWfId, mode: (x) => x === 'auto' || x === 'manual' }, ['id', 'from', 'to', 'mode']);
+const isStart = (v: unknown) => isObj(v) && fieldsOk(v as Record<string, unknown>, {
+  mode: (x) => x === 'manual' || x === 'auto', nodeId: (x) => x === null || isWfId(x), stackId: isIdOrNull, boardId: isIdOrNull, x: isCoord, y: isCoord,
+}, ['mode']);
+/** Shape + referential checks only; graph rules (loops, auto → choose, lists) stay with the server. */
+export const isValidWorkflowGraph = (v: unknown): v is WorkflowGraph => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (!hasOnly(o, ['start', 'nodes', 'edges']) || !isStart(o.start) || !Array.isArray(o.nodes) || !Array.isArray(o.edges)) return false;
+  if (o.nodes.length > L.nodes || o.edges.length > L.edges || !o.nodes.every(isNode) || !o.edges.every(isEdge)) return false;
+  const ids = new Set((o.nodes as Array<{ id: string }>).map((n) => n.id));
+  const edgeIds = new Set((o.edges as Array<{ id: string }>).map((e) => e.id));
+  const start = o.start as { nodeId?: string | null };
+  return ids.size === o.nodes.length && edgeIds.size === o.edges.length
+    && (o.edges as Array<{ from: string; to: string }>).every((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to)
+    && (start.nodeId === undefined || start.nodeId === null || ids.has(start.nodeId));
+};
+const isCategory = (x: unknown) => (WORKFLOW_CATEGORIES as readonly unknown[]).includes(x);
+const isDueDay = (x: unknown) => x === null || isCalendarDay(x);
+export const isValidWorkflowInput = (v: unknown): v is WorkflowInput =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { title: isTitle(L.title), description: isStr(L.description), category: isCategory, graph: isValidWorkflowGraph }, ['title']);
+export const isValidWorkflowPatch = (v: unknown): v is WorkflowPatch =>
+  isObj(v) && Object.keys(v as object).length > 1
+  && fieldsOk(v as Record<string, unknown>, { version: isVersion, title: isTitle(L.title), description: isStr(L.description), category: isCategory, enabled: (x) => typeof x === 'boolean', graph: isValidWorkflowGraph }, ['version']);
+export const isValidWorkflowStart = (v: unknown): v is WorkflowStartInput =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { title: isStr(L.title), cardId: isInt, assigneeUid: (x) => x === null || isWfUid(x), description: isStr(L.description), dueDate: isDueDay }, []);
+export const isValidHandoffInput = (v: unknown): v is WorkflowHandoffInput =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { assigneeUid: (x) => x === null || isWfUid(x), title: isStr(L.stepTitle), description: isStr(L.stepDescription), dueDate: isDueDay }, []);
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -1049,6 +1213,20 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   dashboardQuery: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidDashboardQuery(a[2]),
   dashboardDrilldown: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidDrilldownOptions(a[3]),
   dashboardCsv: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && (a[3] === null || isValidDashboardFilter(a[3])),
+  workflows: (a) => a.length === 1 && isAccountId(a[0]),
+  workflowSamples: (a) => a.length === 1 && isAccountId(a[0]),
+  workflow: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  workflowCreate: (a) => a.length === 3 && isAccountId(a[0]) && isValidWorkflowInput(a[1]) && isKey(a[2]),
+  workflowUpdate: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidWorkflowPatch(a[2]),
+  workflowDelete: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
+  workflowStart: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isValidWorkflowStart(a[2]) && isKey(a[3]),
+  workflowRuns: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  workflowRun: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  workflowCancel: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
+  workflowHandoffs: (a) => a.length === 1 && isAccountId(a[0]),
+  cardWorkflowHandoffs: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  workflowHandoff: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidHandoffInput(a[3]) && isKey(a[4]),
+  workflowSkip: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isStr(L.skipReason)(a[3]),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */

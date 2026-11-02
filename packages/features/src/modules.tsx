@@ -10,8 +10,9 @@ import { RequestsScreen } from './requests';
 import { GoalsScreen } from './goals';
 import { WorkloadScreen } from './views';
 import { DashboardsScreen } from './dashboards';
+import { WorkflowsScreen } from './workflows';
 
-type Section = 'projects' | 'workload' | 'dashboards' | 'time' | 'requests' | 'goals' | 'more';
+type Section = 'projects' | 'workload' | 'workflows' | 'dashboards' | 'time' | 'requests' | 'goals' | 'more';
 
 /** Workhub home: every enabled module, gated per user by the Workhub bootstrap (fail closed). */
 export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, onOpenProject, onOpenTask, version }: {
@@ -27,6 +28,7 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
     [
       ['projects', 'Projeler', workhub.modules.projects],
       ['workload', 'İş yükü', workhub.modules.projects],
+      ['workflows', 'İş akışları', workhub.modules.projects],
       ['dashboards', 'Dashboard', workhub.modules.dashboard],
       ['time', 'Zaman', workhub.modules.time],
       ['requests', 'Talepler', workhub.modules.requests],
@@ -46,6 +48,7 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
       </ScrollView>
       {section === 'projects' ? <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} onOpen={onOpenProject} /> : null}
       {section === 'workload' ? <WorkloadScreen accountId={accountId} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
+      {section === 'workflows' ? <WorkflowsScreen accountId={accountId} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
       {section === 'dashboards' ? <DashboardsScreen accountId={accountId} projectsEnabled={workhub.modules.projects} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
       {section === 'time' ? <TimeScreen accountId={accountId} canReview={workhub.permissions.canViewTeamReport} /> : null}
       {section === 'requests' ? <RequestsScreen accountId={accountId} timeEnabled={workhub.modules.time} /> : null}
@@ -59,7 +62,6 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
 export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; workhub: WorkhubBootstrap }) {
   const { platform } = useServices();
   const items: Array<[string, string, string, boolean]> = [
-    ['İş akışları', 'workflows', 'Şablonlar, çalıştırmalar, devir', workhub.modules.projects],
     ['Zaman: görev bağlama', 'time', 'Kayda görev bağlama', workhub.modules.time],
     ['AI', 'ai', 'Öneri ve taslaklar', workhub.modules.ai],
     ['Yönetim', 'settings', 'Modül, iş yükü, zaman politikası, AI sağlayıcı', workhub.user.isAdmin],
