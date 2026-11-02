@@ -64,6 +64,20 @@ Sözleşme `nextcloud_workhub@a359a4c` `GoalController`, `GoalService`, `GoalPro
 | **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 20/20. Yeni adımlar: "Hedef → Para hedef değeri ekle (1000,50 TRY) → 1,234 check-in istemcide reddedilir → +250,25 artış (not ile) → Geçmiş → Arşivle (check-in gizli) → Yeniden etkinleştir", "Proje → yeni görev → Hedefler → Hedefe bağla → listede ilerlemeyle → Bağlantıyı kaldır", "Sahipliği devret → kişi ara (Bob) → Devret → Sahip: Bob · Rolünüz: yönetir". Sunucu kontrolü: `owner=bob callerRole=manage targets=currency+task current=250.25` |
 | Android | — | Bu dilimde çalıştırılmadı: bağlı cihaz/çalışan emülatör yok (yeni emülatör oluşturulmaz). Değişiklik yalnız ortak RN/TS; native kod yok; mobil typecheck temiz |
 
+## GENE-53 — Gantt, etkinlik akışı ve iş yükü matrisi (2026-11-02)
+
+Sözleşme `nextcloud_workhub@a359a4c` `ProjectController::gantt/activity`, `ProjectViewService::board`, `ActivityService::stream`, `WorkloadController`, `WorkloadService::matrix`, `WorkloadCalculator`, `DependencyService` kodundan okundu; yanıt şekilleri canlı sunucuda doğrulandı. Workhub reposu değişmedi. Web'in AGPL Gantt kodu kopyalanmadı; bağımlılık kuralları protokol anlamıyla yeniden yazıldı.
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit` | core 75/75 (yeni 6: takvim günü aritmetiği + hafta başlangıcı; Gantt zamanlaması — çubuk/kilometre taşı/tarihsiz, bitişten sonraki başlangıç kırpılır, arşiv gizli, aralık ve çubuk oranı; bağımlılık kuralları bitiş→başlangıç / başlangıç→başlangıç / bitiş→bitiş + gecikme, açık öncül engeller, bilinmeyen öncül atlanır; etkinlik sayfa birleştirme tekrar yok, iş yükü hücre durumları; IPC — tür listesi, bilinmeyen alan, ters/uzun aralık, takvimde olmayan gün, imleç karakter kümesi, tekrarlı pano kimliği, virgüllü kişi kimliği; Backend — modül kapalıyken istek yok `PROJECTS_DISABLED`, sorgu parametreleri birebir), relay 8/8; typecheck temiz (mobil dahil) |
+| Canlı API | `npm run smoke:views -w @workhub-devices/core` | 6/6: proje + 3 görev + bitiş→başlangıç bağımlılığı; Gantt yükünde `dependsOn`, `estimateSec`, bağımlılık türü/gecikme, istemci zamanlaması 2 planlı + 1 tarihsiz + 1 çakışma, aralık Pzt–Cum; etkinlik 9 olay 5 sayfada (`limit=2`), tekrar yok, yeniden eskiye, tek sayfayla aynı küme, tür filtreleri (`subtasks`, `status`), arama, geçersiz imleç 422 `INVALID_CURSOR`, bozuk tarih 422 `INVALID_DATE`; iş yükü — 6 sa / 3 iş günü + 4 sa / 4 iş günü → Pzt 2 sa, Sal 3 sa, Cum 1 sa, toplam 10 sa, Cumartesi kapasitesi 0, pano kısıtı, kendi gerçekleşen süresi görünür; ters aralık 422 `INVALID_DATE_RANGE`, 121 gün 422 `RANGE_TOO_LARGE`; üye olmayan B: Gantt/etkinlik 404, iş yükü boş; C (modül kapalı) 403 `PROJECTS_DISABLED` |
+| **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 22/22. Yeni adımlar: "Proje → Gantt → düzenlenen görevin satır etiketi 'Kilometre taşı' → Etkinlik → 'başlığı değiştirdi' → Alt işler filtresi → Tümü → Daha eski" ve "İş yükü → tablo 9 sütun başlığı (kişi + 7 gün + toplam), hücre etiketinde 'planlanan' → 2 hafta = 16 sütun → hücre → günün görevleri → Diğer'de Gantt/iş yükü web bağlantısı yok" |
+| Erişilebilirlik düzeltmesi | masaüstü smoke | RN Web'de `role="cell"` `accessibilityRole="button"`'u eziyordu (hücre düğme olarak duyulmuyordu); hücre artık `cell` içinde ayrı `button` |
+| Android | `npx react-native bundle --platform android --dev false` | Üretim JS paketi hatasız oluştu ve yeni ekranları içeriyor. Uygulama emülatörde çalıştırılmadı: çalışan emülatör/bağlı cihaz yoktu (yeni emülatör oluşturulmadı); değişiklik yalnız ortak RN/TS, native kod yok |
+| Yan düzeltme | birim | `isValidLocalDate('2026-02-30')` `RangeError` fırlatıyordu (Zaman formu çökerdi); artık `false` döner |
+| Sunucu notu (Gap değil) | `smoke:views` | `views/activity?from=2026-13-01` 422 yerine taşarak kabul ediliyor; istemci IPC'de takvimde olmayan günü reddeder. Workhub reposu değiştirilmedi |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.

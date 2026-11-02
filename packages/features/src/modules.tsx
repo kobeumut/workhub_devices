@@ -8,21 +8,24 @@ import { colors, space } from './theme';
 import { TimeScreen } from './time';
 import { RequestsScreen } from './requests';
 import { GoalsScreen } from './goals';
+import { WorkloadScreen } from './views';
 
-type Section = 'projects' | 'time' | 'requests' | 'goals' | 'more';
+type Section = 'projects' | 'workload' | 'time' | 'requests' | 'goals' | 'more';
 
 /** Workhub home: every enabled module, gated per user by the Workhub bootstrap (fail closed). */
-export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, onOpenProject, version }: {
+export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, onOpenProject, onOpenTask, version }: {
   version?: number;
   accountId: AccountId;
   serverBase: ServerBase;
   workhub: WorkhubBootstrap;
   selectedProject?: number;
   onOpenProject: (p: Pick<ProjectSummary, 'id' | 'title'>) => void;
+  onOpenTask?: (cardId: number) => void;
 }) {
   const sections = (
     [
       ['projects', 'Projeler', workhub.modules.projects],
+      ['workload', 'İş yükü', workhub.modules.projects],
       ['time', 'Zaman', workhub.modules.time],
       ['requests', 'Talepler', workhub.modules.requests],
       ['goals', 'Hedefler', workhub.modules.goals],
@@ -40,6 +43,7 @@ export function WorkhubHome({ accountId, serverBase, workhub, selectedProject, o
         ))}
       </ScrollView>
       {section === 'projects' ? <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} onOpen={onOpenProject} /> : null}
+      {section === 'workload' ? <WorkloadScreen accountId={accountId} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
       {section === 'time' ? <TimeScreen accountId={accountId} canReview={workhub.permissions.canViewTeamReport} /> : null}
       {section === 'requests' ? <RequestsScreen accountId={accountId} timeEnabled={workhub.modules.time} /> : null}
       {section === 'goals' ? <GoalsScreen accountId={accountId} /> : null}
@@ -53,8 +57,6 @@ export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; wo
   const { platform } = useServices();
   const items: Array<[string, string, string, boolean]> = [
     ['Dashboard\'lar ve widget\'lar', 'dashboards', 'Widget sorguları, drilldown, CSV', workhub.modules.dashboard],
-    ['İş yükü', 'workload', 'Ekip kapasite matrisi', workhub.modules.projects],
-    ['Gantt ve etkinlik', 'projects', 'Proje Gantt ve etkinlik akışı', workhub.modules.projects],
     ['İş akışları', 'workflows', 'Şablonlar, çalıştırmalar, devir', workhub.modules.projects],
     ['Zaman: görev bağlama ve panolar', 'time', 'Kayda görev bağlama, zaman widget\'ları', workhub.modules.time],
     ['Hedef widget\'ları', 'dashboards', 'Dashboard\'da hedef ilerleme widget\'ı', workhub.modules.goals && workhub.modules.dashboard],

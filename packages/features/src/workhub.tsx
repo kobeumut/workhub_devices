@@ -8,6 +8,7 @@ import { describeError, formatDate, t } from './i18n';
 import { DependencySection, SubtaskSection, TaskEditor } from './taskEdit';
 import { TaskGoalsSection } from './goals';
 import { CreateProjectForm, ProjectAdminPanel } from './projectAdmin';
+import { ActivityView, GanttView } from './views';
 
 const PRIORITY: Record<string, string> = { urgent: 'Acil', high: 'Yüksek', normal: 'Normal', low: 'Düşük' };
 const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -67,6 +68,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged 
   const [err, setErr] = useState<unknown>();
   const [moving, setMoving] = useState<Task | null>(null);
   const [managing, setManaging] = useState(false);
+  const [view, setView] = useState<'board' | 'gantt' | 'activity'>('board');
   const board = s.data as BoardPayload | undefined;
   const canEdit = board?.project.permissions.edit ?? false;
   // Settings are offered only for permissions the server granted (fail closed until the board loads).
@@ -118,6 +120,23 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged 
           ) : undefined
         }
       />
+      <View accessibilityRole="tablist" style={{ flexDirection: 'row', borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.bg }}>
+        {(
+          [
+            ['board', 'Pano'],
+            ['gantt', 'Gantt'],
+            ['activity', 'Etkinlik'],
+          ] as const
+        ).map(([key, label]) => (
+          <Pressable key={key} accessibilityRole="tab" accessibilityState={{ selected: view === key }} onPress={() => setView(key)} style={{ paddingHorizontal: space(4), paddingVertical: space(3), borderBottomWidth: 2, borderColor: view === key ? colors.primary : 'transparent' }}>
+            <Text style={{ color: view === key ? colors.primary : colors.muted, fontWeight: view === key ? '700' : '400' }}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {view === 'gantt' ? <GanttView accountId={accountId} boardId={project.id} onOpenTask={onOpenTask} /> : null}
+      {view === 'activity' ? <ActivityView accountId={accountId} boardId={project.id} onOpenTask={onOpenTask} /> : null}
+      {view === 'board' ? (
+      <>
       <ErrorBanner error={s.error ?? err} onRetry={s.reload} />
       {managing && board && canAdmin ? (
         <ScrollView style={{ flexGrow: 0, maxHeight: '60%' }}>
@@ -176,6 +195,8 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged 
           )}
         />
       )}
+      </>
+      ) : null}
     </View>
   );
 }

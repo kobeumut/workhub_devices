@@ -502,7 +502,11 @@ export interface TimeEntryForm {
 export type TimeFormError = 'date_invalid' | 'time_invalid' | 'duration_invalid' | 'too_long' | 'description_required' | 'description_too_long';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-export const isValidLocalDate = (d: string) => DATE_RE.test(d) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d);
+export const isValidLocalDate = (d: string) => {
+  if (!DATE_RE.test(d)) return false;
+  const t = Date.parse(`${d}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().startsWith(d);
+};
 
 /** Offset (minutes, east positive) of `zone` at the UTC instant `ms`, via Intl (no tz database copy). */
 function zoneOffsetMinutes(zone: string, ms: number): number {
@@ -1043,4 +1047,278 @@ export function buildTaskPatch(task: TaskDetail, labels: ProjectLabel[], form: T
   }
   if (!sameSet(form.assignees, base.assignees)) patch.assignees = [...new Set(form.assignees)];
   return { patch };
+}
+
+// ---- Project views: Gantt, activity stream; workload matrix ------------------------
+// Contract: Workhub ProjectController::gantt (= board view + dependencies), ::activity
+// (ActivityService::stream) and WorkloadController::index (WorkloadService::matrix).
+
+export const DEPENDENCY_TYPES = ['finish_to_start', 'start_to_start', 'finish_to_finish'] as const;
+export type DependencyType = (typeof DEPENDENCY_TYPES)[number];
+
+export interface GanttDependency {
+  id: number;
+  predecessorId: number;
+  successorId: number;
+  type: DependencyType;
+  lagDays: number;
+}
+
+export interface GanttTask extends Task {
+  estimateSec: number | null;
+  /** Predecessor ids (tasks this one waits for). */
+  dependsOn: number[];
+}
+
+export interface GanttPayload extends Omit<BoardPayload, 'tasks'> {
+  tasks: GanttTask[];
+  dependencies: GanttDependency[];
+  generatedAt: string;
+}
+
+export const ACTIVITY_TYPES = ['all', 'status', 'time', 'goal', 'subtasks', 'comments'] as const;
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+/** Server page size limit (`limit` 1…100). */
+export const ACTIVITY_PAGE = 30;
+
+export interface ActivityFilter {
+  type: ActivityType;
+  /** Actor uid. */
+  actor?: string;
+  /** Inclusive UTC days (YYYY-MM-DD). */
+  from?: string;
+  to?: string;
+  /** Free-text filter (applied by the server to the returned page). */
+  q?: string;
+}
+
+export interface ActivityEvent {
+  id: string;
+  /** Filter group; Deck field edits come as `update` (only visible under `all`). */
+  type: 'status' | 'time' | 'goal' | 'subtasks' | 'comments' | 'update';
+  /** Deck subject (`card_update_stackId`, …), `time_logged`, `goal.checkin`, `task.subtask.add`, … */
+  kind: string;
+  actor: { uid: string; displayName: string } | null;
+  card: { id: number; title: string; exists: boolean } | null;
+  data: Record<string, unknown>;
+  occurredAt: string;
+}
+
+export interface ActivityPage {
+  events: ActivityEvent[];
+  /** Opaque; null = no older events. */
+  nextCursor: string | null;
+  /** Which sources contributed (Deck activity needs the Activity app; time/goals per viewer). */
+  sources: { deck: boolean; time: boolean; goals: boolean };
+}
+
+export interface WorkloadQuery {
+  /** Inclusive local days in the Workhub reporting zone; at most WORKLOAD_MAX_DAYS. */
+  from: string;
+  to: string;
+  boardIds?: number[];
+  members?: string[];
+}
+export const WORKLOAD_MAX_DAYS = 120;
+
+export interface WorkloadDay {
+  date: string;
+  plannedSec: number;
+  capacitySec: number;
+  /** Null when the viewer may not see this member's time (never shown as zero). */
+  actualSec: number | null;
+  tasks: Array<{ cardId: number; plannedSec: number }>;
+}
+
+export interface WorkloadMember {
+  uid: string;
+  displayName: string;
+  capacitySec: number;
+  plannedSec: number;
+  actualSec: number | null;
+  taskCount: number;
+  overdue: number[];
+  unscheduled: number[];
+  overallocatedDays: number;
+  days: WorkloadDay[];
+}
+
+export interface WorkloadTask {
+  id: number;
+  title: string;
+  boardId: number;
+  boardTitle: string;
+  startDate: string | null;
+  dueDate: string | null;
+  estimateSec: number | null;
+}
+
+export interface WorkloadMatrix {
+  from: string;
+  to: string;
+  today: string;
+  zone: string;
+  weekStart: number;
+  dailyCapacitySec: number;
+  workDays: number[];
+  days: Array<{ date: string; workday: boolean }>;
+  boards: Array<{ id: number; title: string; color: string }>;
+  members: WorkloadMember[];
+  tasks: Record<string, WorkloadTask>;
+  summary: { capacitySec: number; plannedSec: number; actualSec: number | null; overallocatedMembers: number; utilizationBp: number | null };
+  timeVisibleMembers: string[];
+  truncated: boolean;
+}
+
+const activityQuery = (f: ActivityFilter, cursor: string | null, limit: number) => ({
+  type: f.type,
+  ...(f.actor ? { actor: f.actor } : {}),
+  ...(f.from ? { from: f.from } : {}),
+  ...(f.to ? { to: f.to } : {}),
+  ...(f.q?.trim() ? { q: f.q.trim().slice(0, 200) } : {}),
+  ...(cursor ? { cursor } : {}),
+  limit,
+});
+
+export const projectViewsApi = {
+  gantt: (c: OcsClient, boardId: number) => c.get<GanttPayload>(`${BASE}/projects/${id(boardId)}/views/gantt`),
+  /** Newest first. A page may hold more than `limit` items (all events of the boundary second are kept). */
+  activity: (c: OcsClient, boardId: number, f: ActivityFilter, cursor: string | null = null, limit = ACTIVITY_PAGE) =>
+    c.get<ActivityPage>(`${BASE}/projects/${id(boardId)}/views/activity`, { query: activityQuery(f, cursor, limit) }),
+  workload: (c: OcsClient, q: WorkloadQuery) =>
+    c.get<WorkloadMatrix>(`${BASE}/workload`, {
+      query: {
+        from: q.from,
+        to: q.to,
+        ...(q.boardIds?.length ? { boardIds: q.boardIds.map(posId).join(',') } : {}),
+        ...(q.members?.length ? { members: q.members.join(',') } : {}),
+      },
+    }),
+};
+
+// ---- Gantt scheduling (pure; dates are local calendar days "YYYY-MM-DD") ----
+
+const DAY_MS = 86_400_000;
+const epoch = (d: string) => Math.round(Date.parse(`${d}T00:00:00Z`) / DAY_MS);
+export const addDays = (d: string, n: number) => new Date((epoch(d) + n) * DAY_MS).toISOString().slice(0, 10);
+export const daysBetween = (a: string, b: string) => epoch(b) - epoch(a);
+/** Local calendar day of an ISO instant in the device time zone. */
+export const deviceDay = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+export interface GanttLink {
+  dependency: GanttDependency;
+  /** The other task of the link (predecessor for `waitsFor`, successor for `blocks`). */
+  other: { id: number; title: string; done: boolean };
+  /** The dates of both scheduled tasks break the link rule. */
+  violated: boolean;
+}
+
+export interface GanttRow {
+  task: GanttTask;
+  /** First / last local day, inclusive; null when the task has no due date. */
+  start: string | null;
+  end: string | null;
+  /** Only a due date: a single-day milestone. */
+  milestone: boolean;
+  /** Inclusive length in days (milestone 1). */
+  days: number;
+  done: boolean;
+  overdue: boolean;
+  waitsFor: GanttLink[];
+  blocks: GanttLink[];
+  /** At least one predecessor link is still open (predecessor not done). */
+  blocked: boolean;
+}
+
+export interface GanttSchedule {
+  /** Scheduled rows by start, end, id. */
+  rows: GanttRow[];
+  /** Open tasks without a due date (not placed on the timeline). */
+  unscheduled: GanttRow[];
+  /** First/last visible day, null when nothing is scheduled. */
+  range: { start: string; end: string; days: number } | null;
+  violations: number;
+}
+
+/**
+ * A link is violated when the scheduled dates break its rule:
+ * finish→start: successor starts after the predecessor's last day + lag;
+ * start→start: successor starts no earlier than predecessor start + lag;
+ * finish→finish: successor ends no earlier than predecessor end + lag.
+ * Links with an unscheduled side are never violations.
+ */
+export function linkViolated(dep: GanttDependency, pred: { start: string | null; end: string | null }, succ: { start: string | null; end: string | null }): boolean {
+  if (!pred.start || !pred.end || !succ.start || !succ.end) return false;
+  const lag = dep.lagDays || 0;
+  if (dep.type === 'start_to_start') return daysBetween(addDays(pred.start, lag), succ.start) < 0;
+  if (dep.type === 'finish_to_finish') return daysBetween(addDays(pred.end, lag), succ.end) < 0;
+  return daysBetween(addDays(pred.end, 1 + lag), succ.start) < 0;
+}
+
+export function ganttSchedule(p: Pick<GanttPayload, 'tasks' | 'dependencies'>, today: string, toLocal: (iso: string) => string = deviceDay): GanttSchedule {
+  const tasks = p.tasks.filter((t) => !t.archived);
+  const byId = new Map<number, GanttRow>();
+  for (const task of tasks) {
+    const end = task.dueDate ? toLocal(task.dueDate) : null;
+    let start = end && task.startDate ? toLocal(task.startDate) : end;
+    if (start && end && start > end) start = end;
+    const done = task.done !== null;
+    byId.set(task.id, {
+      task, start, end, milestone: !!end && !task.startDate, days: start && end ? daysBetween(start, end) + 1 : 0,
+      done, overdue: !done && !!end && end < today, waitsFor: [], blocks: [], blocked: false,
+    });
+  }
+  let violations = 0;
+  for (const dep of p.dependencies) {
+    const pred = byId.get(dep.predecessorId);
+    const succ = byId.get(dep.successorId);
+    if (!pred || !succ) continue;
+    const violated = linkViolated(dep, pred, succ);
+    if (violated) violations++;
+    succ.waitsFor.push({ dependency: dep, other: { id: pred.task.id, title: pred.task.title, done: pred.done }, violated });
+    pred.blocks.push({ dependency: dep, other: { id: succ.task.id, title: succ.task.title, done: succ.done }, violated });
+    if (!pred.done) succ.blocked = true;
+  }
+  const all = [...byId.values()];
+  const rows = all.filter((r) => r.start).sort((a, b) => a.start!.localeCompare(b.start!) || a.end!.localeCompare(b.end!) || a.task.id - b.task.id);
+  const unscheduled = all.filter((r) => !r.start && !r.done).sort((a, b) => a.task.order - b.task.order || a.task.id - b.task.id);
+  let range: GanttSchedule['range'] = null;
+  if (rows.length) {
+    const start = rows.reduce((m, r) => (r.start! < m ? r.start! : m), rows[0]!.start!);
+    const end = rows.reduce((m, r) => (r.end! > m ? r.end! : m), rows[0]!.end!);
+    range = { start, end, days: daysBetween(start, end) + 1 };
+  }
+  return { rows, unscheduled, range, violations };
+}
+
+/** Bar position as fractions of the range (0…1), for a decorative timeline. */
+export function ganttBar(row: Pick<GanttRow, 'start' | 'end'>, range: { start: string; days: number }): { left: number; width: number } | null {
+  if (!row.start || !row.end || range.days <= 0) return null;
+  return { left: daysBetween(range.start, row.start) / range.days, width: (daysBetween(row.start, row.end) + 1) / range.days };
+}
+
+/** Append an older page; ids already shown are dropped (stable against re-reads). */
+export function mergeActivity(shown: ActivityEvent[], page: ActivityEvent[]): ActivityEvent[] {
+  const seen = new Set(shown.map((e) => e.id));
+  return [...shown, ...page.filter((e) => !seen.has(e.id))];
+}
+
+export type WorkloadLoad = 'off' | 'free' | 'ok' | 'full' | 'over';
+/** Cell state: non-working day without plan → off; planned > capacity → over; ≥ 85% → full. */
+export function workloadLoad(d: Pick<WorkloadDay, 'plannedSec' | 'capacitySec'>): WorkloadLoad {
+  if (d.capacitySec <= 0) return d.plannedSec > 0 ? 'over' : 'off';
+  if (d.plannedSec > d.capacitySec) return 'over';
+  if (d.plannedSec === 0) return 'free';
+  return d.plannedSec * 100 >= d.capacitySec * 85 ? 'full' : 'ok';
+}
+
+/** Week (weekStart 1 = Monday … 7 = Sunday) containing `day`. */
+export function workloadWeek(day: string, weekStart = 1): { from: string; to: string } {
+  const iso = ((epoch(day) + 3) % 7 + 7) % 7 + 1; // 1 = Monday
+  const back = (iso - weekStart + 7) % 7;
+  const from = addDays(day, -back);
+  return { from, to: addDays(from, 6) };
 }
