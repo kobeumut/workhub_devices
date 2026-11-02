@@ -82,3 +82,51 @@ test('task PATCH over the wire: only known, well-typed fields pass', async () =>
   assert.deepEqual(await dispatchWire(b, 'updateSubtask', ['acc', 1, -1, 'a', { done: true }]), bad);
   assert.deepEqual(await dispatchWire(b, 'addDependency', ['acc', 5, 5]), bad);
 });
+
+test('project management + shares over the wire: strict shapes, unknown keys rejected', async () => {
+  const b = createDirectBackend({ secrets: new Mem(), plain: new Mem(), fetch: scriptedFetch() });
+  const bad = { ok: false, error: { kind: 'client', message: 'invalid arguments' } };
+  const key = '0b6f2c3e-1a2b-4c5d-8e9f-001122334455';
+  const grant = { type: 'user', participant: 'bob', edit: true, share: false, manage: false };
+  for (const [m, args] of [
+    ['createProject', ['acc', '   ', null, key]],
+    ['createProject', ['acc', 'x'.repeat(256), null, key]],
+    ['createProject', ['acc', 'P', 'red', key]],
+    ['createProject', ['acc', 'P', null, 'not a key']],
+    ['renameProject', ['acc', 1, 'x'.repeat(101)]],
+    ['renameProject', ['acc', 0, 'Yeni']],
+    ['addProjectMember', ['acc', 1, { ...grant, type: 'circle' }, key]],
+    ['addProjectMember', ['acc', 1, { ...grant, participant: '' }, key]],
+    ['addProjectMember', ['acc', 1, { ...grant, edit: 'yes' }, key]],
+    ['addProjectMember', ['acc', 1, { ...grant, admin: true }, key]],
+    ['addProjectMember', ['acc', 1, { type: 'user', participant: 'bob' }, key]],
+    ['createStack', ['acc', 1, '', 0]],
+    ['createStack', ['acc', 1, 'Review', -1]],
+    ['renameStack', ['acc', 1, '']],
+    ['principals', ['acc', 'x'.repeat(65)]],
+    ['objectShares', ['acc', 'project', 1]],
+    ['objectShares', ['acc', 'goal', -1]],
+    ['setObjectShares', ['acc', 'goal', 1, [{ principalType: 'user', principalId: 'bob', role: 'owner' }]]],
+    ['setObjectShares', ['acc', 'goal', 1, [{ principalType: 'user', principalId: 'bob', role: 'view', extra: 1 }]]],
+    ['setObjectShares', ['acc', 'goal', 1, { principalType: 'user', principalId: 'bob', role: 'view' }]],
+    ['setObjectShares', ['acc', 'goal', 1, Array.from({ length: 101 }, (_, i) => ({ principalType: 'user', principalId: `u${i}`, role: 'view' }))]],
+  ] as const) {
+    assert.deepEqual(await dispatchWire(b, m, args as unknown as unknown[]), bad, `${m} ${JSON.stringify(args)}`);
+  }
+  for (const [m, args] of [
+    ['createProject', ['acc', 'Proje', '#ff0000', key]],
+    ['createProject', ['acc', 'Proje', null, key]],
+    ['renameProject', ['acc', 1, 'Yeni ad']],
+    ['addProjectMember', ['acc', 1, grant, key]],
+    ['addProjectMember', ['acc', 1, { type: 'group', participant: 'staff', edit: false, share: false, manage: false }, key]],
+    ['createStack', ['acc', 1, 'Review', 3]],
+    ['renameStack', ['acc', 1, 'QA']],
+    ['principals', ['acc', 'bo']],
+    ['objectShares', ['acc', 'goal', 1]],
+    ['setObjectShares', ['acc', 'dashboard', 1, []]],
+    ['setObjectShares', ['acc', 'workflow', 1, [{ principalType: 'group', principalId: 'staff', role: 'edit' }]]],
+  ] as const) {
+    const r = await dispatchWire(b, m, args as unknown as unknown[]);
+    assert.equal(r.ok === false && r.error.kind, 'unauthorized', `${m} ${JSON.stringify(args)}`);
+  }
+});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openTaskFromNotification, workhubApi } from '../src/workhub';
-import { OcsClient } from '../src/ocs';
+import { nextStackOrder, openTaskFromNotification, upsertShare, workhubApi } from '../src/workhub';
+import { OcsClient, OcsError } from '../src/ocs';
 import { normalizeServerUrl } from '../src/serverUrl';
 import { headerOf, json, ocs, scriptedFetch } from './helpers';
 
@@ -82,4 +82,60 @@ test('task form → minimal PATCH; labels keep the priority label; validation', 
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, startDate: '2026-12-01' }), { error: 'date_range' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, estimateHours: '-1' }), { error: 'estimate_invalid' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, estimateHours: '' }), { patch: { estimateSec: null } });
+});
+
+test('project management: bodies, idempotency and client-side guards', async () => {
+  const f = scriptedFetch(
+    json(201, ocs({ id: 8, title: 'P', color: 'ff0000', openCount: 0, doneCount: 0, overdueCount: 0 })),
+    json(200, ocs({ id: 8, title: 'Yeni' })),
+    json(201, ocs({ id: 7 })),
+    json(201, ocs({ id: 25, title: 'Review', order: 3, isDone: false })),
+    json(200, ocs({ id: 25, title: 'QA' })),
+    json(409, ocs({ error: 'PROJECT_MEMBER_EXISTS' }, 409, 'failure')),
+    json(403, ocs({ error: 'ACTION_FORBIDDEN' }, 403, 'failure')),
+  );
+  const c = client(f);
+  assert.equal((await workhubApi.createProject(c, '  P  ', '#ff0000', 'k-1'))!.id, 8);
+  assert.equal(f.calls[0]!.init.method, 'POST');
+  assert.deepEqual(JSON.parse(String(f.calls[0]!.init.body)), { title: 'P', color: '#ff0000' });
+  assert.equal(headerOf(f.calls[0], 'Idempotency-Key'), 'k-1');
+  await workhubApi.renameProject(c, 8, 'Yeni');
+  assert.equal(f.calls[1]!.init.method, 'PATCH');
+  assert.ok(f.calls[1]!.url.includes('/api/v1/projects/8?'));
+  await workhubApi.addProjectMember(c, 8, { type: 'user', participant: 'bob', edit: true, share: false, manage: false }, 'k-2');
+  assert.deepEqual(JSON.parse(String(f.calls[2]!.init.body)), { type: 'user', participant: 'bob', edit: true, share: false, manage: false });
+  assert.ok(f.calls[2]!.url.includes('/projects/8/members'));
+  await workhubApi.createStack(c, 8, 'Review', 3);
+  assert.deepEqual(JSON.parse(String(f.calls[3]!.init.body)), { title: 'Review', order: 3 });
+  await workhubApi.renameStack(c, 25, 'QA');
+  assert.ok(f.calls[4]!.url.includes('/api/v1/stacks/25?'));
+  await assert.rejects(workhubApi.addProjectMember(c, 8, { type: 'user', participant: 'bob', edit: true, share: false, manage: false }), (e: unknown) => e instanceof OcsError && e.kind === 'conflict' && e.errorCode === 'PROJECT_MEMBER_EXISTS');
+  await assert.rejects(workhubApi.renameProject(c, 8, 'x'), (e: unknown) => e instanceof OcsError && e.kind === 'forbidden');
+  // client-side guards: no request is sent
+  await assert.rejects(workhubApi.renameProject(c, 8, '   '));
+  await assert.rejects(workhubApi.renameStack(c, 25, 'x'.repeat(101)));
+  await assert.rejects(workhubApi.createStack(c, 8, 'R', -1));
+  assert.equal(f.calls.length, 7);
+  assert.equal(nextStackOrder([]), 0);
+  assert.equal(nextStackOrder([{ order: 0 }, { order: 2 }, { order: 1 }]), 3);
+});
+
+test('principals and object shares: type whitelist, empty query short-circuits, full replace', async () => {
+  const f = scriptedFetch(
+    json(200, ocs({ principals: [{ principalType: 'user', principalId: 'bob', displayName: 'Bob' }] })),
+    json(200, ocs({ owner: { uid: 'alice', displayName: 'Alice' }, shares: [] })),
+    json(200, ocs({ shares: [{ principalType: 'user', principalId: 'bob', displayName: 'Bob', role: 'view' }] })),
+  );
+  const c = client(f);
+  assert.deepEqual(await workhubApi.principals(c, '   '), []);
+  assert.equal((await workhubApi.principals(c, ' bo '))[0]!.principalId, 'bob');
+  assert.equal(new URL(f.calls[0]!.url).searchParams.get('q'), 'bo');
+  assert.equal((await workhubApi.objectShares(c, 'goal', 1)).owner.uid, 'alice');
+  const list = upsertShare(upsertShare([], { principalType: 'user', principalId: 'bob', displayName: 'Bob' }, 'edit'), { principalType: 'user', principalId: 'bob', displayName: 'Bob' }, 'view');
+  assert.equal(list.length, 1);
+  await workhubApi.setObjectShares(c, 'goal', 1, list);
+  assert.equal(f.calls[2]!.init.method, 'PUT');
+  assert.deepEqual(JSON.parse(String(f.calls[2]!.init.body)), { shares: [{ principalType: 'user', principalId: 'bob', role: 'view' }] });
+  await assert.rejects(workhubApi.objectShares(c, 'project' as never, 1));
+  assert.equal(f.calls.length, 3);
 });

@@ -12,6 +12,14 @@ Gate sütunu `GET /capabilities` → `modules.*` (kullanıcı bazlı, fail-close
 | Modül | Gate / rol | Endpoint'ler | Ekran | Durum | Doğrulama |
 |---|---|---|---|---|---|
 | Projeler listesi | `projects` | `GET /projects` | İşler → Projeler | **Native** | Masaüstü smoke; API smoke |
+| Proje oluştur | `projects` (her modül kullanıcısı; oluşturan `manage`+`share` alır) | `POST /projects` (+Idempotency-Key) | İşler → Projeler → "Yeni proje" | **Native** | `smoke:projects`; masaüstü smoke |
+| Proje yeniden adlandır | board `manage` | `PATCH /projects/{id}` (en çok 100 karakter) | Pano → Yönet → Proje adı | **Native** | `smoke:projects` (B 403); masaüstü smoke |
+| Sütun oluştur / yeniden adlandır | board `manage` | `POST /projects/{id}/stacks` (sona eklenir), `PATCH /stacks/{id}` | Pano → Yönet → Sütunlar | **Native** | `smoke:projects`; masaüstü smoke |
+| Üye ekle (kişi/grup) | board `share`; verilen yetki kendi yetkinizle sınırlı (sunucu kırpar) | `POST /projects/{id}/members`, `GET /principals?q=`; tekrar 409 `PROJECT_MEMBER_EXISTS` | Pano → Yönet → Üye ekle (kişi/grup arama) | **Native** | `smoke:projects`; masaüstü smoke |
+| Üye çıkarma / yetki değiştirme | — | yok | Panelde açıklama | **Gap** (Workhub API'sinde yok) | — |
+| Sütun silme / sıralama, proje arşivleme/silme | — | yok | — | **Gap** (Workhub API'sinde yok) | — |
+| Paylaşımlar (hedef) | nesnede `manage` rolü (sahip veya manage paylaşımı) | `GET/PUT /objects/goal/{id}/shares` (tam liste değişimi) | İşler → Hedefler → Paylaş | **Native** | `smoke:projects` (B 403, geçersiz kullanıcı 422); masaüstü smoke |
+| Paylaşımlar (dashboard, iş akışı) | nesnede `manage` | `GET/PUT /objects/{dashboard,workflow}/{id}/shares` | Ortak `SharesEditor` hazır; ekran o modüllerin native dilimiyle bağlanır | Web fallback (modül ekranı henüz yok) | birim (IPC tip listesi) |
 | Pano (kanban/liste) | `projects`, board `edit` | `GET /projects/{id}/views/kanban` | Pano (sütun bölümleri) | **Native** | Masaüstü smoke |
 | Görev oluştur | `projects`, `edit` | `POST /projects/{id}/tasks` (+Idempotency-Key) | Pano → "Yeni görev" | **Native** | Masaüstü smoke |
 | Görev taşı | `edit` | `POST /tasks/{id}/move` | Pano → "Taşı" (erişilebilir, sürüklemesiz) | **Native** | birim/arayüz |
@@ -40,6 +48,7 @@ Gate sütunu `GET /capabilities` → `modules.*` (kullanıcı bazlı, fail-close
 | İş akışları | `projects` | `/workflows…` | Diğer → web | Web fallback | — |
 | AI | `ai` (varsayılan kapalı) | `/ai/…` | Diğer → web | Web fallback | — |
 | Yönetim | admin | `/admin/…` (parola onayı) | Diğer → web (yalnız admin) | Web fallback (admin parolası uygulamada saklanmaz) | — |
-| Proje/üye/sütun yönetimi | `manage` | `POST /projects`, `/members`, `/stacks` | — | Web fallback; üye silme API'si yok (**Gap**) | API smoke (oluşturma) |
 
-**Sonuç:** Günlük iş akışı native: görev listeleme, oluşturma, açma, taşıma, tamamlama, alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, yorum, atama bildirimleri, zamanlayıcı, talep oluşturma, hedef takibi. Yönetim ve analiz modülleri (dashboard, Gantt, iş yükü, iş akışları, AI, admin) ve düzenleme alt akışları şimdilik web fallback. Bunlar açık iş olarak duruyor ve "tam Workhub native" denmiyor.
+Proje paylaşımı Workhub'da ayrı bir "share" nesnesi değildir: sunucu `objects/{type}` için yalnız `dashboard`, `goal`, `workflow` kabul eder (`ShareController::TYPES`). Projeye erişim üye ekleme ile verilir.
+
+**Sonuç:** Günlük iş akışı native: proje oluşturma/yeniden adlandırma, sütun ve üye yönetimi, hedef paylaşımı, görev listeleme, oluşturma, açma, taşıma, tamamlama, alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, yorum, atama bildirimleri, zamanlayıcı, talep oluşturma, hedef takibi. Yönetim ve analiz modülleri (dashboard, Gantt, iş yükü, iş akışları, AI, admin) ve düzenleme alt akışları şimdilik web fallback. Bunlar açık iş olarak duruyor ve "tam Workhub native" denmiyor.

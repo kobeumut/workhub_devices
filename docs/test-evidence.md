@@ -20,6 +20,15 @@ Sunucu: yerel Docker dev (Nextcloud 35.0.2, Talk 25.0.6, Notifications 8.0.1, Wo
 | **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 10/10: yeni adım "Düzenle → başlık/bitiş/tahmini süre/öncelik kaydet → alt iş ekle + işaretle"; sol paneldeki proje sayacı yenilemeden 4 → 5 |
 | Android | — | Bu dilimde çalıştırılmadı (ortak RN bileşenleri; mobil typecheck temiz) |
 
+## GENE-61 — proje, üye, sütun yönetimi ve paylaşımlar (2026-11-02)
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit` | core 49/49 (yeni: istek gövdeleri, Idempotency-Key, istemci tarafı sınırlar, paylaşım tip listesi; IPC'de bilinmeyen alan/rol/tip reddi), relay 8/8; typecheck temiz (mobil dahil) |
+| Canlı API | `npm run smoke:projects -w @workhub-devices/core` | 9/9: aynı anahtarla iki kez oluşturma → tek proje + varsayılan 3 sütun; yeniden adlandırma; sütun ekle (sona) + yeniden adlandır; kişi/grup arama; üye ekle (kişi + grup), tekrar 409 `PROJECT_MEMBER_EXISTS`, olmayan kullanıcı 422; yalnız `edit` yetkili B için yeniden adlandırma/sütun/üye 403; Projeler kapalı C için `PROJECTS_DISABLED`; hedef paylaşımı GET/PUT, B görür ama yönetemez (403), geçersiz kullanıcı 422 `INVALID_SHARE`, sahip listede yok sayılır |
+| **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 12/12. Yeni adımlar: "Yeni proje → Yönet → yeniden adlandır → sütun ekle + yeniden adlandır → Bob'u üye ekle" ve "Hedefler → Paylaş → `staff` grubu → Kaydet". Sunucu kontrolü: `group:staff=view` |
+| Android | — | Bu dilimde çalıştırılmadı (AVD var ama kapalı; ortak RN bileşenleri, mobil typecheck temiz) |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.

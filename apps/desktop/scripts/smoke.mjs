@@ -12,6 +12,17 @@ const electron = require('electron');
 const out = resolve(process.env.WH_SMOKE_OUT ?? 'smoke-out');
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
+// A goal owned by the smoke user so the share editor has something to manage; removed afterwards.
+const ocs = async (method, path, body) => {
+  const r = await fetch(`${process.env.WH_SERVER}/ocs/v2.php/apps/workhub/api/v1${path}`, {
+    method,
+    headers: { Authorization: `Basic ${Buffer.from(`${process.env.WH_A_USER}:${process.env.WH_A_PASS}`).toString('base64')}`, 'OCS-APIRequest': 'true', Accept: 'application/json', 'Content-Type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  return (await r.json()).ocs?.data;
+};
+const goalTitle = `Masaüstü hedefi ${new Date().toISOString().slice(11, 19)}`;
+const goal = process.env.WH_A_PASS ? await ocs('POST', '/goals', { title: goalTitle }).catch(() => null) : null;
 const profile = mkdtempSync(join(tmpdir(), 'workhub-smoke-'));
 const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platform=headless', '--disable-gpu', '--no-sandbox'], {
   env: {
@@ -21,6 +32,9 @@ const child = spawn(electron, ['.', `--user-data-dir=${profile}`, '--ozone-platf
     WORKHUB_TEST_INSECURE_STORE: '1',
     WORKHUB_SMOKE_SERVER: process.env.WH_SERVER,
     WORKHUB_SMOKE_ROOM: process.env.WH_SMOKE_ROOM ?? '',
+    WORKHUB_SMOKE_MEMBER: process.env.WH_SMOKE_MEMBER ?? 'Bob',
+    WORKHUB_SMOKE_GROUP: process.env.WH_SMOKE_GROUP ?? 'staff',
+    WORKHUB_SMOKE_GOAL: goal?.id ? goalTitle : '',
   },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
@@ -35,6 +49,12 @@ if (existsSync(urlFile)) {
 }
 const code = await new Promise((r) => child.on('exit', r));
 rmSync(profile, { recursive: true, force: true });
+if (goal?.id) {
+  const shares = await ocs('GET', `/objects/goal/${goal.id}/shares`).catch(() => null);
+  console.log(`goal shares on server after UI save: ${(shares?.shares ?? []).map((s) => `${s.principalType}:${s.principalId}=${s.role}`).join(', ') || 'none'}`);
+  const current = await ocs('GET', `/goals/${goal.id}`).catch(() => null);
+  await ocs('DELETE', `/goals/${goal.id}`, { version: current?.version ?? goal.version }).catch(() => null);
+}
 const result = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
 for (const s of result.steps) console.log(`${s.ok ? '✔' : '✘'} ${s.step}${s.note ? ` — ${s.note}` : ''}`);
 process.exitCode = result.steps.every((s) => s.ok) && result.steps.length >= 10 ? 0 : 1;

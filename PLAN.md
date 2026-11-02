@@ -24,7 +24,7 @@ Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış o
 | 1 — temel/auth | `packages/core` + `Backend`; masaüstü (Electron+RNW) ve mobil (RN 0.88) kabukları; Keystore/Keychain/safeStorage; çoklu hesap; logout + revoke | `npm run check`, masaüstü smoke |
 | 2 — Talk | Oda listesi + arama + delta, geçmiş, long-poll, okundu, optimistic gönderim/`referenceId` uzlaştırma, rich-object (HTML'siz). Eksik: reply/edit/delete/reaction UI, dosya/ses notu, oda yönetimi | masaüstü smoke |
 | 3 — bildirim | Inbox + yönlendirme; Android FCM servisi, native çözme, RemoteInput yanıt, kanallar, kilit ekranında gizli içerik; iOS NSE + yanıt (**derlenmedi**); masaüstü bildirim + tepsi, macOS inline yanıt, diğerlerinde odaklı compose | Kotlin RFC testi, push e2e |
-| 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li). GENE-49: görev alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, proje sayaçlarının yenilenmesi | masaüstü smoke, API smoke, `smoke:tasks` |
+| 4 — Workhub | Proje/pano/görev oluştur-aç-taşı-tamamla-yorum, atama bildirimi → görev (ACL'li). GENE-49: görev alan düzenleme, kişi seçicili atama, alt işler, bağımlılıklar, proje sayaçlarının yenilenmesi. GENE-61: proje/sütun/üye yönetimi, hedef paylaşımları | masaüstü smoke, API smoke, `smoke:tasks`, `smoke:projects` |
 | 5 — modüller | Zaman (zamanlayıcı/hafta), Talepler (liste/oluştur), Hedefler (liste) native; diğerleri web fallback | `docs/workhub-modules.md` |
 | 6 — dağıtım | electron-builder ve gradle yapılandırması var; imzalama/mağaza yok | README |
 | 7 — çağrılar | Başlamadı (kapsam onayı gerekli) | — |
@@ -178,7 +178,7 @@ Her satır ayrı küçük PR/dikey dilim olabilir. Tek bir Tasks ekranını tüm
 
 | İş | Kullanıcı akışı / özel kabul |
 |---|---|
-| [ ] Proje yönetimi | Proje/member/stack oluştur-güncelle, kaynak seçimi ve principals, mevcut API'deki share erişimleri. API'de olmayan member remove uydurulmaz. |
+| [x] Proje yönetimi | Proje/member/stack oluştur-güncelle, kaynak seçimi ve principals, mevcut API'deki share erişimleri. API'de olmayan member remove uydurulmaz. **GENE-61:** proje oluştur/yeniden adlandır, sütun oluştur/yeniden adlandır, kişi/grup seçicili üye ekleme, hedef paylaşımları native (`smoke:projects` 9/9, masaüstü smoke 12/12). Üye çıkarma, sütun silme ve proje silme API'de yok (Gap). Dashboard/iş akışı paylaşımı ortak editörle o modüllerin dilimlerinde bağlanacak; kaynak seçimi (`/sources/*`) Hedefler/Dashboard dilimlerinde. |
 | [ ] Gantt / activity / workload | API görünümü, tarihler ve workload filtreleri; büyük dataset/loading/empty/timezone. Karmaşık chart dependency eklemeden erişilebilir ilk görünüm. |
 | [ ] Dashboard | Dashboard/widget CRUD, query/drilldown, kaydetme ve CSV; yetkili filtre/rol; dosya export içerik tipi/indirimi. |
 | [ ] Goals | Goal/target/check-in, ownership transfer, card link/unlink; edit izinleri ve zaman aralıkları. |
