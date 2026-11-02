@@ -72,7 +72,7 @@ export function CreateProjectForm({ accountId, onCreated }: { accountId: Account
 }
 
 /** Debounced user/group search (`GET /principals`). `exclude` hides people who already have access. */
-export function PrincipalPicker({ accountId, onPick, exclude = [], label = t.searchPeople }: { accountId: AccountId; onPick: (p: Principal) => void; exclude?: string[]; label?: string }) {
+export function PrincipalPicker({ accountId, onPick, exclude = [], label = t.searchPeople, usersOnly = false }: { accountId: AccountId; onPick: (p: Principal) => void; exclude?: string[]; label?: string; usersOnly?: boolean }) {
   const { backend } = useServices();
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -81,7 +81,7 @@ export function PrincipalPicker({ accountId, onPick, exclude = [], label = t.sea
     return () => clearTimeout(h);
   }, [q]);
   const s = useAsync(() => backend.principals(accountId, debounced), [accountId, debounced]);
-  const results = (s.data ?? []).filter((p) => !exclude.includes(`${p.principalType}:${p.principalId}`));
+  const results = (s.data ?? []).filter((p) => !exclude.includes(`${p.principalType}:${p.principalId}`) && (!usersOnly || p.principalType === 'user'));
   return (
     <View style={{ marginTop: space(2) }}>
       <TextInput accessibilityLabel={label} placeholder={label} placeholderTextColor={colors.muted} value={q} onChangeText={setQ} autoCapitalize="none" maxLength={64} style={ui.input} />

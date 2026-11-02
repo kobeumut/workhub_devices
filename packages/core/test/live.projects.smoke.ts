@@ -9,7 +9,7 @@
  * Prints no secrets. The project it creates stays (there is no project delete API); the goal is deleted.
  */
 import assert from 'node:assert/strict';
-import { OcsClient, OcsError, normalizeServerUrl, nextStackOrder, upsertShare, workhubApi, workhubModulesApi, type ServerBase } from '../src/index';
+import { OcsClient, OcsError, goalsApi, normalizeServerUrl, nextStackOrder, upsertShare, workhubApi, type ServerBase } from '../src/index';
 
 const env = (k: string) => {
   const v = process.env[k];
@@ -116,7 +116,7 @@ async function main() {
     list = upsertShare(list, { principalType: 'group', principalId: GROUP, displayName: GROUP }, 'edit');
     const saved = await workhubApi.setObjectShares(A, 'goal', goalId, list);
     assert.deepEqual(saved!.shares.map((s) => `${s.principalType}:${s.principalId}=${s.role}`).sort(), [`group:${GROUP}=edit`, `user:${env('WH_B_USER')}=view`].sort());
-    const bGoal = (await workhubModulesApi.goals(B)).find((g) => g.id === goalId);
+    const bGoal = (await goalsApi.list(B)).find((g) => g.id === goalId);
     assert.ok(bGoal, 'B must see the shared goal');
     assert.equal(bGoal.canManage, false);
     assert.equal(await code(workhubApi.objectShares(B, 'goal', goalId)), 'forbidden:ACTION_FORBIDDEN');

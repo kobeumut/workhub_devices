@@ -6,6 +6,7 @@ import { Button, Empty, ErrorBanner, Header, Loading, Row, card, styles as ui } 
 import { colors, font, space } from './theme';
 import { describeError, formatDate, t } from './i18n';
 import { DependencySection, SubtaskSection, TaskEditor } from './taskEdit';
+import { TaskGoalsSection } from './goals';
 import { CreateProjectForm, ProjectAdminPanel } from './projectAdmin';
 
 const PRIORITY: Record<string, string> = { urgent: 'Acil', high: 'Yüksek', normal: 'Normal', low: 'Düşük' };
@@ -180,7 +181,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged 
 }
 
 /** Task detail always comes from a fresh, ACL-checked fetch (never from notification payload). */
-export function TaskScreen({ accountId, cardId, onBack, timeEnabled, onChanged }: { accountId: AccountId; cardId: number; onBack?: () => void; timeEnabled?: boolean; onChanged?: () => void }) {
+export function TaskScreen({ accountId, cardId, onBack, timeEnabled, goalsEnabled, onChanged }: { accountId: AccountId; cardId: number; onBack?: () => void; timeEnabled?: boolean; goalsEnabled?: boolean; onChanged?: () => void }) {
   const { backend } = useServices();
   const s = useAsync(() => backend.openTask(accountId, cardId), [accountId, cardId]);
   const boardId = s.data?.state === 'ok' ? s.data.task.boardId : 0;
@@ -296,6 +297,7 @@ export function TaskScreen({ accountId, cardId, onBack, timeEnabled, onChanged }
         ) : null}
         <SubtaskSection accountId={accountId} task={task} canEdit={canEdit} onChanged={changed} />
         {project ? <DependencySection accountId={accountId} task={task} board={project} tasks={board.data?.tasks ?? []} canEdit={canEdit} onChanged={changed} /> : null}
+        {goalsEnabled ? <TaskGoalsSection accountId={accountId} cardId={cardId} /> : null}
         <View style={card}>
           <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
             {t.assignees}

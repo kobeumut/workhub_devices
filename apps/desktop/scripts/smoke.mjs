@@ -112,6 +112,8 @@ if (goal?.id) {
   const shares = await ocs('GET', `/objects/goal/${goal.id}/shares`).catch(() => null);
   console.log(`goal shares on server after UI save: ${(shares?.shares ?? []).map((s) => `${s.principalType}:${s.principalId}=${s.role}`).join(', ') || 'none'}`);
   const current = await ocs('GET', `/goals/${goal.id}`).catch(() => null);
+  const t = current?.targets?.find((x) => x.type === 'currency');
+  console.log(`goal on server after UI: owner=${current?.owner?.uid ?? '—'} callerRole=${current?.role ?? '—'} targets=${(current?.targets ?? []).map((x) => x.type).join('+') || 'none'} current=${t?.current ?? '—'}`);
   await ocs('DELETE', `/goals/${goal.id}`, { version: current?.version ?? goal.version }).catch(() => null);
 }
 if (process.env.WH_C_USER && process.env.WH_C_PASS) {

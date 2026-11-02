@@ -53,6 +53,17 @@ Sözleşme `nextcloud_workhub@a359a4c` `RequestController`, `RequestService`, `R
 | Erişilebilirlik düzeltmesi | masaüstü smoke | Ortak `Chip` seçimi RN Web'de `accessibilityState` ile DOM'a yansımıyordu (ekran okuyucu seçili durumu duymuyordu); `aria-checked`/`aria-disabled` eklendi ve smoke `aria-checked` ile doğruluyor |
 | Android | — | Bu dilimde çalıştırılmadı (yalnız ortak RN/TS değişikliği, native kod yok; mobil typecheck temiz) |
 
+## GENE-52 — Hedefler: oluştur/düzenle, hedef değerler, check-in, kart bağlama, sahiplik devri (2026-11-02)
+
+Sözleşme `nextcloud_workhub@a359a4c` `GoalController`, `GoalService`, `GoalProgress`, `GoalCalculator` kodundan okundu; yanıt şekilleri (ayrıntı, target, check-in, `cards/{id}/goals`, hata gövdeleri) canlı sunucuda doğrulandı. Workhub reposu değişmedi.
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit` | core 69/69 (yeni 7: ondalık normalizasyonu sunucu biçimi + `scale`; eylemler yalnız rol bayrakları + yaşam döngüsünden; 14 uç için yol/gövde/Idempotency-Key; modül kapalıyken tek çağrı yapılmaz; rol gate'i taze ayrıntıyla — `manage`/`edit`/arşiv reddinde yazma isteği hiç gönderilmez; kart kaldırma güncel target sürümü + yalnız o kart; IPC — tür başına kesin alan kümesi, para birimi yalnız `currency`, ondalık yalnız dize, tekrarlı kart kimliği, sahip değişikliği yalnız devirle), relay 8/8; typecheck temiz (mobil dahil) |
+| Canlı API | `npm run smoke:goals -w @workhub-devices/core` | 9/9: oluştur + başlık/tarih düzenle (eski sürüm 409, geçersiz tarih 422); sayı/para/evet-hayır hedef değer CRUD (boş aralık 422, yanlış türde alan 422); check-in: aynı Idempotency-Key iki kez → tek kayıt, eski sürüm 409, mutlak + evet/hayır, geçmiş, fazla ondalık 422; görevden bağlama → `task` hedef değeri oluşur, kart hedefi listeler, yabancı kullanıcı 404, `task`'a check-in 422; roller: `view` paylaşımı yazamaz (403), `edit` paylaşımı check-in yapar ama devir/silme 403, sahibin projesindeki kartı göremeyen kullanıcı kümeden düşüremez (422 `CARDS_NOT_READABLE`); bağlantı kaldırma (eski sürüm 409); arşivde yazma 409 `GOAL_ARCHIVED` → yeniden etkinleştir; devir (olmayan/kendisi 422, eski sürüm 409) → önceki sahip `manage` korur; silme (eski sürüm 409) → iki kullanıcıda 404 |
+| **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 20/20. Yeni adımlar: "Hedef → Para hedef değeri ekle (1000,50 TRY) → 1,234 check-in istemcide reddedilir → +250,25 artış (not ile) → Geçmiş → Arşivle (check-in gizli) → Yeniden etkinleştir", "Proje → yeni görev → Hedefler → Hedefe bağla → listede ilerlemeyle → Bağlantıyı kaldır", "Sahipliği devret → kişi ara (Bob) → Devret → Sahip: Bob · Rolünüz: yönetir". Sunucu kontrolü: `owner=bob callerRole=manage targets=currency+task current=250.25` |
+| Android | — | Bu dilimde çalıştırılmadı: bağlı cihaz/çalışan emülatör yok (yeni emülatör oluşturulmaz). Değişiklik yalnız ortak RN/TS; native kod yok; mobil typecheck temiz |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.

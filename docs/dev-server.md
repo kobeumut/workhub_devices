@@ -47,6 +47,8 @@ npm run smoke:live -w @workhub-devices/core
 
 Talepler: `npm run smoke:requests -w @workhub-devices/core` (aynı `WH_*`; zincir `carol → alice → bob`).
 
+Hedefler: `npm run smoke:goals -w @workhub-devices/core` (aynı `WH_*`; `bob` Hedefler modülüne erişebilmeli — devir hedefi).
+
 Zaman modülü: `npm run smoke:time -w @workhub-devices/core` (aynı `WH_*` değişkenleri; her koşu ileri tarihli farklı bir haftayı kullanır ve kayıtlarını siler).
 
 ## Push relay uçtan uca testi (dev)

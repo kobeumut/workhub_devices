@@ -171,7 +171,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
     ) : detail?.kind === 'project' ? (
       <BoardScreen key={detail.id} accountId={account.id} project={detail} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'task' ? (
-      <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} onChanged={bumpTasks} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
+      <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} goalsEnabled={!!s.workhub?.modules.goals} onChanged={bumpTasks} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
     ) : null;
 
   const tabs = (

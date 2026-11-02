@@ -6,9 +6,10 @@ import { dismissNotification, listNotifications, type InboxNotification } from '
 import { normalizeServerUrl, type NormalizeOptions, type ServerBase } from './serverUrl';
 import { fetchChat, listRooms, markRead, sendMessage, type ChatFetchResult, type RoomListResult, type TalkMessage } from './talk';
 import {
-  openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, REPORT_STATES,
+  openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, goalsApi, cardSetWithout, REPORT_STATES, GOAL_MAX_SCALE,
   SHARE_OBJECT_TYPES, SHARE_ROLES,
   type CsvScope, type RequestDecision, type RequestEvent, type RequestPage, type RequestReport, type RequestReportFilters, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
+  type CardGoal, type GoalCheckin, type GoalCheckinInput, type GoalCheckinResult, type GoalDetail, type GoalInput, type GoalListFilter, type GoalPatch, type GoalTarget, type GoalTargetInput, type GoalTargetPatch,
   type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
 
@@ -114,7 +115,28 @@ export interface Backend {
   requestResolve(accountId: AccountId, requestId: number, version: number, reason: string, idempotencyKey: string): Promise<WorkRequest | null>;
   requestConvert(accountId: AccountId, requestId: number, version: number, boardId: number, stackId: number, idempotencyKey: string): Promise<WorkRequest | null>;
   requestReport(accountId: AccountId, filters: RequestReportFilters): Promise<RequestReport>;
-  goals(accountId: AccountId): Promise<GoalSummary[]>;
+  /** Goals module (gate: `modules.goals`, fail closed). Default filter: all visible, active. */
+  goals(accountId: AccountId, filter?: GoalListFilter): Promise<GoalSummary[]>;
+  goalDetail(accountId: AccountId, goalId: number): Promise<GoalDetail>;
+  goalCreate(accountId: AccountId, input: GoalInput): Promise<GoalDetail | null>;
+  /** Header fields / archive / reactivate (role gate: `canEdit`). */
+  goalUpdate(accountId: AccountId, goalId: number, patch: GoalPatch): Promise<GoalDetail | null>;
+  /** Role gate: `canManage`. */
+  goalDelete(accountId: AccountId, goalId: number, version: number): Promise<void>;
+  /** Role gate: `canManage`; the new owner must be an enabled user with the Goals module. */
+  goalTransfer(accountId: AccountId, goalId: number, version: number, newOwnerUid: string): Promise<GoalDetail | null>;
+  /** Target / check-in / card-set writes need `canEdit` on an ACTIVE goal (gate, then server re-check). */
+  goalTargetAdd(accountId: AccountId, goalId: number, input: GoalTargetInput): Promise<GoalTarget | null>;
+  goalTargetUpdate(accountId: AccountId, goalId: number, targetId: number, patch: GoalTargetPatch): Promise<GoalTarget | null>;
+  goalTargetDelete(accountId: AccountId, goalId: number, targetId: number, version: number): Promise<void>;
+  goalCheckin(accountId: AccountId, goalId: number, targetId: number, input: GoalCheckinInput, idempotencyKey: string): Promise<GoalCheckinResult | null>;
+  goalCheckins(accountId: AccountId, goalId: number, targetId: number): Promise<GoalCheckin[]>;
+  goalSetCards(accountId: AccountId, goalId: number, targetId: number, version: number, cardIds: number[]): Promise<GoalTarget | null>;
+  /** Goals the card is linked to that the caller may see (404 when the card is not readable). */
+  cardGoals(accountId: AccountId, cardId: number): Promise<CardGoal[]>;
+  cardLinkGoal(accountId: AccountId, cardId: number, goalId: number): Promise<GoalDetail | null>;
+  /** Removes the card from that task target using the target's current version. */
+  cardUnlinkGoal(accountId: AccountId, cardId: number, goalId: number, targetId: number): Promise<GoalTarget | null>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -210,6 +232,27 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       if (!ctx.isManager) throw new OcsError('forbidden', 403, undefined, undefined, 'REQUEST_MANAGER_REQUIRED');
     }
     return c;
+  };
+
+  /** Goals gate (fail closed): the module must be on for this user. */
+  const goalClient = async (id: AccountId): Promise<OcsClient> => {
+    const c = await client(id);
+    const b = await bootstrap(id, c);
+    if (!b.modules.goals) throw new OcsError('forbidden', 403, undefined, undefined, 'GOALS_DISABLED');
+    return c;
+  };
+  /**
+   * Role gate on the CURRENT goal (fresh detail, never a cached list row): `edit` writes need
+   * `canEdit` (and an active goal unless `allowArchived`), `manage` writes need `canManage`.
+   * The server re-checks the ACL and lifecycle on every command.
+   */
+  const goalFor = async (id: AccountId, goalId: number, need: 'edit' | 'manage', allowArchived = false) => {
+    const c = await goalClient(id);
+    const goal = await goalsApi.get(c, goalId);
+    if (need === 'manage' && !goal.canManage) throw new OcsError('forbidden', 403, undefined, undefined, 'GOAL_MANAGE_REQUIRED');
+    if (need === 'edit' && !goal.canEdit) throw new OcsError('forbidden', 403, undefined, undefined, 'GOAL_EDIT_REQUIRED');
+    if (need === 'edit' && !allowArchived && goal.state !== 'active') throw new OcsError('conflict', 409, undefined, undefined, 'GOAL_ARCHIVED');
+    return { c, goal };
   };
 
   return {
@@ -484,8 +527,71 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async requestReport(accountId, filters) {
       return requestsApi.report(await requestClient(accountId), filters);
     },
-    async goals(accountId) {
-      return workhubModulesApi.goals(await client(accountId));
+    async goals(accountId, filter) {
+      return goalsApi.list(await goalClient(accountId), filter);
+    },
+    async goalDetail(accountId, goalId) {
+      return goalsApi.get(await goalClient(accountId), goalId);
+    },
+    async goalCreate(accountId, input) {
+      const body: GoalInput = { title: input.title.trim() };
+      if (input.description?.trim()) body.description = input.description.trim();
+      if (input.dueDate) body.dueDate = input.dueDate;
+      if (!body.title) throw new OcsError('client', 422, undefined, undefined, 'FIELD_REQUIRED');
+      return goalsApi.create(await goalClient(accountId), body);
+    },
+    async goalUpdate(accountId, goalId, patch) {
+      const { c } = await goalFor(accountId, goalId, 'edit', true);
+      return goalsApi.update(c, goalId, patch);
+    },
+    async goalDelete(accountId, goalId, version) {
+      const { c } = await goalFor(accountId, goalId, 'manage');
+      await goalsApi.remove(c, goalId, version);
+    },
+    async goalTransfer(accountId, goalId, version, newOwnerUid) {
+      const { c, goal } = await goalFor(accountId, goalId, 'manage');
+      if (goal.owner.uid === newOwnerUid) throw new OcsError('client', 422, undefined, undefined, 'INVALID_OWNER');
+      return goalsApi.transfer(c, goalId, version, newOwnerUid);
+    },
+    async goalTargetAdd(accountId, goalId, input) {
+      const { c } = await goalFor(accountId, goalId, 'edit');
+      return goalsApi.addTarget(c, goalId, input);
+    },
+    async goalTargetUpdate(accountId, goalId, targetId, patch) {
+      const { c } = await goalFor(accountId, goalId, 'edit');
+      return goalsApi.updateTarget(c, goalId, targetId, patch);
+    },
+    async goalTargetDelete(accountId, goalId, targetId, version) {
+      const { c } = await goalFor(accountId, goalId, 'edit');
+      await goalsApi.removeTarget(c, goalId, targetId, version);
+    },
+    async goalCheckin(accountId, goalId, targetId, input, idempotencyKey) {
+      const { c, goal } = await goalFor(accountId, goalId, 'edit');
+      const target = goal.targets.find((t) => t.id === targetId);
+      if (!target) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
+      if (target.type === 'task') throw new OcsError('client', 422, undefined, undefined, 'TARGET_NOT_MANUAL');
+      if ((target.type === 'boolean') !== (typeof input.value === 'boolean')) throw new OcsError('client', 422, undefined, undefined, 'INVALID_FIELD');
+      return goalsApi.checkin(c, goalId, targetId, input, idempotencyKey);
+    },
+    async goalCheckins(accountId, goalId, targetId) {
+      return goalsApi.checkins(await goalClient(accountId), goalId, targetId);
+    },
+    async goalSetCards(accountId, goalId, targetId, version, cardIds) {
+      const { c } = await goalFor(accountId, goalId, 'edit');
+      return goalsApi.setCards(c, goalId, targetId, version, cardIds);
+    },
+    async cardGoals(accountId, cardId) {
+      return goalsApi.cardGoals(await goalClient(accountId), cardId);
+    },
+    async cardLinkGoal(accountId, cardId, goalId) {
+      const { c } = await goalFor(accountId, goalId, 'edit');
+      return goalsApi.linkCard(c, cardId, goalId);
+    },
+    async cardUnlinkGoal(accountId, cardId, goalId, targetId) {
+      const { c, goal } = await goalFor(accountId, goalId, 'edit');
+      const target = goal.targets.find((t) => t.id === targetId && t.type === 'task');
+      if (!target || !(target.cards ?? []).some((x) => x.id === cardId)) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
+      return goalsApi.setCards(c, goalId, targetId, target.version, cardSetWithout(target, cardId));
     },
   };
 }
@@ -502,7 +608,9 @@ export const BACKEND_METHODS = [
   'createProject', 'renameProject', 'addProjectMember', 'createStack', 'renameStack', 'principals', 'objectShares', 'setObjectShares',
   'timer', 'timerStart', 'timerStop', 'timeWeek',
   'timeEntryCreate', 'timeEntryUpdate', 'timeEntryDelete', 'timeSubmit', 'timeWithdraw', 'timeReviews', 'timeDecide', 'timeTeam', 'timeCsv',
-  'requests', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert', 'requestReport', 'goals',
+  'requests', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert', 'requestReport',
+  'goals', 'goalDetail', 'goalCreate', 'goalUpdate', 'goalDelete', 'goalTransfer', 'goalTargetAdd', 'goalTargetUpdate', 'goalTargetDelete',
+  'goalCheckin', 'goalCheckins', 'goalSetCards', 'cardGoals', 'cardLinkGoal', 'cardUnlinkGoal',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -599,6 +707,51 @@ export const isValidReportFilters = (v: unknown): v is RequestReportFilters => {
     && ['all', 'request', 'timesheet'].includes(o.type as string) && (REPORT_STATES as readonly unknown[]).includes(o.state) && isDayRange(o.from, o.to, 366);
 };
 
+// ---- Goals wire validation: exact field sets per target type, server decimal format ----
+const isDecimal = (v: unknown) => typeof v === 'string' && /^-?\d{1,30}(\.\d{1,4})?$/.test(v);
+const isGoalTitle = isTitle(200);
+const isGoalDesc = isStr(4000);
+const isDueOrNull = (v: unknown) => v === null || isDay(v);
+const isCurrency = (v: unknown) => typeof v === 'string' && /^[A-Z]{3}$/.test(v);
+const isUid = (v: unknown) => isStr(64)(v) && (v as string).trim().length > 0;
+export const isValidGoalFilter = (v: unknown): v is GoalListFilter => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return hasOnly(o, ['owner', 'state']) && ['me', 'shared', 'all'].includes(o.owner as string) && ['active', 'archived', 'any'].includes(o.state as string);
+};
+export const isValidGoalInput = (v: unknown): v is GoalInput =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { title: isGoalTitle, description: isGoalDesc, dueDate: isDueOrNull }, ['title']);
+export const isValidGoalPatch = (v: unknown): v is GoalPatch => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return Object.keys(o).length > 1 && fieldsOk(o, { version: isVersion, title: isGoalTitle, description: isGoalDesc, dueDate: isDueOrNull, state: (x) => x === 'active' || x === 'archived' }, ['version']);
+};
+export const isValidTargetInput = (v: unknown): v is GoalTargetInput => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (o.type === 'boolean' || o.type === 'task') return hasOnly(o, ['type', 'title']) && isGoalTitle(o.title);
+  if (o.type !== 'number' && o.type !== 'currency') return false;
+  const spec: Record<string, (x: unknown) => boolean> = {
+    type: () => true, title: isGoalTitle, start: isDecimal, target: isDecimal, current: isDecimal,
+    scale: (x) => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= GOAL_MAX_SCALE,
+    ...(o.type === 'currency' ? { currencyCode: isCurrency } : {}),
+  };
+  return fieldsOk(o, spec, o.type === 'currency' ? ['type', 'title', 'start', 'target', 'currencyCode'] : ['type', 'title', 'start', 'target']) && o.start !== o.target;
+};
+export const isValidTargetPatch = (v: unknown): v is GoalTargetPatch => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  return Object.keys(o).length > 1 && fieldsOk(o, { version: isVersion, title: isGoalTitle, start: isDecimal, target: isDecimal, currencyCode: isCurrency }, ['version']);
+};
+export const isValidCheckin = (v: unknown): v is GoalCheckinInput => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  const note = { note: isStr(1000) };
+  if (typeof o.value === 'boolean') return fieldsOk(o, { version: isVersion, value: () => true, ...note }, ['version', 'value']);
+  return fieldsOk(o, { version: isVersion, mode: (x) => x === 'absolute' || x === 'delta', value: isDecimal, ...note }, ['version', 'mode', 'value']);
+};
+const isCardIds = (v: unknown) => Array.isArray(v) && v.length <= 500 && v.every(isInt) && new Set(v).size === v.length;
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -659,7 +812,21 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   requestResolve: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isTitle(2000)(a[3]) && isKey(a[4]),
   requestConvert: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isInt(a[3]) && isInt(a[4]) && isKey(a[5]),
   requestReport: (a) => a.length === 2 && isAccountId(a[0]) && isValidReportFilters(a[1]),
-  goals: (a) => a.length === 1 && isAccountId(a[0]),
+  goals: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && (a[1] === undefined || isValidGoalFilter(a[1])),
+  goalDetail: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  goalCreate: (a) => a.length === 2 && isAccountId(a[0]) && isValidGoalInput(a[1]),
+  goalUpdate: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidGoalPatch(a[2]),
+  goalDelete: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
+  goalTransfer: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isUid(a[3]),
+  goalTargetAdd: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidTargetInput(a[2]),
+  goalTargetUpdate: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidTargetPatch(a[3]),
+  goalTargetDelete: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isVersion(a[3]),
+  goalCheckin: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidCheckin(a[3]) && isKey(a[4]),
+  goalCheckins: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
+  goalSetCards: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isVersion(a[3]) && isCardIds(a[4]),
+  cardGoals: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  cardLinkGoal: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
+  cardUnlinkGoal: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isInt(a[3]),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */
