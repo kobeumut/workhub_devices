@@ -78,6 +78,19 @@ Sözleşme `nextcloud_workhub@a359a4c` `ProjectController::gantt/activity`, `Pro
 | Yan düzeltme | birim | `isValidLocalDate('2026-02-30')` `RangeError` fırlatıyordu (Zaman formu çökerdi); artık `false` döner |
 | Sunucu notu (Gap değil) | `smoke:views` | `views/activity?from=2026-13-01` 422 yerine taşarak kabul ediliyor; istemci IPC'de takvimde olmayan günü reddeder. Workhub reposu değiştirilmedi |
 
+## GENE-54 — Dashboard'lar: dashboard/widget CRUD, sorgu, drilldown, CSV (2026-11-02)
+
+Sözleşme `nextcloud_workhub@a359a4c` `DashboardController`, `DashboardService`, `DashboardQueryService`, `FilterSpec`, `ConfigSchema`, `WidgetRegistry`, `DeckWidgetProvider`, `GoalWidgetProvider`, `TimeWidgetProvider`, `CsvController::widget` okunarak alındı; yanıt şekilleri canlı sunucuda doğrulandı. Workhub reposu değiştirilmedi; yeni **Gap** yok (dashboard işlevlerinin hepsi API'de var).
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit` | core 87/87 (yeni 12: Backend gate'i — modül kapalıyken istek yok `DASHBOARD_DISABLED`; rol gate'i taze ayrıntıdan — `view` widget ekleyemez, `edit` silemez, yazma isteği gitmez; bilinmeyen widget 404, 20 widget sınırı; oluşturmada Idempotency-Key, `{}` sonuç haritası, drilldown/CSV filtre JSON'u, CSV dosya adı + BOM, CSV JSON hatası → `OcsError`; IPC — filtre alanları/sınırlar/takvim günü/ters aralık/uid karakter kümesi, `refreshSec`, şablon, ayar şekli, ızgara taşması, url-safe imleç, grup anahtarı; değer biçimi (adet, %, saat), çubuk oranları, rol sırası, okuma sırası, drilldown desteği, sonuç durumları, form ↔ filtre, şemaya göre ayar, minimal PATCH), relay 8/8; typecheck temiz (mobil dahil) |
+| Canlı API | `npm run smoke:dashboards -w @workhub-devices/core` | 12/12: 55 kartlık proje (3 tamamlanmış, 2 atanmış); 16 widget türü (dashboard, goals, time); `project_summary` şablonu 10 widget, aynı Idempotency-Key → aynı dashboard; KPI 55 / 3 / 52, tamamlanma 545 bp, dağılımların toplamı; atanan grubu drilldown → tam o 2 kart, açık KPI → 52 kart 2 sayfada tekrar yok, geçersiz imleç 422 `INVALID_CURSOR`, eğilim 422 `DRILLDOWN_UNSUPPORTED`; widget ekle (ayar + "tamamlanan" filtresi → yalnız 3 kart), `widgetIds` daraltma, 422 `INVALID_CONFIG` / `UNSUPPORTED_FILTER` / `INVALID_LAYOUT`, düzenle → sürüm +1, eski sürüm 409, sil → tekrar 404; dashboard PATCH (genel "açık" filtresi KPI'yı 52'ye indirir), 409, 422 `FIELD_OUT_OF_RANGE`; CSV KPI/dağılım/liste BOM'lu, yabancı 404; zorunlu yenileme 10 sn'de ikinci kez 429 `REFRESH_RATE_LIMITED`; B: paylaşımsız 404, `view` paylaşımıyla okur ama kaynak adı görmez, KPI `restricted` (sayı sızmaz), drilldown boş, widget ekleme 403; C (Projeler kapalı, Dashboard açık) kendi dashboard'u; silmede eski sürüm 409, `view` 403 |
+| **Linux masaüstü** | `apps/desktop/scripts/smoke.mjs` | 23/23. Yeni adım: "İşler → Dashboard → oluştur (proje özeti) → 3 `role=table` (Grup/Değer/Pay), KPI etiketi 'Total work: N' → dağılım grubu → kartlar → KPI 'Kartları aç' → 50 kart → satır → görev ayrıntısı → Widget ekle (Card list, Completed) → CSV kaydedildi (BOM, 0 credential) → düzenle → kaldır → dashboard sil → Diğer'de dashboard web bağlantısı yok" |
+| Erişilebilirlik | masaüstü smoke | Tıklanabilir tablo satırlarında düğme satır başlığı hücresinin içinde (RN Web'de `role="row"` `accessibilityRole="button"`'u ezer); çubuklar `aria-hidden`, değer ve pay her zaman yazıyla; KPI'da tam etiket |
+| Android | `npx react-native bundle --platform android --dev false` | Üretim JS paketi hatasız oluştu ve dashboard ekranını içeriyor. Uygulama emülatörde çalıştırılmadı: bağlı cihaz/çalışan emülatör yoktu (yeni emülatör oluşturulmadı); değişiklik yalnız ortak RN/TS |
+| Doğrulanmayan | — | AI metin widget'ı (dev sunucuda `ai` modülü kapalı); iOS (derlenmedi) |
+
 ## Doğrulanmayanlar (açıkça)
 
 - **iOS:** kod yazıldı, derlenmedi (macOS/Xcode yok). Kurulum: `docs/ios-setup.md`.

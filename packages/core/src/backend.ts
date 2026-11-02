@@ -11,6 +11,9 @@ import {
   type CsvScope, type RequestDecision, type RequestEvent, type RequestPage, type RequestReport, type RequestReportFilters, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
   projectViewsApi, ACTIVITY_TYPES, WORKLOAD_MAX_DAYS,
   type ActivityFilter, type ActivityPage, type GanttPayload, type WorkloadMatrix, type WorkloadQuery,
+  dashboardsApi, dashboardRoleAtLeast, DASHBOARD_FILTER_FIELDS, DASHBOARD_FILTER_LIMITS, DASHBOARD_MAX_SOURCES, DASHBOARD_MAX_WIDGETS, DASHBOARD_TEMPLATES, DASHBOARD_GRID_COLUMNS,
+  type Dashboard, type DashboardFilter, type DashboardInput, type DashboardPatch, type DashboardQueryOptions, type DashboardQueryResult, type DashboardRole, type DashboardSummary,
+  type DashboardWidget, type DrilldownOptions, type DrilldownPage, type WidgetInput, type WidgetPatch, type WidgetTypeDef,
   type CardGoal, type GoalCheckin, type GoalCheckinInput, type GoalCheckinResult, type GoalDetail, type GoalInput, type GoalListFilter, type GoalPatch, type GoalTarget, type GoalTargetInput, type GoalTargetPatch,
   type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
@@ -146,6 +149,25 @@ export interface Backend {
   projectActivity(accountId: AccountId, boardId: number, filter: ActivityFilter, cursor: string | null): Promise<ActivityPage>;
   /** Member × day matrix over the readable boards (optionally restricted). */
   workload(accountId: AccountId, query: WorkloadQuery): Promise<WorkloadMatrix>;
+
+  /** Dashboards (gate: `modules.dashboard`, fail closed; the server re-checks the object ACL and Deck scope). */
+  dashboards(accountId: AccountId, cursor: string | null): Promise<{ items: DashboardSummary[]; nextCursor: string | null }>;
+  /** Widget types enabled for this user (module providers are hidden when their module is off). */
+  dashboardWidgetTypes(accountId: AccountId): Promise<WidgetTypeDef[]>;
+  dashboard(accountId: AccountId, dashboardId: number): Promise<Dashboard>;
+  dashboardCreate(accountId: AccountId, input: DashboardInput, idempotencyKey: string): Promise<Dashboard | null>;
+  /** Needs `edit` on the CURRENT dashboard (fresh read). */
+  dashboardUpdate(accountId: AccountId, dashboardId: number, patch: DashboardPatch): Promise<Dashboard | null>;
+  /** Needs `manage`. */
+  dashboardDelete(accountId: AccountId, dashboardId: number, version: number): Promise<void>;
+  dashboardWidgetAdd(accountId: AccountId, dashboardId: number, input: WidgetInput): Promise<DashboardWidget | null>;
+  dashboardWidgetUpdate(accountId: AccountId, dashboardId: number, widgetId: number, patch: WidgetPatch): Promise<DashboardWidget | null>;
+  dashboardWidgetDelete(accountId: AccountId, dashboardId: number, widgetId: number): Promise<void>;
+  /** Widget results scoped to the viewer's CURRENT Deck access. */
+  dashboardQuery(accountId: AccountId, dashboardId: number, options: DashboardQueryOptions): Promise<DashboardQueryResult>;
+  /** Cards behind a widget (optionally one distribution group), 50 per page. */
+  dashboardDrilldown(accountId: AccountId, dashboardId: number, widgetId: number, options: DrilldownOptions): Promise<DrilldownPage>;
+  dashboardCsv(accountId: AccountId, dashboardId: number, widgetId: number, filters: DashboardFilter | null): Promise<{ filename: string; csv: string }>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -270,6 +292,29 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     const b = await bootstrap(id, c);
     if (!b.modules.projects) throw new OcsError('forbidden', 403, undefined, undefined, 'PROJECTS_DISABLED');
     return c;
+  };
+
+  /** Dashboard gate (fail closed): the module must be on for this user. */
+  const dashboardClient = async (id: AccountId): Promise<OcsClient> => {
+    const c = await client(id);
+    const b = await bootstrap(id, c);
+    if (!b.modules.dashboard) throw new OcsError('forbidden', 403, undefined, undefined, 'DASHBOARD_DISABLED');
+    return c;
+  };
+  /**
+   * Role gate on the CURRENT dashboard (fresh detail, never a cached list row): widget and header
+   * writes need `edit`, delete needs `manage`. The server re-checks the ACL on every command.
+   */
+  const dashboardFor = async (id: AccountId, dashboardId: number, need: DashboardRole) => {
+    const c = await dashboardClient(id);
+    const d = await dashboardsApi.get(c, dashboardId);
+    if (!dashboardRoleAtLeast(d.role, need)) throw new OcsError('forbidden', 403, undefined, undefined, need === 'manage' ? 'DASHBOARD_MANAGE_REQUIRED' : 'DASHBOARD_EDIT_REQUIRED');
+    return { c, d };
+  };
+  const widgetOf = (d: Dashboard, widgetId: number) => {
+    const w = d.widgets.find((x) => x.id === widgetId);
+    if (!w) throw new OcsError('not_found', 404, undefined, undefined, 'RESOURCE_NOT_FOUND');
+    return w;
   };
 
   return {
@@ -620,6 +665,53 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async workload(accountId, query) {
       return projectViewsApi.workload(await projectsClient(accountId), query);
     },
+
+    async dashboards(accountId, cursor) {
+      return dashboardsApi.list(await dashboardClient(accountId), cursor);
+    },
+    async dashboardWidgetTypes(accountId) {
+      return dashboardsApi.widgetTypes(await dashboardClient(accountId));
+    },
+    async dashboard(accountId, dashboardId) {
+      return dashboardsApi.get(await dashboardClient(accountId), dashboardId);
+    },
+    async dashboardCreate(accountId, input, idempotencyKey) {
+      const body: DashboardInput = { ...input, title: input.title.trim() };
+      if (!body.title) throw new OcsError('client', 422, undefined, undefined, 'FIELD_REQUIRED');
+      return dashboardsApi.create(await dashboardClient(accountId), body, idempotencyKey);
+    },
+    async dashboardUpdate(accountId, dashboardId, patch) {
+      const { c } = await dashboardFor(accountId, dashboardId, 'edit');
+      return dashboardsApi.update(c, dashboardId, patch);
+    },
+    async dashboardDelete(accountId, dashboardId, version) {
+      const { c } = await dashboardFor(accountId, dashboardId, 'manage');
+      await dashboardsApi.remove(c, dashboardId, version);
+    },
+    async dashboardWidgetAdd(accountId, dashboardId, input) {
+      const { c, d } = await dashboardFor(accountId, dashboardId, 'edit');
+      if (d.widgets.length >= (d.limits?.widgets ?? DASHBOARD_MAX_WIDGETS)) throw new OcsError('client', 422, undefined, undefined, 'TOO_MANY_WIDGETS');
+      return dashboardsApi.addWidget(c, dashboardId, input);
+    },
+    async dashboardWidgetUpdate(accountId, dashboardId, widgetId, patch) {
+      const { c, d } = await dashboardFor(accountId, dashboardId, 'edit');
+      widgetOf(d, widgetId);
+      return dashboardsApi.updateWidget(c, dashboardId, widgetId, patch);
+    },
+    async dashboardWidgetDelete(accountId, dashboardId, widgetId) {
+      const { c, d } = await dashboardFor(accountId, dashboardId, 'edit');
+      widgetOf(d, widgetId);
+      await dashboardsApi.removeWidget(c, dashboardId, widgetId);
+    },
+    async dashboardQuery(accountId, dashboardId, options) {
+      return dashboardsApi.query(await dashboardClient(accountId), dashboardId, options);
+    },
+    async dashboardDrilldown(accountId, dashboardId, widgetId, options) {
+      return dashboardsApi.drilldown(await dashboardClient(accountId), dashboardId, widgetId, options);
+    },
+    async dashboardCsv(accountId, dashboardId, widgetId, filters) {
+      return dashboardsApi.csv(await dashboardClient(accountId), dashboardId, widgetId, filters ?? undefined);
+    },
   };
 }
 
@@ -639,6 +731,8 @@ export const BACKEND_METHODS = [
   'goals', 'goalDetail', 'goalCreate', 'goalUpdate', 'goalDelete', 'goalTransfer', 'goalTargetAdd', 'goalTargetUpdate', 'goalTargetDelete',
   'goalCheckin', 'goalCheckins', 'goalSetCards', 'cardGoals', 'cardLinkGoal', 'cardUnlinkGoal',
   'projectGantt', 'projectActivity', 'workload',
+  'dashboards', 'dashboardWidgetTypes', 'dashboard', 'dashboardCreate', 'dashboardUpdate', 'dashboardDelete',
+  'dashboardWidgetAdd', 'dashboardWidgetUpdate', 'dashboardWidgetDelete', 'dashboardQuery', 'dashboardDrilldown', 'dashboardCsv',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -804,6 +898,67 @@ export const isValidWorkloadQuery = (v: unknown): v is WorkloadQuery => {
   }, ['from', 'to']) && isDayRange(o.from, o.to, WORKLOAD_MAX_DAYS);
 };
 
+// ---- Dashboard wire validation: FilterSpec / ConfigSchema shapes, server limits ----
+const isIdSet = (max: number) => (x: unknown) => Array.isArray(x) && x.length <= max && x.every(isInt) && new Set(x).size === x.length;
+/** Server uid charset (FilterSpec::uidList). */
+const isFilterUid = (x: unknown) => typeof x === 'string' && /^[a-zA-Z0-9 _.@\-']{1,64}$/.test(x);
+export const isValidDashboardFilter = (v: unknown): v is DashboardFilter => {
+  if (!isObj(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (!Object.keys(o).every((k) => (DASHBOARD_FILTER_FIELDS as readonly string[]).includes(k))) return false;
+  const ok = fieldsOk(o, {
+    boardIds: isIdSet(DASHBOARD_FILTER_LIMITS.boardIds),
+    stackIds: isIdSet(DASHBOARD_FILTER_LIMITS.stackIds),
+    labelIds: isIdSet(DASHBOARD_FILTER_LIMITS.labelIds),
+    assigneeUids: (x) => Array.isArray(x) && x.length <= DASHBOARD_FILTER_LIMITS.assigneeUids && x.every(isFilterUid) && new Set(x).size === x.length,
+    doneState: (x) => x === 'any' || x === 'open' || x === 'done',
+    dueFrom: isCalendarDay, dueTo: isCalendarDay, createdFrom: isCalendarDay, createdTo: isCalendarDay,
+    includeArchived: (x) => typeof x === 'boolean',
+  }, []);
+  if (!ok) return false;
+  if (o.dueFrom !== undefined && o.dueTo !== undefined && (o.dueFrom as string) > (o.dueTo as string)) return false;
+  if (o.createdFrom !== undefined && o.createdTo !== undefined && (o.createdFrom as string) > (o.createdTo as string)) return false;
+  // The drill-down/CSV query parameter is capped at 8000 bytes by the server.
+  return JSON.stringify(o).length <= 8000;
+};
+const isRefreshSec = (x: unknown) => Number.isInteger(x) && ((x as number) === 0 || ((x as number) >= 60 && (x as number) <= 86400));
+const isConfigValue = (x: unknown) =>
+  x === null || typeof x === 'boolean' || (Number.isInteger(x) && Math.abs(x as number) < 2 ** 31) || isStr(200)(x) || (Array.isArray(x) && x.length <= 100 && x.every(isInt));
+/** Widget config: a flat object of scalar / id-list values (the server validates against the type's schema). */
+export const isValidWidgetConfig = (v: unknown): v is Record<string, unknown> => {
+  if (!isObj(v)) return false;
+  const e = Object.entries(v as object);
+  return e.length <= 20 && e.every(([k, x]) => /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(k) && isConfigValue(x)) && JSON.stringify(v).length <= 4000;
+};
+const DASHBOARD_FIELDS: Record<string, (v: unknown) => boolean> = {
+  title: isTitle(200), description: isStr(2000), zone: isZone, refreshSec: isRefreshSec,
+  sources: isIdSet(DASHBOARD_MAX_SOURCES), filters: isValidDashboardFilter,
+};
+export const isValidDashboardInput = (v: unknown): v is DashboardInput =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { ...DASHBOARD_FIELDS, template: (x) => (DASHBOARD_TEMPLATES as readonly unknown[]).includes(x) }, ['title']);
+export const isValidDashboardPatch = (v: unknown): v is DashboardPatch =>
+  isObj(v) && Object.keys(v as object).length > 1 && fieldsOk(v as Record<string, unknown>, { ...DASHBOARD_FIELDS, version: isVersion }, ['version']);
+const WIDGET_LAYOUT: Record<string, (v: unknown) => boolean> = {
+  x: (x) => Number.isInteger(x) && (x as number) >= 0 && (x as number) < DASHBOARD_GRID_COLUMNS,
+  y: (x) => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 999,
+  w: (x) => Number.isInteger(x) && (x as number) >= 3 && (x as number) <= DASHBOARD_GRID_COLUMNS,
+  h: (x) => Number.isInteger(x) && (x as number) >= 1 && (x as number) <= 4,
+};
+const WIDGET_FIELDS: Record<string, (v: unknown) => boolean> = { title: isStr(200), config: isValidWidgetConfig, filter: isValidDashboardFilter, ...WIDGET_LAYOUT };
+const fitsGrid = (o: Record<string, unknown>) => o.x === undefined || o.w === undefined || (o.x as number) + (o.w as number) <= DASHBOARD_GRID_COLUMNS;
+export const isValidWidgetInput = (v: unknown): v is WidgetInput =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { ...WIDGET_FIELDS, type: (x) => typeof x === 'string' && /^[a-z][a-z0-9_]{1,63}$/.test(x) }, ['type']) && fitsGrid(v as Record<string, unknown>);
+export const isValidWidgetPatch = (v: unknown): v is WidgetPatch =>
+  isObj(v) && Object.keys(v as object).length > 1 && fieldsOk(v as Record<string, unknown>, { ...WIDGET_FIELDS, version: isVersion }, ['version']) && fitsGrid(v as Record<string, unknown>);
+export const isValidDashboardQuery = (v: unknown): v is DashboardQueryOptions =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { widgetIds: isIdSet(DASHBOARD_MAX_WIDGETS), refresh: (x) => typeof x === 'boolean', filters: isValidDashboardFilter }, []);
+/** Drill-down cursor: url-safe base64 from DeckWidgetProvider::listPage. */
+const isDrillCursor = (x: unknown) => typeof x === 'string' && x.length > 0 && x.length <= 1000 && /^[A-Za-z0-9_-]+$/.test(x);
+/** Group keys: stack/board/label ids, `user:<uid>`, `group:<gid>`, `none` — printable, no control chars. */
+const isGroupKey = (x: unknown) => typeof x === 'string' && x.length > 0 && x.length <= 80 && !/[\u0000-\u001f\u007f]/.test(x);
+export const isValidDrilldownOptions = (v: unknown): v is DrilldownOptions =>
+  isObj(v) && fieldsOk(v as Record<string, unknown>, { groupKey: isGroupKey, cursor: isDrillCursor, filters: isValidDashboardFilter }, []);
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -882,6 +1037,18 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   projectGantt: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   projectActivity: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isValidActivityFilter(a[2]) && isCursor(a[3]),
   workload: (a) => a.length === 2 && isAccountId(a[0]) && isValidWorkloadQuery(a[1]),
+  dashboards: (a) => a.length === 2 && isAccountId(a[0]) && (a[1] === null || isCursor(a[1])),
+  dashboardWidgetTypes: (a) => a.length === 1 && isAccountId(a[0]),
+  dashboard: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  dashboardCreate: (a) => a.length === 3 && isAccountId(a[0]) && isValidDashboardInput(a[1]) && isKey(a[2]),
+  dashboardUpdate: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidDashboardPatch(a[2]),
+  dashboardDelete: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
+  dashboardWidgetAdd: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidWidgetInput(a[2]),
+  dashboardWidgetUpdate: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidWidgetPatch(a[3]),
+  dashboardWidgetDelete: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
+  dashboardQuery: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidDashboardQuery(a[2]),
+  dashboardDrilldown: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isValidDrilldownOptions(a[3]),
+  dashboardCsv: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && (a[3] === null || isValidDashboardFilter(a[3])),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */

@@ -136,7 +136,7 @@ const { readdirSync } = await import('node:fs');
 for (const f of readdirSync(out).filter((x) => x.endsWith('.csv'))) {
   const text = readFileSync(join(out, f), 'utf8');
   const leaks = [process.env.WH_A_PASS, process.env.WH_B_PASS, process.env.WH_C_PASS].filter((p) => p && text.includes(p)).length + (/Authorization|Basic /.test(text) ? 1 : 0);
-  console.log(`csv ${f}: ${text.trim().split('\n').length - 1} rows, bom=${text.startsWith('\uFEFF')}, header=${text.replace('\uFEFF', '').startsWith('entry_id,user_uid,')}, credential leaks=${leaks}`);
+  console.log(`csv ${f}: ${text.trim().split('\n').length - 1} rows, bom=${text.startsWith('\uFEFF')}, header=${f.startsWith('workhub-dashboard-') ? JSON.stringify(text.replace('\uFEFF', '').split('\n')[0].slice(0, 40)) : text.replace('\uFEFF', '').startsWith('entry_id,user_uid,')}, credential leaks=${leaks}`);
   if (leaks || !text.startsWith('\uFEFF')) process.exitCode = 1;
 }
 const result = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
