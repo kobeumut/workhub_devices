@@ -4,15 +4,15 @@
 
 Talk sohbetleri ana ekran olacak; kullanıcı mesaj bildiriminin içinden cevaplayabilecek, Workhub'daki işleriyle çalışabilecek ve kendisine atanan görevleri bildirimden açabilecek. Hedefler: iOS, Android, Windows, macOS, Linux. Yeni kodun deposu `kobeumut/workhub_devices`; Workhub sunucusunun mevcut API'si korunacak.
 
-**Bu commit uygulama değil, uygulanacak araştırma/plan teslimidir.** Uygulama sahibi Opus2 - Full Stack Developer. Her faz küçük PR'larla, aşağıdaki kabul ölçütleri ve gerçek test kanıtlarıyla teslim edilmeli. Faz 0 çözülmeden beş platformda arka plan push çalışıyor denmez.
+**Bu commit uygulama değil, uygulanacak araştırma/plan teslimidir.** Uygulama sahibi Opus2 - Full Stack Developer; uygulama alt görevi **GENE-48** (`01a19b2b-08c3-7f23-8e55-c92c866995a1`). Her faz küçük PR'larla, aşağıdaki kabul ölçütleri ve gerçek test kanıtlarıyla teslim edilmeli. Faz 0 çözülmeden beş platformda arka plan push çalışıyor denmez.
 
 ### Planlama teslimi
 
 - [x] Spreed, Talk iOS, Talk Android, Workhub ve Notifications kaynaklarını incele.
 - [x] API/notification routing ve sürüm uyumluluk risklerini kaydet (`RESEARCH.md`).
 - [x] Ortak mimari, iş sırası ve ölçülebilir kabul/test planını yaz.
-- [ ] Belgeleri Workhub Devices remote'una gönder ve link/SHA doğrula.
-- [ ] Mevcut görevleri kontrol ederek uygulamayı tek yeni alt görevle Opus2'ye ata.
+- [x] Belgeleri Workhub Devices remote'una gönder ve link/SHA doğrula (ilk plan commit'i `cd0566f`).
+- [x] Mevcut görevleri kontrol ederek uygulamayı tek yeni alt görevle Opus2'ye ata (GENE-48).
 
 Uygulama checkbox'ları başlangıçta kasıtlı olarak boş; plan yazılmış olması uygulamanın/testin tamamlandığı anlamına gelmez.
 

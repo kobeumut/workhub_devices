@@ -2,7 +2,7 @@
 
 Talk merkezli mesajlaşma ve mevcut Nextcloud Workhub özellikleri için iOS, Android, Windows, macOS ve Linux istemcisi.
 
-**Durum: araştırma ve uygulama planı. Henüz çalıştırılabilir uygulama yok.** GENE-47 kapsamında hazırlanmıştır; uygulama Opus2 - Full Stack Developer'a devredilecektir.
+**Durum: araştırma ve uygulama planı. Henüz çalıştırılabilir uygulama yok.** GENE-47 kapsamında hazırlanmış, uygulama **GENE-48** göreviyle Opus2 - Full Stack Developer'a devredilmiştir.
 
 - [PLAN.md](PLAN.md): mimari, ayrıntılı işler, bağımlılıklar ve kabul/test ölçütleri.
 - [RESEARCH.md](RESEARCH.md): incelenen kaynakların SHA'ları, API sözleşmeleri ve kritik bildirim bulguları.
