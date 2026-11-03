@@ -4,7 +4,8 @@
  * the shipped renderer bundle. Writes are applied to the in-memory fixture so moves/toggles show.
  */
 import { createRoot } from 'react-dom/client';
-import type { Backend, BoardPayload, Task, TaskDetail } from '@workhub-devices/core';
+import { callCapabilitiesOf, CallEngine, type Backend, type BoardPayload, type MediaStreamLike, type RoutedTarget, type RtcPeerLike, type SignalEvent, type Task, type TaskDetail } from '@workhub-devices/core';
+import { createDesktopCallMedia } from '../src/renderer/call';
 import { WorkhubApp, type PlatformServices } from '@workhub-devices/features';
 
 const now = Date.now();
@@ -61,6 +62,7 @@ const fixtures: Partial<Record<keyof Backend, (...a: any[]) => unknown>> = {
   listAccounts: () => [account],
   session: () => ({
     account, nextcloudVersion: '35.0.2', talkVersion: '25.0.6', talkFeatures: [], talkCanCreate: true, talkAttachmentsAllowed: true, issues: [], webPush: true,
+    talkCall: callCapabilitiesOf(['audio', 'video', 'signaling-v3', 'call-notification-state-api'], { enabled: true }),
     workhub: { apiVersion: '1', user: { uid: 'ayse', displayName: 'Ayşe Yılmaz', isAdmin: false, timezone: 'Europe/Istanbul' }, modules: { projects: true, dashboard: true, ai: true, goals: true, requests: true, time: true }, permissions: { canViewTeamReport: true }, backend: 'native' },
   }),
   rooms: () => ({
@@ -93,7 +95,56 @@ const fixtures: Partial<Record<keyof Backend, (...a: any[]) => unknown>> = {
     return t;
   },
   notifications: () => [],
+  // ---- calls: a second CallEngine in the page plays the remote participant (real WebRTC) ----
+  talkRoom: (_a: string, token: string) => ({
+    token, type: token === 'r2' ? 1 : 2, name: token, displayName: token === 'r2' ? 'Zeynep Kaya' : 'Mobil ekip', unreadMessages: 0, unreadMention: false, isFavorite: false,
+    lastActivity: now / 1000, readOnly: 0, participantType: 1, permissions: 254, canStartCall: true, hasCall: token === 'r1', callFlag: token === 'r1' ? 7 : 0, lobbyState: 0,
+  }),
+  chat: async (_a: string, _t: string, req: { lookIntoFuture: boolean }) => {
+    if (req.lookIntoFuture) await new Promise((r) => setTimeout(r, 30_000)); // long-poll: nothing new
+    return { messages: [], lastGiven: null };
+  },
+  markRead: async () => undefined,
+  participants: () => [{ attendeeId: 1, actorType: 'users', actorId: 'zeynep', displayName: 'Zeynep Kaya', participantType: 3 }],
+  callRinging: () => true,
+  callJoin: async () => {
+    queue.length = 0;
+    const stream = (await navigator.mediaDevices.getUserMedia({ audio: true, video: true })) as unknown as MediaStreamLike;
+    remote = new CallEngine({
+      selfSessionId: 'zz-remote', mode: 'mesh', iceServers: [], localStream: stream, onChange: () => undefined,
+      createPeer: (c) => new RTCPeerConnection(c) as unknown as RtcPeerLike,
+      send: async (_to, data) => void push({ type: 'message', from: 'zz-remote', data: JSON.parse(JSON.stringify(data)) }),
+    });
+    const users: SignalEvent = { type: 'participants', full: true, users: [{ sessionId: 'self', userId: 'ayse', inCall: 7 }, { sessionId: 'zz-remote', userId: 'zeynep', inCall: 7 }] };
+    setTimeout(() => {
+      push(users);
+      void remote!.handle(users);
+    }, 300);
+    return { callId: 'call-preview-1', sessionId: 'self', mode: 'mesh', iceServers: [], flags: 7, gate: { available: true, reason: null, hasCall: true, canJoin: true, audio: true, video: true } };
+  },
+  callEvents: async (_id: string, timeout: number) => {
+    if (!queue.length) await new Promise<void>((r) => { wake = r; setTimeout(r, Math.min(timeout, 1000)); });
+    return queue.splice(0);
+  },
+  callSend: async (_id: string, _to: string, data: unknown) => {
+    setTimeout(() => void remote?.handle({ type: 'message', from: 'self', data: JSON.parse(JSON.stringify(data)) }), 5);
+  },
+  callLeave: async () => {
+    remote?.close();
+    remote = null;
+  },
+  callMedia: async () => undefined,
+  cancel: async () => undefined,
 };
+const queue: SignalEvent[] = [];
+let wake: (() => void) | null = null;
+let remote: CallEngine | null = null;
+const push = (e: SignalEvent) => {
+  queue.push(e);
+  wake?.();
+};
+const routeListeners = new Set<(t: RoutedTarget) => void>();
+(window as unknown as { previewRoute: (t: RoutedTarget) => void }).previewRoute = (t) => routeListeners.forEach((cb) => cb(t));
 const backend = new Proxy({} as Backend, {
   get: (_t, name: string) => async (...args: unknown[]) => {
     const f = fixtures[name as keyof Backend];
@@ -101,5 +152,12 @@ const backend = new Proxy({} as Backend, {
     return f(...args);
   },
 });
-const platform: PlatformServices = { kind: 'desktop', openExternal: async () => undefined, appVersion: 'preview' } as PlatformServices;
+const call = createDesktopCallMedia(() => undefined);
+const platform: PlatformServices = {
+  kind: 'desktop', openExternal: async () => undefined, appVersion: 'preview', ...(call ? { call } : {}),
+  subscribeRoutes: (cb) => {
+    routeListeners.add(cb);
+    return () => routeListeners.delete(cb);
+  },
+} as PlatformServices;
 createRoot(document.getElementById('root')!).render(<WorkhubApp backend={backend} platform={platform} />);

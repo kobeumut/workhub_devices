@@ -1,5 +1,31 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { AccountSummary, AppRoute, Backend, PickedFile, RoutedTarget } from '@workhub-devices/core';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import type { StyleProp, ViewStyle } from 'react-native';
+import type { AccountSummary, AppRoute, Backend, MediaStreamLike, PeerFactory, PickedFile, RoutedTarget } from '@workhub-devices/core';
+
+/**
+ * Audio/video calls: WebRTC of the platform (browser WebRTC in the Electron renderer,
+ * react-native-webrtc on mobile). Signaling stays in the Backend; this is media only.
+ */
+export interface CallMedia {
+  /** Microphone/camera. Rejects with the platform error (`NotAllowedError` = permission denied). */
+  getUserMedia(want: { audio: boolean; video: boolean; facing: 'user' | 'environment' }): Promise<MediaStreamLike>;
+  createPeer: PeerFactory;
+  /** Renders a stream (and plays its audio unless `muted`). */
+  VideoView: ComponentType<{ stream: MediaStreamLike; muted?: boolean; mirror?: boolean; fit?: 'cover' | 'contain'; style?: StyleProp<ViewStyle> }>;
+  /** Front ↔ back camera on the same track (mobile). */
+  switchCamera?(stream: MediaStreamLike): Promise<void>;
+  /** Loudspeaker ↔ earpiece (mobile). */
+  setSpeaker?(on: boolean): void;
+  /** Ringtone for an incoming call (stopped on accept/decline/timeout). */
+  ringtone?: { start(): void; stop(): void };
+  /**
+   * The shell keeps a running call alive: Android foreground service (phoneCall|microphone|camera)
+   * + communication audio mode, desktop power-save blocker. `null` = call over.
+   */
+  onCallActive?(info: { token: string; title: string; video: boolean } | null): void;
+  /** Network changed (Wi-Fi ↔ cellular, back online) → ICE restart. Returns an unsubscribe. */
+  subscribeNetwork?(cb: () => void): () => void;
+}
 
 /** Microphone → finished voice note (WAV, staged in the shell; the UI only gets a handle). */
 export interface VoiceRecorder {
@@ -47,6 +73,8 @@ export interface PlatformServices {
   voice?: VoiceRecorder;
   /** Play a downloaded voice note (bytes from the Backend, never a URL with credentials). */
   playAudio?(clip: { mime: string; base64: string }): Promise<AudioPlayback>;
+  /** Audio/video calls; absent → no call buttons (with the reason shown). */
+  call?: CallMedia;
 }
 
 interface Ctx {

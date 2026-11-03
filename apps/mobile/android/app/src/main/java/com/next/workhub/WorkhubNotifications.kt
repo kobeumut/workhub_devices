@@ -17,6 +17,10 @@ object WorkhubNotifications {
   const val CH_CHAT = "chat"
   const val CH_WORKHUB = "workhub"
   const val CH_OTHER = "other"
+  /** Incoming calls: own channel (ringtone, full-screen), separate from messages and assignments. */
+  const val CH_CALL = "calls"
+  /** The ongoing-call foreground service notification (silent). */
+  const val CH_ONGOING_CALL = "call_ongoing"
   const val EXTRA_ROUTE = "workhub.route"
   const val KEY_REPLY = "workhub.reply"
   private val ROOM = Regex("^[A-Za-z0-9]{1,64}$")
@@ -28,6 +32,16 @@ object WorkhubNotifications {
     nm.createNotificationChannel(NotificationChannel(CH_CHAT, "Sohbet mesajları", NotificationManager.IMPORTANCE_HIGH))
     nm.createNotificationChannel(NotificationChannel(CH_WORKHUB, "Workhub görevleri", NotificationManager.IMPORTANCE_DEFAULT))
     nm.createNotificationChannel(NotificationChannel(CH_OTHER, "Diğer bildirimler", NotificationManager.IMPORTANCE_LOW))
+    nm.createNotificationChannel(NotificationChannel(CH_CALL, "Gelen aramalar", NotificationManager.IMPORTANCE_HIGH).apply {
+      setSound(
+        android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE),
+        android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
+      )
+      enableVibration(true)
+      vibrationPattern = longArrayOf(0, 800, 600, 800)
+      lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
+    })
+    nm.createNotificationChannel(NotificationChannel(CH_ONGOING_CALL, "Süren görüşme", NotificationManager.IMPORTANCE_LOW))
   }
 
   fun notificationId(tag: String, nid: Long): Int = "$tag:$nid".hashCode()
@@ -36,7 +50,8 @@ object WorkhubNotifications {
   fun route(app: String, type: String, id: String): JSONObject {
     if (app == "spreed" || app == "talk") {
       val token = id.substringBefore('/')
-      if (ROOM.matches(token) && type in setOf("chat", "room", "call", "reminder", "remote_talk_share")) {
+      if (ROOM.matches(token) && type == "call") return JSONObject().put("name", "call").put("token", token)
+      if (ROOM.matches(token) && type in setOf("chat", "room", "reminder", "remote_talk_share")) {
         return JSONObject().put("name", "room").put("token", token)
       }
     }
@@ -47,6 +62,10 @@ object WorkhubNotifications {
   fun show(ctx: Context, tag: String, nid: Long, app: String, type: String, id: String, subject: String) {
     ensureChannels(ctx)
     val route = route(app, type, id)
+    if (route.getString("name") == "call") {
+      IncomingCall.show(ctx, tag, nid, route.getString("token"), subject)
+      return
+    }
     val roomToken = if (route.getString("name") == "room") route.getString("token") else null
     if (roomToken != null && WorkhubNativeModule.isForeground(tag, roomToken)) return
 

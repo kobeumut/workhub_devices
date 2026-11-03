@@ -14,6 +14,9 @@ import {
  * - Chat open on screen (same account + room) → no banner.
  * - macOS: inline reply (`hasReply`) sends a Talk message from the MAIN process.
  *   Windows/Linux: no inline reply in Electron → click/"Yanıtla" focuses the composer.
+ * - Incoming calls (`object_type=call`) are their own kind: a persistent critical notification
+ *   with Kabul et / Reddet, and the window comes to the front showing the ringing screen
+ *   (ringtone in the renderer). Polling is 10 s so a ring is seen while it lasts.
  */
 export class DesktopNotifier {
   private seen = new Map<string, Set<number>>();
@@ -26,7 +29,9 @@ export class DesktopNotifier {
   constructor(
     private readonly backend: Backend,
     private readonly onOpen: (t: RoutedTarget) => void,
-    private readonly intervalMs = 60_000,
+    private readonly intervalMs = 10_000,
+    /** Bring the window up with the ringing screen (desktop "ringing window"). */
+    private readonly onRing: (t: RoutedTarget) => void = onOpen,
   ) {}
 
   setForeground(t: RoutedTarget | null) {
@@ -73,10 +78,42 @@ export class DesktopNotifier {
       if (first) continue;
       const target = this.routeOf(a, n);
       if (!shouldRaiseOsAlert(n, this.foreground, target)) continue;
+      if (target.route.name === 'call') {
+        // A "missed call" notification also has object_type=call: ring only while it rings.
+        const ringing = await this.backend.callRinging(a.id, target.route.token).catch(() => false);
+        if (ringing) this.showCall(a, n, target);
+        else this.show(a, n, { accountId: a.id, route: { name: 'room', token: target.route.token } });
+        continue;
+      }
       this.show(a, n, target);
     }
     this.seen.set(a.id, seen);
     this.primed.add(a.id);
+  }
+
+  private showCall(a: AccountSummary, n: InboxNotification, target: RoutedTarget) {
+    const r = target.route;
+    if (r.name !== 'call') return;
+    this.onRing(target);
+    if (!Notification.isSupported()) return;
+    const p = presentNotification(n, this.showPreview);
+    const note = new Notification({
+      title: p.title,
+      body: this.showPreview ? p.body : 'Talk araması',
+      urgency: 'critical',
+      timeoutType: 'never',
+      silent: true, // the ringing screen plays the ringtone
+      actions: [{ type: 'button', text: 'Kabul et' }, { type: 'button', text: 'Reddet' }],
+    });
+    note.on('click', () => this.onOpen(target));
+    note.on('action', (_e, index) => {
+      if (index === 0) this.onOpen({ accountId: a.id, route: { name: 'call', token: r.token, action: 'accept' } });
+      else {
+        this.onOpen({ accountId: a.id, route: { name: 'call', token: r.token, action: 'decline' } });
+        void this.backend.dismissNotification(a.id, n.id).catch(() => undefined);
+      }
+    });
+    note.show();
   }
 
   private show(a: AccountSummary, n: InboxNotification, target: RoutedTarget) {

@@ -11,6 +11,7 @@ import { colors, font, space } from './theme';
 import { formatTime, t } from './i18n';
 import { MessageSearch, NewRoomForm, RoomSettings, SearchResults } from './talkRoom';
 import { FileCard, UploadTray, useUploads, VoiceBar } from './talkFiles';
+import { CALL_SYSTEM_MESSAGES, CallButtons, OngoingCallBanner, callUnavailableText, useCalls } from './call';
 
 /** Quick reactions offered in the picker (any emoji is accepted by the server). */
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '😮', '😢', '🙏'];
@@ -222,6 +223,8 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
   const reloadRoom = roomState.reload;
   const acts = room ? roomActions(room, features) : null;
   const title = room?.displayName || roomRef.displayName;
+  const calls = useCalls();
+  const callNote = callUnavailableText(room, calls);
 
   useEffect(() => {
     platform.onForegroundRoute?.({ accountId, route: { name: 'room', token } });
@@ -281,7 +284,8 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
             setItems(merged);
             markReadUpTo(merged);
             // Room renamed / permissions changed by someone else → refresh the gate source.
-            if (r.messages.some((m) => /^(conversation_renamed|description_set|description_removed|moderator_promoted|moderator_demoted|read_only|read_only_off|user_removed)$/.test(m.systemMessage))) reloadRoom();
+            // Calls started/ended → `hasCall` for the join banner.
+            if (r.messages.some((m) => /^(conversation_renamed|description_set|description_removed|moderator_promoted|moderator_demoted|read_only|read_only_off|user_removed|lobby_.*)$/.test(m.systemMessage) || CALL_SYSTEM_MESSAGES.has(m.systemMessage))) reloadRoom();
           }
         } catch (e) {
           if (!alive) return;
@@ -438,13 +442,16 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
         title={title}
         {...(onBack ? { onBack } : {})}
         right={
-          <View style={{ flexDirection: 'row', gap: space(2) }}>
+          <View style={{ flexDirection: 'row', gap: space(2), alignItems: 'center' }}>
+            <CallButtons room={room} title={title} />
             {features.search ?  <Button kind="secondary" title="🔍 Ara" accessibilityLabel="Bu sohbette ara" onPress={() => { setSelected(null); setPanel(panel === 'search' ? null : 'search'); }} /> : null}
             {room ? <Button kind="secondary" title="Bilgi" accessibilityLabel="Sohbet bilgileri" onPress={() => setPanel('info')} /> : null}
           </View>
         }
       />
       {room?.description ? <Text numberOfLines={1} style={{ paddingHorizontal: space(4), paddingVertical: space(1), color: colors.muted, fontSize: font.small }}>{room.description}</Text> : null}
+      <OngoingCallBanner room={room} title={title} />
+      {callNote ? <Text accessibilityRole="text" style={{ paddingHorizontal: space(4), paddingVertical: space(1), color: colors.muted, fontSize: font.small }}>Arama yok: {callNote}</Text> : null}
       <ErrorBanner error={error} />
       <ErrorBanner error={actionError ?? roomState.error} />
       {notice ? (

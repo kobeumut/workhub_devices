@@ -222,14 +222,16 @@ Her satır ayrı küçük PR/dikey dilim olabilir. Tek bir Tasks ekranını tüm
 
 Cihaz önceliği: bağlı fiziksel cihaz → varsa mevcut sim/emulator. Test için yeni sim/emulator oluşturma. Push/APNs/FCM/OS lifecycle kabulü yalnız unit test/simulator sonucuyla tamamlanmış işaretlenmez.
 
-## 10. Faz 7 — yalnız kapsam onaylanırsa canlı audio/video çağrıları
+## 10. Faz 7 — canlı audio/video çağrıları (GENE-62 ile onaylandı, GENE-63)
 
-- [ ] Desteklenen Talk signaling settings/internal/external HPB, ICE/STUN/TURN ve SDP akışını ayrı ADR/PoC ile seç.
-- [ ] RN native WebRTC + desktop WebRTC, mikrofon/kamera/Bluetooth/izin lifecycle; grup çağrısı/reconnect/network switch ve TURN-required ağ testleri.
-- [ ] iOS CallKit/uygun PushKit, Android Telecom/foreground service ve arama bildirimi; sıradan mesaj/atamayla ayrı kanallar.
-- [ ] Beş OS çapraz çağrı, headset/interrupt/audio route, arka plan çağrı ve güvenli hang-up.
-
-Bu faz ilk mesajlaşma diliminin gizli ön şartı değildir; çağrı desteklenmiyorsa açıkça belirtilir. Önce mesajlaşma/atama ve Workhub tamamlanır.
+- [x] Signaling seçimi (ayrı ADR yerine kod + test): Talk web istemcisinin wire formatı. `signaling/settings` → iç (PHP long-poll `GET/POST /api/v3/signaling/{token}`) veya dış HPB (websocket hello v2/v1 → Nextcloud oturumu → `room`). Signaling Backend'de (masaüstünde main süreç) çalışır; ticket/credential renderer'a gitmez. STUN/TURN doğrulanarak RTCPeerConnection'a verilir. `packages/core/src/call.ts`.
+- [x] Medya motoru `callEngine.ts`: mesh (büyük oturum kimliği teklif eder + geri dönüş zamanlayıcısı, glare), MCU (kendine publish + `requestoffer`), mute/unmute (signaling + `status` data channel), ICE restart / yeniden kurma, ağ değişimi. Enjekte `RTCPeerConnection` fabrikasıyla birim testli; gerçek Chromium WebRTC ile loopback smoke.
+- [x] Kapılar: `config.call.enabled`, `audio`/`video`/`signaling-v3`, oda tipi, salt okunur, lobi, `canStartCall` / `CALL_JOIN`, `PUBLISH_AUDIO/VIDEO`. Destek yoksa düğme yok + neden metni; mikrofon/kamera reddi görünür hata (+ "mikrofonsuz katıl").
+- [x] UI: sohbet başlığında sesli/görüntülü arama, tam ekran çağrı ekranı, küçültülmüş "görüşmeye dön" çubuğu, sürüyor/katıl bandı, gelen arama ekranı (zil, `notification-state` ile cevapsız tespiti).
+- [x] Gelen arama: Talk `object_type=call` → `call` rotası ve ayrı bildirim kanalı. Android: `calls` kanalı, CallStyle + full-screen intent, `phoneCall|microphone|camera` foreground service, hoparlör/ahize/kulaklık yönlendirme. Masaüstü: kritik bildirim (Kabul et/Reddet) + pencere öne gelip zil çalar; 10 sn yoklama.
+- [ ] Canlı kabul: Linux masaüstü ↔ Talk web iki yönlü ses/görüntü, Android giden/gelen (arka planda) — dev sunucu hesapları 401 verdiği için bekliyor.
+- [ ] iOS CallKit/PushKit: uygulanmadı. Relay VoIP push (APNs PushKit) desteklemiyor; iOS'ta gelen arama yalnız normal bildirim + uygulama içi zil ekranı (uygulama ön plandayken). iOS/macOS/Windows doğrulanmadı.
+- [ ] Ekran paylaşımı (alma/gönderme), Telecom `ConnectionService` (self-managed) entegrasyonu, TURN-zorunlu ağ testi.
 
 ## 11. Sıralama, riskler ve Opus2 devir sözleşmesi
 

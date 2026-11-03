@@ -2,8 +2,23 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Talk voice notes (asked at first recording) -->
+    <!-- Talk voice notes and calls (asked at first use) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Talk calls: camera, audio routing (speaker/earpiece/Bluetooth), ringing over the lock
+         screen and a phoneCall|microphone|camera foreground service while a call runs.
+         MANAGE_OWN_CALLS makes this a self-managed calling app (needed for the phoneCall FGS type). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
     <application
       android:name=".MainApplication"
@@ -34,6 +49,11 @@
         </intent-filter>
       </service>
       <receiver android:name=".ReplyReceiver" android:exported="false" />
+      <receiver android:name=".CallActionReceiver" android:exported="false" />
+      <service
+        android:name=".CallService"
+        android:exported="false"
+        android:foregroundServiceType="phoneCall|microphone|camera" />
       <provider
         android:name="androidx.core.content.FileProvider"
         android:authorities="${applicationId}.exports"

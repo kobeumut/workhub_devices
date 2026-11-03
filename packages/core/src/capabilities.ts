@@ -1,4 +1,5 @@
 import type { OcsClient } from './ocs';
+import { callCapabilitiesOf, type CallCapabilities } from './call';
 
 /** Raw `GET /ocs/v2.php/cloud/capabilities` data (only the parts we use). */
 export interface RawServerCapabilities {
@@ -17,6 +18,8 @@ export interface ServerCapabilities {
     available: boolean; version: string | null; features: ReadonlySet<string>; canCreate: boolean;
     /** `config.attachments`: may this user upload/share files, and where (e.g. `/Talk`). */
     attachments: { allowed: boolean; folder: string | null };
+    /** Audio/video calls (`config.call.enabled` + `audio`/`video`/`signaling-v3`). */
+    call: CallCapabilities;
   };
   notifications: { available: boolean; endpoints: ReadonlySet<string>; push: ReadonlySet<string> };
   /** Instance-wide Workhub info. NOT a per-user permission: use `getWorkhubBootstrap` for that. */
@@ -45,6 +48,7 @@ export function parseServerCapabilities(raw: RawServerCapabilities): ServerCapab
       // `conversations.can-create` (admin may restrict creation to groups); missing → false (fail closed)
       canCreate: (caps.spreed?.config?.conversations as Record<string, unknown> | undefined)?.['can-create'] === true,
       attachments: attachmentsOf(caps.spreed?.config?.attachments),
+      call: callCapabilitiesOf(talkFeatures, caps.spreed?.config?.call),
     },
     notifications: {
       available: !!caps.notifications,

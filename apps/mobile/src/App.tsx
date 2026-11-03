@@ -6,6 +6,7 @@ import { WorkhubApp, type PlatformServices } from '@workhub-devices/features';
 import { native, nativeEvents, parseNativeRoute, plainStore, secretStore } from './native';
 import { accountTag, ensurePush, removePush } from './push';
 import { filesSupported, mobileFileHost, mobileFileServices } from './files';
+import { createMobileCallMedia } from './call';
 import { useAndroidKeyboardPadding } from './keyboard';
 import { configureDevLogs } from './devLogs';
 import identity from '../../../config/app-identity.json';
@@ -22,6 +23,8 @@ const backend = createDirectBackend({
   ...(filesSupported ? { files: mobileFileHost } : {}),
 });
 
+const callMedia = createMobileCallMedia();
+
 async function tagToAccount(tag: string): Promise<AccountSummary | undefined> {
   for (const a of await backend.listAccounts()) if ((await accountTag(a)) === tag) return a;
   return undefined;
@@ -37,6 +40,7 @@ export default function App() {
       appVersion: identity.version,
       saveFile: (filename, content, mime) => native.shareFile(filename, content, mime),
       ...mobileFileServices(),
+      ...(callMedia ? { call: callMedia } : {}),
       onAccountsChanged: (accounts) => {
         for (const a of accounts) {
           backend
