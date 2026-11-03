@@ -9,7 +9,7 @@ import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bell, Calendar, ChartGantt, Check, ChevronDown, ChevronLeft, ChevronRight,
   Circle, CircleCheck, CircleUser, Clock, Ellipsis, FolderKanban, Funnel, Inbox, Kanban, LayoutDashboard, List, ListChecks, LogOut,
   MessageCircle, MessageSquare, Mic, MicOff, Phone, PhoneIncoming, PhoneOff, Plus, Search, Send, Server, Settings, ShieldCheck,
-  Sparkles, SquareKanban, SwitchCamera, Target, Timer, User, UserPlus, Users, Video, VideoOff, Workflow, X,
+  Sparkles, SquareKanban, SwitchCamera, Target, Timer, User, UserPlus, Users, Video, VideoOff, Volume2, Workflow, X,
 } from 'lucide-react-native';
 import { View } from 'react-native';
 import { colors } from './theme';
@@ -55,6 +55,7 @@ const ICONS = {
   send: Send,
   server: Server,
   settings: Settings,
+  speaker: Volume2,
   subtasks: ListChecks,
   switchCamera: SwitchCamera,
   tasks: SquareKanban,

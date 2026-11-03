@@ -169,6 +169,50 @@ class WorkhubNativeModule(private val ctx: ReactApplicationContext) : ReactConte
   @ReactMethod fun audioPlay(b64: String, p: Promise) = files.audioPlay(b64, p)
   @ReactMethod fun audioStop() = files.audioStop()
 
+  // ---- Talk calls (CallService.kt) ----
+  @ReactMethod fun callStart(title: String, video: Boolean) {
+    CallAudio.communication(ctx, true)
+    CallService.start(ctx, title, video)
+  }
+  @ReactMethod fun callStop() {
+    CallService.stop(ctx)
+    CallAudio.release(ctx)
+    leaveLockScreen()
+  }
+  /** Never keep the app above the lock screen once no call rings or runs. */
+  private fun leaveLockScreen() {
+    (ctx.currentActivity as? MainActivity)?.let { a -> a.runOnUiThread { a.showOverLockScreen(false) } }
+  }
+  @ReactMethod fun callSpeaker(on: Boolean) = CallAudio.speaker(ctx, on)
+  @ReactMethod fun ringStart() = CallAudio.ringStart(ctx)
+  @ReactMethod fun ringStop() {
+    CallAudio.ringStop()
+    if (!CallService.running) leaveLockScreen()
+  }
+  /** Remove an incoming-call notification once the call was answered/declined in the app. */
+  @ReactMethod fun callNotificationsClear() {
+    val nm = ctx.getSystemService(android.app.NotificationManager::class.java)
+    for (sbn in nm.activeNotifications) if (sbn.notification.channelId == WorkhubNotifications.CH_CALL) nm.cancel(sbn.id)
+  }
+
+  private var netCallback: android.net.ConnectivityManager.NetworkCallback? = null
+  /** Default network changed (Wi-Fi ↔ cellular): JS restarts ICE on the running call. */
+  @ReactMethod fun networkWatch(on: Boolean) {
+    val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+    netCallback?.let { runCatching { cm.unregisterNetworkCallback(it) } }
+    netCallback = null
+    if (!on) return
+    val cb = object : android.net.ConnectivityManager.NetworkCallback() {
+      private var first = true
+      override fun onAvailable(network: android.net.Network) {
+        if (first) { first = false; return } // the current network at registration
+        if (ctx.hasActiveReactInstance()) ctx.emitDeviceEvent("WorkhubNetwork", "changed")
+      }
+    }
+    cm.registerDefaultNetworkCallback(cb)
+    netCallback = cb
+  }
+
   @ReactMethod fun addListener(eventName: String) {}
   @ReactMethod fun removeListeners(count: Double) {}
 }

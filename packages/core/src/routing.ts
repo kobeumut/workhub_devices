@@ -5,6 +5,8 @@ import type { OcsClient } from './ocs';
 /** Typed in-app routes. Untrusted payloads/links are only ever converted to one of these. */
 export type AppRoute =
   | { name: 'room'; token: string; messageId?: number }
+  /** Incoming call (Talk notification `object_type=call`): ringing screen, then the call or the room. */
+  | { name: 'call'; token: string; action?: 'accept' | 'decline' }
   | { name: 'task'; cardId: number }
   | { name: 'inbox'; notificationId?: number };
 
@@ -53,7 +55,8 @@ export function routeForObject(app: string, objectType: string, objectId: string
   if (app === 'spreed' || app === 'talk') {
     // Talk uses `token` or `token/messageId` depending on version/object type.
     const [token, msg] = objectId.split('/');
-    if (token && ROOM_TOKEN.test(token) && ['chat', 'room', 'call', 'reminder', 'remote_talk_share'].includes(objectType)) {
+    if (token && ROOM_TOKEN.test(token) && objectType === 'call') return { name: 'call', token };
+    if (token && ROOM_TOKEN.test(token) && ['chat', 'room', 'reminder', 'remote_talk_share'].includes(objectType)) {
       return msg && POSITIVE_INT.test(msg) ? { name: 'room', token, messageId: Number(msg) } : { name: 'room', token };
     }
   }
@@ -132,14 +135,16 @@ export function parseServerLink(serverBase: ServerBase, link: string): AppRoute 
 export interface Presentation {
   title: string;
   body: string;
-  channel: 'chat' | 'workhub' | 'other';
+  /** Calls get their own channel (ringing, full-screen) separate from messages and assignments. */
+  channel: 'call' | 'chat' | 'workhub' | 'other';
 }
 
 /** Lock-screen default is hidden content; rich preview is an explicit per-user opt-in. */
-export function presentNotification(n: Pick<InboxNotification, 'app' | 'subject' | 'message'>, showPreview: boolean): Presentation {
-  const channel = n.app === 'spreed' || n.app === 'talk' ? 'chat' : n.app === 'workhub' ? 'workhub' : 'other';
+export function presentNotification(n: Pick<InboxNotification, 'app' | 'subject' | 'message'> & { objectType?: string }, showPreview: boolean): Presentation {
+  const talk = n.app === 'spreed' || n.app === 'talk';
+  const channel = talk && n.objectType === 'call' ? 'call' : talk ? 'chat' : n.app === 'workhub' ? 'workhub' : 'other';
   if (!showPreview) {
-    const title = channel === 'chat' ? 'Yeni mesaj' : channel === 'workhub' ? 'Workhub bildirimi' : 'Yeni bildirim';
+    const title = channel === 'call' ? 'Gelen arama' : channel === 'chat' ? 'Yeni mesaj' : channel === 'workhub' ? 'Workhub bildirimi' : 'Yeni bildirim';
     return { title, body: '', channel };
   }
   return { title: n.subject, body: n.message, channel };

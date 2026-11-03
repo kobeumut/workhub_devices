@@ -23,6 +23,11 @@ export interface TalkRoom {
   actorId?: string;
   canDeleteConversation?: boolean;
   canLeaveConversation?: boolean;
+  /** Calls: a call is running / its flags, may this participant start one, lobby (0 off, 1 on). */
+  hasCall?: boolean;
+  callFlag?: number;
+  canStartCall?: boolean;
+  lobbyState?: number;
 }
 
 export interface RichObject {

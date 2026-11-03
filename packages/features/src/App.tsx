@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { BackHandler, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { talkFeaturesOf, type AccountId, type AccountSummary, type AppRoute, type Backend, type RoutedTarget, type SessionInfo } from '@workhub-devices/core';
 import { ServicesProvider, useAsync, useServices, type PlatformServices } from './services';
@@ -8,6 +8,7 @@ import { BoardScreen, TaskScreen } from './workhub';
 import { WorkhubHome, WorkhubWide } from './modules';
 import { Icon, type IconName } from './icons';
 import { InboxScreen } from './inbox';
+import { CallsProvider } from './call';
 import { Button, Empty, ErrorBanner, Header, Loading, card } from './ui';
 import { colors, font, space } from './theme';
 import { describeError, t } from './i18n';
@@ -103,9 +104,19 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   const bumpRooms = useCallback(() => setRoomsVersion((v) => v + 1), []);
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
+  /** Incoming call request (notification / OS call UI) for the CallsProvider. */
+  const [ring, setRing] = useState<{ token: string; autoAccept: boolean; seq: number } | null>(null);
+
+  const openRoom = useCallback((token: string) => {
+    setTab('chats');
+    setDetail({ kind: 'room', token, displayName: '' });
+  }, []);
 
   const go = useCallback((r: AppRoute) => {
-    if (r.name === 'room') {
+    if (r.name === 'call') {
+      // Declined from the OS call UI: nothing to show.
+      if (r.action !== 'decline') setRing((p) => ({ token: r.token, autoAccept: r.action === 'accept', seq: (p?.seq ?? 0) + 1 }));
+    } else if (r.name === 'room') {
       setTab('chats');
       setDetail({ kind: 'room', token: r.token, displayName: '' });
     } else if (r.name === 'task') {
@@ -143,6 +154,12 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   }
   const s = session.data!;
   const selfId = s.workhub?.user.uid ?? account.loginName;
+  // The provider is the root of every layout below, so switching layouts never drops a call.
+  const withCalls = (node: ReactNode) => (
+    <CallsProvider accountId={account.id} caps={s.talkCall} nick={s.workhub?.user.displayName ?? account.loginName} onOpenRoom={openRoom} ring={ring}>
+      {node}
+    </CallsProvider>
+  );
   const talkFeatures = talkFeaturesOf(s.talkFeatures, { attachmentsAllowed: s.talkAttachmentsAllowed });
 
   const listPane = (() => {
@@ -235,7 +252,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   if (wide && tab === 'tasks' && s.workhub) {
     const openProject = detail?.kind === 'project' ? detail : detail?.kind === 'task' && detail.from ? detail.from : null;
     const taskId = detail?.kind === 'task' ? detail.cardId : null;
-    return (
+    return withCalls(
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.bg }}>
         {tabs}
         <View style={{ flex: 1 }}>
@@ -275,12 +292,12 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             ) : null}
           </WorkhubWide>
         </View>
-      </View>
+      </View>,
     );
   }
 
   if (wide) {
-    return (
+    return withCalls(
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.bg }}>
         {tabs}
         <View style={{ width: 360, borderRightWidth: 1, borderColor: colors.border }}>
@@ -289,10 +306,10 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
           {listPane}
         </View>
         <View style={{ flex: 1 }}>{detailPane ?? <Empty text={tab === 'chats' ? 'Bir sohbet seçin' : tab === 'tasks' ? 'Bir proje seçin' : ' '} />}</View>
-      </View>
+      </View>,
     );
   }
-  return (
+  return withCalls(
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       {detailPane ?? (
         <View style={{ flex: 1 }}>
@@ -302,7 +319,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         </View>
       )}
       {detailPane ? null : tabs}
-    </View>
+    </View>,
   );
 }
 

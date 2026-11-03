@@ -61,3 +61,12 @@ test('lock screen default hides content; foreground suppression is account-aware
   assert.equal(shouldRaiseOsAlert(n, { accountId: a, route: room }, { accountId: a, route: room }), false);
   assert.equal(shouldRaiseOsAlert(n, { accountId: a, route: room }, { accountId: b, route: room }), true);
 });
+
+test('calls: object_type=call routes to the ringing screen and its own notification channel', () => {
+  assert.deepEqual(routeForObject('spreed', 'call', 'abc123'), { name: 'call', token: 'abc123' });
+  assert.deepEqual(routeForObject('spreed', 'call', '../x', 3), { name: 'inbox', notificationId: 3 });
+  assert.deepEqual(interpretPush({ nid: 9, app: 'spreed', type: 'call', id: 'abc123' }), { action: 'show', notificationId: 9, app: 'spreed', route: { name: 'call', token: 'abc123' } });
+  assert.equal(presentNotification({ app: 'spreed', objectType: 'call', subject: 'Bob arıyor', message: '' }, false).channel, 'call');
+  assert.equal(presentNotification({ app: 'spreed', objectType: 'call', subject: 'Bob arıyor', message: '' }, false).title, 'Gelen arama');
+  assert.equal(presentNotification({ app: 'spreed', objectType: 'chat', subject: 's', message: '' }, false).channel, 'chat');
+});

@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('workhub', {
   stageRecording: (wav: Uint8Array) => ipcRenderer.invoke('workhub:stageRecording', wav),
   releaseFile: (handle: string) => ipcRenderer.invoke('workhub:releaseFile', handle),
   setForeground: (target: unknown) => ipcRenderer.send('workhub:foreground', target),
+  // Running call: keeps the display awake and the window title informative (no data beyond a flag).
+  setCallActive: (active: boolean, title: string | null) => ipcRenderer.send('workhub:callActive', active, title),
   onRoute: (cb: (target: unknown) => void) => {
     const h = (_e: unknown, t: unknown) => cb(t);
     ipcRenderer.on('workhub:route', h);

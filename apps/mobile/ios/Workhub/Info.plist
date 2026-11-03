@@ -36,6 +36,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Talk görüntülü aramalarında kameranız karşı tarafa gösterilir.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Talk aramalarında ve sesli notlarda mikrofonunuz kullanılır.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>RCTNewArchEnabled</key>

@@ -33,6 +33,10 @@ import {
   type FileHandle, type FileHost, type SinkMode, type TransferProgress, type UploadResult,
 } from './files';
 import {
+  callApi, callGate, joinFlags, startSignaling,
+  type CallCapabilities, type CallGate, type CallSignaling, type IceServer, type PeerMessage, type SignalEvent, type WebSocketFactory, type WebSocketLike,
+} from './call';
+import {
   aiApi, aiInputError, proposalActions, isAiActive, AI_ACTIONS, AI_LIMITS, AI_REQUEST_ID_RE,
   type AiAcceptResult, type AiProposal, type AiRequestBase, type AiRequestDetail, type AiRequestInput, type AiRequestSummary, type AiStatus,
 } from './ai';
@@ -62,6 +66,21 @@ export interface SessionInfo {
   workhub: WorkhubBootstrap | null;
   /** Notifications Web Push available (`webpush` capability). */
   webPush: boolean;
+  /** Audio/video call capabilities (room gates: `callGate` on a fresh `talkRoom`). */
+  talkCall: CallCapabilities;
+}
+
+export interface CallJoinResult {
+  /** Opaque handle for `callEvents` / `callSend` / `callMedia` / `callLeave`. */
+  callId: string;
+  /** Our signaling session (mesh offer direction, MCU publisher target). */
+  sessionId: string;
+  mode: 'mesh' | 'mcu';
+  /** STUN/TURN for RTCPeerConnection (TURN credentials are short-lived). */
+  iceServers: IceServer[];
+  /** Flags actually announced (never more than the room allows). */
+  flags: number;
+  gate: CallGate;
 }
 
 export interface ChatRequest {
@@ -275,6 +294,24 @@ export interface Backend {
   /** Fresh preview must be acceptable (ready, not stale/restricted, target editable). */
   aiAccept(accountId: AccountId, proposalId: number, version: number, idempotencyKey: string): Promise<AiAcceptResult | null>;
   aiDismiss(accountId: AccountId, proposalId: number, version: number): Promise<{ id: number; state: 'dismissed'; version: number } | null>;
+
+  /**
+   * Talk calls. Join gate: call capabilities + `callGate` on a FRESH room read (fail closed);
+   * the server re-checks permissions and strips flags. Signaling (internal long-poll or HPB
+   * websocket) runs HERE, so tickets/credentials never reach a desktop renderer; media runs
+   * in the UI process. A call nobody polls for 60 s is left automatically.
+   */
+  callJoin(accountId: AccountId, token: string, media: { audio: boolean; video: boolean }, silent: boolean): Promise<CallJoinResult>;
+  /** Long-poll signaling events (empty on timeout, ≤ 30 s). */
+  callEvents(callId: string, timeoutMs: number): Promise<SignalEvent[]>;
+  /** Send an offer/answer/candidate/mute… to one session of the same call. */
+  callSend(callId: string, to: string, data: PeerMessage): Promise<void>;
+  /** Re-announce which media we publish (e.g. camera became available). */
+  callMedia(callId: string, media: { audio: boolean; video: boolean }): Promise<void>;
+  /** Leave (moderators may end it for everyone with `endForAll`); closes signaling. */
+  callLeave(callId: string, endForAll: boolean): Promise<void>;
+  /** Incoming call: does it still ring for this user (`call-notification-state-api`)? */
+  callRinging(accountId: AccountId, token: string): Promise<boolean>;
 }
 
 /** Non-secret persistent key/value storage (AsyncStorage / a JSON file in the Electron main). */
@@ -296,6 +333,8 @@ export interface DirectBackendDeps {
   files?: FileHost;
   /** Platform hook, e.g. web push unregister + local notification cleanup. */
   onLogout?: (account: Account, client: OcsClient) => Promise<boolean>;
+  /** WebSocket for an external signaling server (HPB); default: the global `WebSocket`. */
+  webSocket?: WebSocketFactory;
 }
 
 const ACCOUNTS_KEY = 'accounts:v1';
@@ -465,7 +504,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
   const clientError = (code: string) => new OcsError('client', 422, undefined, undefined, code);
 
   /** Talk capabilities per account, cached briefly (they change only on server upgrades/config). */
-  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean; folder: string | null }>();
+  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean; folder: string | null; call: CallCapabilities }>();
   const talkFor = async (id: AccountId, need?: keyof TalkFeatures) => {
     const c = await client(id);
     let hit = talkCaps.get(id);
@@ -476,11 +515,35 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
         features: talkFeaturesOf(caps.talk.features, { attachmentsAllowed: caps.talk.attachments.allowed }),
         canCreate: caps.talk.canCreate,
         folder: caps.talk.attachments.folder,
+        call: caps.talk.call,
       };
       talkCaps.set(id, hit);
     }
     if (need && !hit.features[need]) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
-    return { c, f: hit.features, canCreate: hit.canCreate, folder: hit.folder };
+    return { c, f: hit.features, canCreate: hit.canCreate, folder: hit.folder, call: hit.call };
+  };
+
+  /** Running calls (one signaling session each). Abandoned ones are left by the watchdog. */
+  const calls = new Map<string, { accountId: AccountId; token: string; c: OcsClient; sig: CallSignaling; gate: CallGate; lastPoll: number; watchdog: ReturnType<typeof setInterval> }>();
+  const webSocket: WebSocketFactory | undefined = deps.webSocket
+    ?? (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'function' ? (url) => new (globalThis as unknown as { WebSocket: new (u: string) => WebSocketLike }).WebSocket(url) : undefined);
+  const callOf = (callId: string) => {
+    const call = calls.get(callId);
+    if (!call) throw new OcsError('not_found', 404, undefined, undefined, 'CALL_NOT_FOUND');
+    return call;
+  };
+  const endCall = async (callId: string, endForAll: boolean) => {
+    const call = calls.get(callId);
+    if (!call) return;
+    calls.delete(callId);
+    clearInterval(call.watchdog);
+    try {
+      await callApi.leave(call.c, call.token, endForAll);
+    } catch {
+      /* already out of the call (ended, kicked, session gone) */
+    } finally {
+      await call.sig.close();
+    }
   };
   /** Room gate on the CURRENT room (fresh read). */
   const roomFor = async (id: AccountId, token: string, need: keyof RoomActions, feature?: keyof TalkFeatures) => {
@@ -609,6 +672,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
         issues: checkCompatibility(caps),
         workhub,
         webPush: caps.notifications.push.has('webpush'),
+        talkCall: caps.talk.call,
       };
     },
 
@@ -1168,6 +1232,62 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async aiDismiss(accountId, proposalId, version) {
       return aiApi.dismiss(await proposalFor(accountId, proposalId, version, 'dismiss'), proposalId, version);
     },
+
+    async callJoin(accountId, token, media, silent) {
+      const { c, call: caps } = await talkFor(accountId);
+      const gate = callGate(await talkRoomApi.get(c, token), caps);
+      if (!gate.available || !gate.canJoin) throw new OcsError('forbidden', 403, undefined, undefined, `CALL_${(gate.reason ?? 'no_permission').toUpperCase()}`);
+      const settings = await callApi.settings(c, token);
+      const sig = await startSignaling(c, token, settings, webSocket ? { webSocket } : {});
+      const flags = joinFlags(gate, media);
+      try {
+        await callApi.join(c, token, flags, caps.silent && silent ? { silent: true } : {});
+      } catch (e) {
+        await sig.close();
+        throw e;
+      }
+      const callId = newId('call');
+      const watchdog = setInterval(() => {
+        const cur = calls.get(callId);
+        if (cur && Date.now() - cur.lastPoll > 60_000) void endCall(callId, false);
+      }, 15_000);
+      (watchdog as { unref?: () => void }).unref?.();
+      calls.set(callId, { accountId, token, c, sig, gate, lastPoll: Date.now(), watchdog });
+      return { callId, sessionId: sig.sessionId, mode: sig.mcu ? 'mcu' : 'mesh', iceServers: settings.iceServers, flags, gate };
+    },
+    async callEvents(callId, timeoutMs) {
+      const call = callOf(callId);
+      call.lastPoll = Date.now();
+      const abort = new AbortController();
+      polls.set(callId, abort);
+      try {
+        const events = await call.sig.next(Math.min(Math.max(timeoutMs, 0), 30_000), abort.signal);
+        call.lastPoll = Date.now();
+        // A lost session ends the call here too (no further DELETE needed, but close signaling).
+        if (events.some((e) => e.type === 'lost' || e.type === 'ended')) void endCall(callId, false);
+        return events;
+      } finally {
+        if (polls.get(callId) === abort) polls.delete(callId);
+      }
+    },
+    async callSend(callId, to, data) {
+      await callOf(callId).sig.send(to, data);
+    },
+    async callMedia(callId, media) {
+      const call = callOf(callId);
+      await callApi.update(call.c, call.token, joinFlags(call.gate, media));
+    },
+    async callLeave(callId, endForAll) {
+      await endCall(callId, endForAll);
+    },
+    async callRinging(accountId, token) {
+      const { c, call: caps } = await talkFor(accountId);
+      if (!caps.ringState) {
+        // Older Talk: fall back to "a call is running in that room".
+        return (await talkRoomApi.get(c, token)).hasCall === true;
+      }
+      return callApi.ringing(c, token);
+    },
   };
 }
 
@@ -1195,6 +1315,7 @@ export const BACKEND_METHODS = [
   'workflows', 'workflowSamples', 'workflow', 'workflowCreate', 'workflowUpdate', 'workflowDelete', 'workflowStart',
   'workflowRuns', 'workflowRun', 'workflowCancel', 'workflowHandoffs', 'cardWorkflowHandoffs', 'workflowHandoff', 'workflowSkip',
   'aiStatus', 'aiRequests', 'aiCreate', 'aiRequest', 'aiCancel', 'aiProposal', 'aiAccept', 'aiDismiss',
+  'callJoin', 'callEvents', 'callSend', 'callMedia', 'callLeave', 'callRinging',
 ] as const satisfies ReadonlyArray<keyof Backend>;
 export type BackendMethod = (typeof BACKEND_METHODS)[number];
 
@@ -1489,6 +1610,25 @@ export const isValidShareFileOptions = (v: unknown): v is ShareFileOptions =>
     transferId: isTransferId, referenceId: isReferenceId, caption: isStr(FILE_LIMITS.caption), replyTo: isInt, voice: (x) => typeof x === 'boolean',
   }, ['transferId', 'referenceId']);
 
+// ---- Call wire validation: only the peer messages the engine produces, bounded ----
+const CALL_ID_RE = /^call-[a-z0-9]{1,16}-[a-z0-9]{1,10}$/;
+const isCallId = (v: unknown) => typeof v === 'string' && CALL_ID_RE.test(v);
+const isSessionId = (v: unknown) => typeof v === 'string' && /^[\w+/=.-]{1,512}$/.test(v);
+const isMedia = (v: unknown) => isObj(v) && hasOnly(v as Record<string, unknown>, ['audio', 'video'])
+  && typeof (v as { audio: unknown }).audio === 'boolean' && typeof (v as { video: unknown }).video === 'boolean';
+const PEER_TYPES = ['offer', 'answer', 'candidate', 'mute', 'unmute', 'requestoffer'];
+export const isValidPeerMessage = (v: unknown): v is PeerMessage => {
+  if (!isObj(v)) return false;
+  const m = v as Record<string, unknown>;
+  if (!Object.keys(m).every((k) => ['type', 'roomType', 'sid', 'payload', 'nick'].includes(k))) return false;
+  if (!PEER_TYPES.includes(m.type as string)) return false;
+  if (m.roomType !== undefined && m.roomType !== 'video' && m.roomType !== 'screen') return false;
+  if (m.sid !== undefined && !(typeof m.sid === 'string' && /^[\w-]{1,64}$/.test(m.sid))) return false;
+  if (m.nick !== undefined && !isStr(256)(m.nick)) return false;
+  if (m.payload !== undefined && !isObj(m.payload)) return false;
+  return JSON.stringify(m).length <= 200_000; // SDP with many codecs stays far below this
+};
+
 /** Argument shape validation for untrusted IPC input. */
 const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   listAccounts: (a) => a.length === 0,
@@ -1621,6 +1761,12 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   aiProposal: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   aiAccept: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isUuidKey(a[3]),
   aiDismiss: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
+  callJoin: (a) => a.length === 4 && isAccountId(a[0]) && isToken(a[1]) && isMedia(a[2]) && typeof a[3] === 'boolean',
+  callEvents: (a) => a.length === 2 && isCallId(a[0]) && Number.isInteger(a[1]) && (a[1] as number) >= 0 && (a[1] as number) <= 30_000,
+  callSend: (a) => a.length === 3 && isCallId(a[0]) && isSessionId(a[1]) && isValidPeerMessage(a[2]),
+  callMedia: (a) => a.length === 2 && isCallId(a[0]) && isMedia(a[1]),
+  callLeave: (a) => a.length === 2 && isCallId(a[0]) && typeof a[1] === 'boolean',
+  callRinging: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),
 };
 
 /** Main-process side: validate + dispatch + serialize errors. */

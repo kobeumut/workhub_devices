@@ -33,10 +33,21 @@ class MainActivity : ReactActivity() {
     handleRoute(intent)
   }
 
+  /** Only while a call rings/runs; reset by `callStop` so the app never stays above the lock screen. */
+  fun showOverLockScreen(on: Boolean) {
+    if (android.os.Build.VERSION.SDK_INT >= 27) {
+      setShowWhenLocked(on)
+      setTurnScreenOn(on)
+    }
+  }
+
   /** Notification taps carry a JSON {tag, route}; JS validates it again before navigating. */
   private fun handleRoute(intent: Intent?) {
     val json = intent?.getStringExtra(WorkhubNotifications.EXTRA_ROUTE) ?: return
     intent.removeExtra(WorkhubNotifications.EXTRA_ROUTE)
+    // Incoming call from the full-screen intent: show the ringing screen over the lock screen.
+    val isCall = runCatching { org.json.JSONObject(json).getJSONObject("route").getString("name") == "call" }.getOrDefault(false)
+    showOverLockScreen(isCall)
     WorkhubNativeModule.deliverRoute(json)
   }
 }

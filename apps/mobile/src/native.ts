@@ -35,6 +35,14 @@ interface WorkhubNativeSpec {
   voiceCancel?(): void;
   audioPlay?(base64: string): Promise<void>;
   audioStop?(): void;
+  // Talk calls (Android, CallService.kt). Optional: absent → the call keeps no foreground service.
+  callStart?(title: string, video: boolean): void;
+  callStop?(): void;
+  callSpeaker?(on: boolean): void;
+  ringStart?(): void;
+  ringStop?(): void;
+  callNotificationsClear?(): void;
+  networkWatch?(on: boolean): void;
 }
 
 const mod = NativeModules.WorkhubNative as WorkhubNativeSpec | undefined;
@@ -64,10 +72,13 @@ export interface NativeRoute {
 export function parseNativeRoute(raw: string | null): NativeRoute | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw) as { tag?: unknown; route?: { name?: unknown; token?: unknown; cardId?: unknown } };
+    const v = JSON.parse(raw) as { tag?: unknown; route?: { name?: unknown; token?: unknown; cardId?: unknown; action?: unknown } };
     if (typeof v.tag !== 'string' || !v.route) return null;
     const r = v.route;
     if (r.name === 'room' && typeof r.token === 'string' && /^[a-z0-9]{1,64}$/i.test(r.token)) return { tag: v.tag, route: { name: 'room', token: r.token } };
+    if (r.name === 'call' && typeof r.token === 'string' && /^[a-z0-9]{1,64}$/i.test(r.token)) {
+      return { tag: v.tag, route: { name: 'call', token: r.token, ...(r.action === 'accept' || r.action === 'decline' ? { action: r.action } : {}) } };
+    }
     if (r.name === 'task' && Number.isInteger(r.cardId) && (r.cardId as number) > 0) return { tag: v.tag, route: { name: 'task', cardId: r.cardId as number } };
     return { tag: v.tag, route: { name: 'inbox' } };
   } catch {

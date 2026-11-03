@@ -188,3 +188,14 @@ Kök neden (klavye): Android 16 edge-to-edge zorunlu; `adjustResize` pencereyi k
 | Android | `./gradlew assembleDebug`; `npx react-native bundle --platform android` | APK derlendi (`react-native-svg` autolink); JS paketinde Lucide + RNSVG bileşenleri çözüldü. Emülatör/cihazda çalıştırılmadı (aşağıya bakın) |
 | **Linux masaüstü UI smoke (canlı)** | `apps/desktop/scripts/smoke.mjs` | **Çalıştırılamadı:** `:18081` dev sunucusu değişmiş — capabilities'te Workhub/Notifications yok, kayıtlı tüm test hesapları 401. Smoke yeni düzene uyarlandı (kenar çubuğu, Kanban hızlı ekleme, sütun etiketleri), sunucu geri gelince koşulmalı |
 | iOS / macOS / Windows | — | Unverified (Mac/Windows ortamı yok). iOS için `pod install` yeniden gerekli (RNSVG) |
+
+## GENE-63 — Talk sesli/görüntülü arama
+
+| Kontrol | Komut | Sonuç |
+|---|---|---|
+| Core birim testleri (kapılar, ayarlar, iç/dış signaling, Backend + IPC doğrulama, mesh/MCU motoru) | `npm test -w @workhub-devices/core` | geçti |
+| Gerçek WebRTC loopback (iki motor, Chromium, sahte kamera/mikrofon) | `npm run smoke:call-loopback -w @workhub-devices/desktop` | geçti: bağlandı, uzak 320×240 video çözüldü, mute/unmute, ICE restart, ayrılma |
+| Çağrı UI (fixture backend + gerçek WebRTC karşı taraf, masaüstü + telefon genişliği) | `npm run preview:call-shots -w @workhub-devices/desktop` | 30/30 adım geçti |
+| Android derleme + emülatörde açılış (react-native-webrtc 155, RN 0.88 new arch) | `./gradlew assembleDebug`, Medium_Phone_API_36.1 | derlendi, çökmesiz açıldı |
+| Canlı iki taraflı arama (masaüstü ↔ Talk web, Android giden/gelen) | — | **bekliyor**: dev sunucu hesapları 401 |
+| iOS / macOS / Windows | — | **doğrulanmadı** |

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, shell, Tray, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerSaveBlocker, session, shell, Tray, type WebContents } from 'electron';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
@@ -175,6 +175,18 @@ ipcMain.handle('workhub:releaseFile', async (e, handle: unknown) => {
   if (isOurFrame(e.sender, e.senderFrame?.url)) files.release(handle);
 });
 
+/** Running call: no display sleep; the window title says so (shown in the taskbar). */
+let callBlocker: number | null = null;
+ipcMain.on('workhub:callActive', (e, active: unknown, title: unknown) => {
+  if (!isOurFrame(e.sender, e.senderFrame?.url)) return;
+  if (active === true && callBlocker === null) callBlocker = powerSaveBlocker.start('prevent-display-sleep');
+  if (active !== true && callBlocker !== null) {
+    powerSaveBlocker.stop(callBlocker);
+    callBlocker = null;
+  }
+  win?.setTitle(active === true ? `Workhub — görüşmede${typeof title === 'string' && title.length <= 255 ? `: ${title}` : ''}` : 'Workhub');
+});
+
 ipcMain.on('workhub:foreground', (e, target: unknown) => {
   if (!isOurFrame(e.sender, e.senderFrame?.url)) return;
   const t = target as RoutedTarget | null;
@@ -187,15 +199,20 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
-  // Deny every permission (camera, notifications-from-web, geolocation…) to the renderer. The
-  // only exception is the MICROPHONE for voice notes, requested by our own top frame.
-  const audioOnly = (types: readonly string[] | undefined) => !!types && types.length > 0 && types.every((t) => t === 'audio');
+  // Deny every permission (notifications-from-web, geolocation, screen capture…) to the renderer.
+  // The only exception is MICROPHONE + CAMERA (voice notes, Talk calls) requested by our own top
+  // frame (the packaged app origin) — never by any other page or frame.
+  const cameraOrMic = (types: readonly string[] | undefined) => !!types && types.length > 0 && types.every((t) => t === 'audio' || t === 'video');
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
     const d = details as { mediaTypes?: string[]; requestingUrl?: string };
-    cb(perm === 'media' && wc === win?.webContents && audioOnly(d.mediaTypes) && isOurFrame(wc, d.requestingUrl));
+    cb(perm === 'media' && wc === win?.webContents && cameraOrMic(d.mediaTypes) && isOurFrame(wc, d.requestingUrl));
   });
-  session.defaultSession.setPermissionCheckHandler((wc, perm, _origin, details) =>
-    perm === 'media' && !!wc && wc === win?.webContents && (details as { mediaType?: string }).mediaType === 'audio');
+  session.defaultSession.setPermissionCheckHandler((wc, perm, _origin, details) => {
+    const d = details as { mediaType?: string; requestingUrl?: string };
+    // `will-navigate` pins the window to our file and new windows are denied, so the window is
+    // our app; a reported requesting frame must still be ours (iframes are blocked by CSP too).
+    return perm === 'media' && !!wc && wc === win?.webContents && (d.mediaType === 'audio' || d.mediaType === 'video') && (!d.requestingUrl || isOurFrame(wc, d.requestingUrl));
+  });
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
     cb({
       responseHeaders: {
