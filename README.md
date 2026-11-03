@@ -49,6 +49,15 @@ Geliştirme derlemeleri (`__DEV__`, masaüstünde `WORKHUB_ALLOW_HTTP=1`) yerel 
 
 **LogBox (yalnız debug):** uyarı balonları sekme çubuğunu/yazma alanını örttüğü için kapalıdır (`apps/mobile/src/devLogs.ts`). Uyarılar Metro terminalinde ve `adb logcat -s ReactNativeJS` içinde görünmeye devam eder; ölümcül JS hataları yine tam ekran açılır. Balonları görmek için `WORKHUB_LOGBOX_TOASTS = true`.
 
+### Tasarım (web Workhub ile aynı görünüm)
+
+- **Tema:** web Workhub'ın "Obsidian Orbit" tasarım sisteminin açık varyantı (`packages/features/src/theme.ts`): slate metin, beyaz kartlar, Nextcloud mavisi vurgu, 6/10/14 px köşe yarıçapları. Metin renkleri ≥ 4.5:1 kontrast; renk tek başına anlam taşımaz (öncelik rozetinde ▲▲/▲/■/▼ + metin).
+- **İkonlar:** [Lucide](https://lucide.dev) (ISC) — tek bir çizgi ikon ailesi, `packages/features/src/icons.tsx` (`<Icon name="kanban" />`). Mobil `lucide-react-native` + `react-native-svg`, masaüstü renderer `lucide-react` (Vite alias, DOM SVG). İkonlar dekoratiftir; erişilebilir ad her zaman kontrolün kendisindedir. iOS'ta yeni native modül için `pod install` yeniden çalıştırılmalı.
+- **İşler (geniş ekran, ≥ 900 px):** web'deki gibi sol gezinme — modüller ikonlarıyla ve projeler renkli alt öğeler olarak (açık görev sayısıyla); sağda proje çalışma alanı, görev ayrıntısı sağ çekmece olarak açılır. Telefonda modüller ikonlu sekmeler.
+- **Proje çalışma alanı:** renkli başlık + "Proje ayarları" + "Görev ekle"; görünümler **Kanban** (varsayılan), **Pano** (erişilebilir bölümlü liste), **Gantt**, **Etkinlik**, **İş yükü** (bu projeye filtreli). Kanban ve Pano için arama + filtreler (yalnız benim, öncelik, tamamlananlar).
+- **Kanban:** yatay kaydırılan sütunlar (telefonda sütun ekranın ~%84'ü, sonraki sütun görünür ve kaydırma sütuna oturur), web kartı (#id, öncelik, başlık, etiketler, alt iş ilerlemesi, tamamlandı onay kutusu, bitiş rozeti — gecikmiş/bugün vurgulu, atanan avatarları). Sütun başında "+" ve altta "Görev ekle" ile hızlı ekleme. Kart taşıma: her platformda kart menüsü (sola/sağa, yukarı/aşağı, belirli listeye; uzun basma da açar) — dokunmatikte ve ekran okuyucuda tek yol budur; masaüstünde ayrıca fareyle sürükle-bırak. Sıra hesabı web ile aynı (`packages/core/src/board.ts`; filtreyle gizli kartlar hesaba katılır).
+- **Çevrimdışı tasarım önizlemesi:** `npm run preview:shots -w @workhub-devices/desktop` gerçek arayüzü sahte (fixture) bir backend ile açar, Kanban akışını sürer (filtre, kart menüsüyle taşıma, hızlı ekleme, görev çekmecesi, Pano) ve masaüstü (1440×900) + telefon (412×900) ekran görüntülerini `apps/desktop/preview-out/` altına yazar. Uygulama paketine girmez.
+
 ### Canlı testler (gerçek Nextcloud'a karşı)
 
 - `npm run smoke:live -w @workhub-devices/core`: API uçtan uca testi (14 adım).
