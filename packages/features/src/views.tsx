@@ -289,12 +289,13 @@ export function workloadCellLabel(m: Pick<WorkloadMember, 'displayName'>, d: Wor
  * Person × day workload table (role=table with row/column headers). Each cell is a button with
  * the full spoken value and opens that day's tasks; load is shown as text, not only colour.
  */
-export function WorkloadScreen({ accountId, onOpenTask }: { accountId: AccountId; onOpenTask?: (cardId: number) => void }) {
+export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId: AccountId; onOpenTask?: (cardId: number) => void; boardIds?: number[] }) {
   const { backend } = useServices();
   const [span, setSpan] = useState<7 | 14>(7);
   const [from, setFrom] = useState(() => workloadWeek(today()).from);
   const to = addDays(from, span - 1);
-  const s = useAsync(() => backend.workload(accountId, { from, to }), [accountId, from, to]);
+  const boards = boardIds?.join(',') ?? '';
+  const s = useAsync(() => backend.workload(accountId, { from, to, ...(boardIds?.length ? { boardIds } : {}) }), [accountId, from, to, boards]);
   const [cell, setCell] = useState<{ uid: string; date: string } | null>(null);
   const m: WorkloadMatrix | undefined = s.data;
   const weekStart = m?.weekStart ?? 1;

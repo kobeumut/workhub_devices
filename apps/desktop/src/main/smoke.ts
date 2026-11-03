@@ -62,8 +62,26 @@ export async function runSmoke(win: BrowserWindow, out: string) {
   let firstBoardTitle = '';
   const firstProjectOpenCount = () =>
     js<number | null>(`(() => {
-      const el = [...document.querySelectorAll('[role=button]')].find(e => / açık · /.test(e.innerText));
-      const m = el && el.innerText.match(/(\\d+) açık/); return m ? Number(m[1]) : null; })()`);
+      const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').startsWith(${JSON.stringify(firstBoardTitle)}) && / açık/.test(e.getAttribute('aria-label') || ''));
+      const m = el && el.getAttribute('aria-label').match(/(\\d+) açık/); return m ? Number(m[1]) : null; })()`);
+  /** Opens the first project: a project-list row or the sidebar item (both labelled "<title>…N açık…"). */
+  const openProject = () =>
+    js<boolean>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').startsWith(${JSON.stringify(firstBoardTitle)}) && / açık/.test(e.getAttribute('aria-label') || '')); if (!el) return false; el.click(); return true; })()`);
+  const waitLabel = async (label: string, timeoutMs = 15_000) => {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      if (await js<boolean>(`!!document.querySelector(${JSON.stringify(`[aria-label="${label}"]`)})`)) return true;
+      await sleep(300);
+    }
+    throw new Error(`label not found: ${label}`);
+  };
+  /** Kanban quick add: header "Görev ekle" opens the first column's input. */
+  const addTask = async (title: string) => {
+    if (!(await click('Görev ekle'))) throw new Error('add task button');
+    await sleep(300);
+    if (!(await type('input[aria-label$="listesinde yeni görev"]', title))) throw new Error('new task input');
+    if (!(await click('Ekle'))) throw new Error('add task');
+  };
 
   try {
     await new Promise<void>((r) => (wc.isLoading() ? wc.once('did-finish-load', () => r()) : r()));
@@ -339,9 +357,9 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('İşler');
       await waitText('açık', 20_000);
       await shot('04-projects');
+      firstBoardTitle = await js<string>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => /: \\d+ açık, /.test(e.getAttribute('aria-label') || '')); return el ? el.getAttribute('aria-label').replace(/: \\d+ açık, .*$/, '') : ''; })()`);
       openBefore = await firstProjectOpenCount();
-      firstBoardTitle = await js<string>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => / açık · /.test(e.innerText)); return el ? el.innerText.split('\\n')[0].trim() : ''; })()`);
-      if (!(await click('açık', false))) throw new Error('project row');
+      if (!(await openProject())) throw new Error('project row');
       await waitText('To Do', 20_000);
       await shot('05-board');
     });
@@ -349,9 +367,9 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     const subtask = `Alt iş ${new Date().toISOString().slice(11, 19)}`;
     const taskTitle = `Masaüstü görevi ${new Date().toISOString().slice(11, 19)}`;
     await step('task: create → open detail → comment', async () => {
-      if (!(await type('input[aria-label="Yeni görev"]', taskTitle))) throw new Error('new task input');
-      if (!(await click('+'))) throw new Error('add task');
+      await addTask(taskTitle);
       await reveal(taskTitle);
+      await shot('05b-kanban-added');
       if (!(await click(taskTitle, false))) throw new Error('task row');
       await waitText('Yorumlar', 15_000);
       await type('textarea', 'Masaüstünden yorum');
@@ -368,7 +386,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       if (!(await click('Yüksek'))) throw new Error('priority chip');
       if (!(await click('Kaydet'))) throw new Error('save');
       await waitText(editedTitle, 15_000);
-      await waitText('Tahmini: 1.5 sa', 15_000);
+      await waitText('1.5 sa', 15_000);
       if (!(await type('input[aria-label="Yeni alt iş"]', subtask))) throw new Error('subtask input');
       if (!(await click('Alt iş ekle'))) throw new Error('add subtask');
       await waitText(subtask, 15_000);
@@ -389,7 +407,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       return 'counter not visible';
     });
     await step('project views: Gantt (edited task as milestone) → activity stream (title change, paging)', async () => {
-      if (!(await click('açık', false))) throw new Error('project row');
+      if (!(await openProject())) throw new Error('project row');
       await waitText('To Do', 20_000);
       if (!(await click('Gantt'))) throw new Error('gantt tab');
       await waitText('Zaman çizelgesi', 20_000);
@@ -407,6 +425,9 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       const paged = (await click('Daha eski')) ? 'older page loaded' : 'single page';
       await sleep(1500);
       if (!(await click('Pano'))) throw new Error('board tab');
+      await waitText(editedTitle, 15_000);
+      await shot('19b-pano-list');
+      if (!(await click('Kanban'))) throw new Error('kanban tab');
       return `gantt label: "${row.slice(0, 80)}…"; activity ${paged}`;
     });
     await step('workload matrix: person × day table with spoken cells; no web-fallback tab', async () => {
@@ -654,7 +675,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       if (!firstBoardTitle) throw new Error('project title not captured');
       await click('İşler');
       await sleep(500);
-      if (!(await click('AI'))) throw new Error('AI tab');
+      if (!(await click('AI asistanı'))) throw new Error('AI tab');
       await waitText('Bugün kalan', 15_000);
       if (await webTab()) throw new Error('admin/web tab visible for a non-admin');
       // Client-side rule: a question needs text (never sent).
@@ -745,10 +766,10 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText(`${projectTitle} (yeni ad)`, 15_000);
       if (!(await type('input[aria-label="Yeni sütun"]', 'İnceleme'))) throw new Error('new column input');
       if (!(await click('Sütun ekle'))) throw new Error('add column');
-      await waitText('İnceleme (0)', 15_000);
+      await waitLabel('İnceleme, 0 görev');
       if (!(await type('input[aria-label="Sütun adı: İnceleme"]', 'QA'))) throw new Error('column name input');
       if (!(await click('Yeniden adlandır: İnceleme'))) throw new Error('rename column');
-      await waitText('QA (0)', 15_000);
+      await waitLabel('QA, 0 görev');
       const member = process.env.WORKHUB_SMOKE_MEMBER ?? '';
       if (member) {
         if (!(await type('input[aria-label="Üye ekle: kişi veya grup ara"]', member))) throw new Error('member search');
@@ -831,8 +852,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         await until(() => click(`${projectTitle} (yeni ad)`, false), 'project row');
         await waitText('To Do', 20_000);
         const linkTask = `Hedef görevi ${stamp}`;
-        if (!(await type('input[aria-label="Yeni görev"]', linkTask))) throw new Error('new task input');
-        if (!(await click('+'))) throw new Error('add task');
+        await addTask(linkTask);
         await waitText(linkTask, 15_000);
         if (!(await click(linkTask, false))) throw new Error('task row');
         await waitText('Bu görev bir hedefe bağlı değil.', 20_000);

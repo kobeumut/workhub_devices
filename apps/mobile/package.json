@@ -13,10 +13,12 @@
   "dependencies": {
     "@workhub-devices/core": "file:../../packages/core",
     "@workhub-devices/features": "file:../../packages/features",
+    "lucide-react-native": "^1.67.0",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-get-random-values": "^2.1.0",
     "react-native-safe-area-context": "^5.5.2",
+    "react-native-svg": "^15.16.0",
     "react-native-url-polyfill": "^4.0.0"
   },
   "devDependencies": {

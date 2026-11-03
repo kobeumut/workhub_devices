@@ -7,7 +7,11 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   resolve: {
-    alias: [{ find: /^react-native$/, replacement: 'react-native-web' }],
+    alias: [
+      { find: /^react-native$/, replacement: 'react-native-web' },
+      // Same Lucide components rendered as DOM SVG (no react-native-svg on the web renderer).
+      { find: /^lucide-react-native$/, replacement: 'lucide-react' },
+    ],
     extensions: ['.web.tsx', '.web.ts', '.tsx', '.ts', '.web.js', '.js'],
   },
   define: { __DEV__: 'false', 'process.env.NODE_ENV': '"production"' },

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
-import { colors, font, space } from './theme';
+import { colors, font, radius, space } from './theme';
+import { Icon } from './icons';
 import { describeError, t } from './i18n';
 
 /**
@@ -90,8 +91,8 @@ export function Header({ title, onBack, right }: { title: string; onBack?: () =>
   return (
     <View style={styles.header}>
       {onBack ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={t.back} onPress={onBack} style={{ paddingRight: space(3) }} hitSlop={12}>
-          <Text style={{ color: colors.primary, fontSize: font.title }}>‹</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={t.back} onPress={onBack} style={{ marginLeft: -space(2), marginRight: space(1), width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }} hitSlop={12}>
+          <Icon name="back" size={24} color={colors.primary} />
         </Pressable>
       ) : null}
       <Text accessibilityRole="header" numberOfLines={1} style={styles.headerTitle}>
@@ -114,7 +115,7 @@ export function Row({ title, subtitle, right, onPress, selected, badge }: {
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.row, selected && { backgroundColor: colors.surface }, pressed && { backgroundColor: colors.surface }]}
+      style={({ pressed }) => [styles.row, selected && { backgroundColor: colors.primarySoft }, pressed && { backgroundColor: colors.hover }]}
     >
       <View style={{ flex: 1 }}>
         <Text numberOfLines={1} style={styles.rowTitle}>
@@ -138,21 +139,21 @@ export function Row({ title, subtitle, right, onPress, selected, badge }: {
   );
 }
 
-export const card: ViewStyle = { backgroundColor: colors.bg, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: space(3), marginBottom: space(2) };
+export const card: ViewStyle = { backgroundColor: colors.bg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: space(3), marginBottom: space(2) };
 
 export const styles = StyleSheet.create({
-  button: { minHeight: 44, borderRadius: 8, paddingHorizontal: space(4), alignItems: 'center', justifyContent: 'center', marginVertical: space(1) },
+  button: { minHeight: 44, borderRadius: radius.sm, paddingHorizontal: space(4), alignItems: 'center', justifyContent: 'center', marginVertical: space(1) },
   primary: { backgroundColor: colors.primary },
   secondary: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.primary },
   dangerBtn: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.danger },
   buttonText: { color: colors.primaryText, fontSize: font.body, fontWeight: '600' },
   label: { color: colors.muted, fontSize: font.small, marginBottom: space(1) },
-  input: { minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: space(3), fontSize: font.body, color: colors.text, backgroundColor: colors.bg },
-  error: { flexDirection: 'row', alignItems: 'center', gap: space(2), backgroundColor: '#fdecea', padding: space(3), borderRadius: 8, margin: space(2) },
+  input: { minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingHorizontal: space(3), fontSize: font.body, color: colors.text, backgroundColor: colors.bg },
+  error: { flexDirection: 'row', alignItems: 'center', gap: space(2), backgroundColor: colors.dangerSoft, padding: space(3), borderRadius: radius.sm, margin: space(2) },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space(6) },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space(4), minHeight: 52, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.bg },
-  headerTitle: { flex: 1, fontSize: font.title, fontWeight: '700', color: colors.text },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space(4), paddingVertical: space(3), borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border, minHeight: 56 },
+  headerTitle: { flex: 1, fontSize: font.title, fontWeight: '700', color: colors.textStrong },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space(4), paddingVertical: space(3), borderBottomWidth: 1, borderColor: colors.border, minHeight: 56 },
   rowTitle: { fontSize: font.body, fontWeight: '600', color: colors.text },
   rowSubtitle: { fontSize: font.small, color: colors.muted, marginTop: 2 },
   rowRight: { fontSize: font.small, color: colors.muted },

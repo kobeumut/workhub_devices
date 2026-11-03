@@ -22,8 +22,9 @@ Gate sütunu `GET /capabilities` → `modules.*` (kullanıcı bazlı, fail-close
 | Paylaşımlar (hedef) | nesnede `manage` rolü (sahip veya manage paylaşımı) | `GET/PUT /objects/goal/{id}/shares` (tam liste değişimi) | İşler → Hedefler → Paylaş | **Native** | `smoke:projects` (B 403, geçersiz kullanıcı 422); masaüstü smoke |
 | Paylaşımlar (dashboard) | dashboard'da `manage` rolü | `GET/PUT /objects/dashboard/{id}/shares` (tam liste; roller `view`/`edit`/`manage`) | İşler → Dashboard → Paylaş (ortak `SharesEditor`) | **Native** | `smoke:dashboards` (B `view` paylaşımıyla okur, widget ekleyemez 403) |
 | Paylaşımlar (iş akışı) | şablonda `manage` | `GET/PUT /objects/workflow/{id}/shares` (tam liste; `view` görür + başlatır, `edit` adımları değiştirir + bütün devirlere müdahale eder, `manage` paylaşır + siler) | İş akışı → Paylaş (ortak `SharesEditor`) | **Native** — paylaşım Deck erişimi açmaz | `smoke:workflows` (paylaşımsız 404, `view` düzenleyemez/silemez 403, `edit` başarısız adımı yeniden dener) |
-| Pano (kanban/liste) | `projects`, board `edit` | `GET /projects/{id}/views/kanban` | Pano (sütun bölümleri) | **Native** | Masaüstü smoke |
-| Görev oluştur | `projects`, `edit` | `POST /projects/{id}/tasks` (+Idempotency-Key) | Pano → "Yeni görev" | **Native** | Masaüstü smoke |
+| Kanban (web görünümü) | `projects`, board `edit` (taşıma/ekleme) | `GET /projects/{id}/views/kanban`, `POST /tasks/{id}/move` (web ile aynı sıra hesabı) | Kanban: yatay sütunlar + kartlar; kart menüsü / masaüstünde sürükle-bırak; sütunda hızlı ekleme; arama + filtreler | **Native** | `board.test.ts`; tasarım önizlemesi (GENE-62); canlı masaüstü smoke uyarlandı (sunucu bekleniyor) |
+| Pano (liste) | `projects`, board `edit` | `GET /projects/{id}/views/kanban` | Pano (sütun bölümleri, erişilebilir liste) | **Native** | Masaüstü smoke |
+| Görev oluştur | `projects`, `edit` | `POST /projects/{id}/tasks` (+Idempotency-Key) | Kanban → "Görev ekle" / sütun "+"; Pano → "Yeni görev" | **Native** | Masaüstü smoke |
 | Görev taşı | `edit` | `POST /tasks/{id}/move` | Pano → "Taşı" (erişilebilir, sürüklemesiz) | **Native** | birim/arayüz |
 | Görev detayı | ACL | `GET /tasks/{id}` (her açılışta taze) | Görev | **Native** | API smoke (403/404/feature off) |
 | Tamamla / yeniden aç | `edit` | `PATCH /tasks/{id}` `done` | Görev | **Native** | arayüz |

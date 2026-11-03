@@ -178,3 +178,13 @@ Kök neden (klavye): Android 16 edge-to-edge zorunlu; `adjustResize` pencereyi k
 - ~~Debug derlemede React Native LogBox uyarı balonu alt sekme çubuğunu kapatabiliyor.~~ GENE-59'da giderildi (debug'da balon kapalı; uyarılar Metro/logcat'te).
 - Linux paketlerinde uygulama ikonu yok (Electron varsayılanı); marka ikonu sahibinden bekleniyor.
 - ~~Proje listesindeki açık/tamamlandı sayaçları görev oluşturduktan sonra eski kalıyor.~~ GENE-49'da düzeltildi (görev değişiminde liste yenilenir; masaüstü smoke ile doğrulandı).
+
+## GENE-62 — web ile aynı tasarım, Kanban, premium ikonlar (2026-11-03)
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check`; `apps/mobile`: `npx tsc --noEmit`, `npx jest` | core 139/139 (yeni `board.test.ts` 7 test: Deck sıra, bırakma konumu filtreyle gizli kartlarla, yukarı/aşağı, sütunlar arası taşıma, filtreler — Türkçe büyük/küçük harf dahil, bitiş durumu, baş harfler), relay 8/8, desktop 3/3; typecheck temiz (mobil dahil); mobil jest 2/2 |
+| Masaüstü tasarım önizlemesi (Electron, başsız, fixture backend) | `npm run preview:shots -w @workhub-devices/desktop` | 25/25 kontrol, 1440×900 ve 412×900: İşler → proje → Kanban; filtre (Acil); kart menüsü → "Sağa taşı" (sütun sayısı 2 → 3); "Görev ekle" → hızlı ekleme → kart görünür; masaüstünde DOM sürükle-bırak (#102 → İncelemede, 1 → 2); görev çekmecesi/ekranı; Pano sekmesi |
+| Android | `./gradlew assembleDebug`; `npx react-native bundle --platform android` | APK derlendi (`react-native-svg` autolink); JS paketinde Lucide + RNSVG bileşenleri çözüldü. Emülatör/cihazda çalıştırılmadı (aşağıya bakın) |
+| **Linux masaüstü UI smoke (canlı)** | `apps/desktop/scripts/smoke.mjs` | **Çalıştırılamadı:** `:18081` dev sunucusu değişmiş — capabilities'te Workhub/Notifications yok, kayıtlı tüm test hesapları 401. Smoke yeni düzene uyarlandı (kenar çubuğu, Kanban hızlı ekleme, sütun etiketleri), sunucu geri gelince koşulmalı |
+| iOS / macOS / Windows | — | Unverified (Mac/Windows ortamı yok). iOS için `pod install` yeniden gerekli (RNSVG) |

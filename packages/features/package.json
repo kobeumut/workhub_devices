@@ -16,7 +16,9 @@
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
+    "lucide-react-native": "^1.67.0",
     "react": "^19.3.0",
-    "react-native": "^0.88.1"
+    "react-native": "^0.88.1",
+    "react-native-svg": "^15.16.0"
   }
 }

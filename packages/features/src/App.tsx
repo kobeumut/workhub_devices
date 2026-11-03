@@ -5,7 +5,8 @@ import { ServicesProvider, useAsync, useServices, type PlatformServices } from '
 import { LoginScreen } from './LoginScreen';
 import { ChatView, RoomList } from './talk';
 import { BoardScreen, TaskScreen } from './workhub';
-import { WorkhubHome } from './modules';
+import { WorkhubHome, WorkhubWide } from './modules';
+import { Icon, type IconName } from './icons';
 import { InboxScreen } from './inbox';
 import { Button, Empty, ErrorBanner, Header, Loading, card } from './ui';
 import { colors, font, space } from './theme';
@@ -194,20 +195,20 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         {...(back ? { onBack: back } : {})}
       />
     ) : detail?.kind === 'project' ? (
-      <BoardScreen key={detail.id} accountId={account.id} project={detail} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
+      <BoardScreen key={detail.id} accountId={account.id} project={detail} me={selfId} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'task' ? (
       <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} goalsEnabled={!!s.workhub?.modules.goals} onChanged={bumpTasks} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
     ) : null;
 
   const tabs = (
-    <View accessibilityRole="tablist" style={wide ? { width: 84, borderRightWidth: 1, borderColor: colors.border, paddingTop: space(4), backgroundColor: colors.surface } : { flexDirection: 'row', borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.bg }}>
+    <View accessibilityRole="tablist" style={wide ? { width: 88, borderRightWidth: 1, borderColor: colors.border, paddingTop: space(4), backgroundColor: colors.bg } : { flexDirection: 'row', borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.bg }}>
       {(
         [
-          ['chats', t.chats, '💬'],
-          ['tasks', t.tasks, '✓'],
-          ['inbox', t.inbox, '🔔'],
-          ['account', t.account, '👤'],
-        ] as const
+          ['chats', t.chats, 'chat'],
+          ['tasks', t.tasks, 'tasks'],
+          ['inbox', t.inbox, 'bell'],
+          ['account', t.account, 'user'],
+        ] as const satisfies readonly (readonly [Tab, string, IconName])[]
       ).map(([key, label, icon]) => (
         <Pressable
           key={key}
@@ -218,16 +219,65 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             setTab(key);
             setDetail(null);
           }}
-          style={{ flex: wide ? undefined : 1, alignItems: 'center', paddingVertical: space(2), minHeight: 52 }}
+          style={{ flex: wide ? undefined : 1, alignItems: 'center', gap: 4, paddingVertical: space(2), minHeight: 56, marginHorizontal: wide ? space(2) : 0, marginBottom: wide ? space(1) : 0 }}
         >
-          <Text style={{ fontSize: 18 }}>{icon}</Text>
-          <Text style={{ fontSize: 12, color: tab === key ? colors.primary : colors.muted, fontWeight: tab === key ? '700' : '400' }}>{label}</Text>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 4, borderRadius: 14, backgroundColor: tab === key ? colors.primarySoft : 'transparent' }}>
+            <Icon name={icon} size={22} color={tab === key ? colors.primary : colors.muted} strokeWidth={tab === key ? 2.1 : 1.75} />
+          </View>
+          <Text style={{ fontSize: 12, color: tab === key ? colors.primary : colors.muted, fontWeight: tab === key ? '700' : '500' }}>{label}</Text>
         </Pressable>
       ))}
     </View>
   );
 
   const title = `${tab === 'chats' ? t.chats : tab === 'tasks' ? t.tasks : tab === 'inbox' ? t.inbox : t.account}${accounts.length > 1 ? ` · ${account.loginName}@${new URL(account.serverBase).host}` : ''}`;
+
+  if (wide && tab === 'tasks' && s.workhub) {
+    const openProject = detail?.kind === 'project' ? detail : detail?.kind === 'task' && detail.from ? detail.from : null;
+    const taskId = detail?.kind === 'task' ? detail.cardId : null;
+    return (
+      <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.bg }}>
+        {tabs}
+        <View style={{ flex: 1 }}>
+          {s.issues.length ? <Incompatible issues={s.issues} /> : null}
+          <WorkhubWide
+            accountId={account.id}
+            serverBase={account.serverBase}
+            workhub={s.workhub}
+            version={tasksVersion}
+            project={openProject?.id ?? null}
+            onOpenProject={(p) => setDetail(p ? { kind: 'project', id: p.id, title: p.title } : null)}
+            onOpenTask={(cardId) => setDetail({ kind: 'task', cardId })}
+            drawer={
+              taskId !== null ? (
+                <TaskScreen
+                  key={taskId}
+                  accountId={account.id}
+                  cardId={taskId}
+                  timeEnabled={!!s.workhub.modules.time}
+                  goalsEnabled={!!s.workhub.modules.goals}
+                  onChanged={bumpTasks}
+                  onClose={() => setDetail(openProject ? { kind: 'project', ...openProject } : null)}
+                />
+              ) : undefined
+            }
+          >
+            {openProject ? (
+              <BoardScreen
+                key={openProject.id}
+                accountId={account.id}
+                project={openProject}
+                me={selfId}
+                version={tasksVersion}
+                onChanged={bumpTasks}
+                onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: openProject.id, title: openProject.title } })}
+              />
+            ) : null}
+          </WorkhubWide>
+        </View>
+      </View>
+    );
+  }
 
   if (wide) {
     return (
