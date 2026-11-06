@@ -13,6 +13,7 @@ RCT_EXTERN_METHOD(pushPrepare:(NSString *)tag serverBase:(NSString *)s loginName
 RCT_EXTERN_METHOD(pushForget:(NSString *)tag resolver:(RCTPromiseResolveBlock)r rejecter:(RCTPromiseRejectBlock)j)
 RCT_EXTERN_METHOD(consumeInitialRoute:(RCTPromiseResolveBlock)r rejecter:(RCTPromiseRejectBlock)j)
 RCT_EXTERN_METHOD(setForeground:(NSString *)tag room:(NSString *)room)
+RCT_EXTERN_METHOD(setBadgeCount:(nonnull NSNumber *)count)
 RCT_EXTERN_METHOD(requestNotificationPermission:(RCTPromiseResolveBlock)r rejecter:(RCTPromiseRejectBlock)j)
 RCT_EXTERN_METHOD(shareFile:(NSString *)filename content:(NSString *)content mime:(NSString *)mime resolver:(RCTPromiseResolveBlock)r rejecter:(RCTPromiseRejectBlock)j)
 @end

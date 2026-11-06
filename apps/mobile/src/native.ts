@@ -18,6 +18,7 @@ interface WorkhubNativeSpec {
   pushForget(tag: string): Promise<void>;
   consumeInitialRoute(): Promise<string | null>;
   setForeground(tag: string | null, roomToken: string | null): void;
+  setBadgeCount(count: number): void;
   requestNotificationPermission(): Promise<boolean>;
   /** System share sheet for a generated export; resolves 'saved' once handed to the OS. */
   shareFile(filename: string, content: string, mime: string): Promise<'saved' | 'cancelled'>;

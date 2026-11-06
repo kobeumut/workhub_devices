@@ -30,6 +30,28 @@ object WorkhubNotifications {
     nm.createNotificationChannel(NotificationChannel(CH_OTHER, "Diğer bildirimler", NotificationManager.IMPORTANCE_LOW))
   }
 
+  /** Android badges require an active notification and a supporting launcher. No OEM broadcasts. */
+  fun setBadgeCount(ctx: Context, count: Int) {
+    val nm = NotificationManagerCompat.from(ctx)
+    if (count == 0) { nm.cancel("talk-unread", 0); return }
+    if (Build.VERSION.SDK_INT >= 26) {
+      ctx.getSystemService(NotificationManager::class.java).createNotificationChannel(
+        NotificationChannel("talk-unread", "Okunmamış mesaj sayısı", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(true) }
+      )
+    }
+    val open = Intent(ctx, MainActivity::class.java).apply {
+      action = "com.next.workhub.OPEN_UNREAD"
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
+    val n = NotificationCompat.Builder(ctx, "talk-unread")
+      .setSmallIcon(R.mipmap.ic_launcher).setContentTitle("Workhub")
+      .setContentText("$count okunmamış mesaj").setNumber(count)
+      .setSilent(true).setOnlyAlertOnce(true).setVisibility(NotificationCompat.VISIBILITY_SECRET)
+      .setContentIntent(PendingIntent.getActivity(ctx, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+      .build()
+    try { nm.notify("talk-unread", 0, n) } catch (_: SecurityException) { /* notification permission denied */ }
+  }
+
   fun notificationId(tag: String, nid: Long): Int = "$tag:$nid".hashCode()
 
   /** Same dispatch rules as packages/core routing.routeForObject. */

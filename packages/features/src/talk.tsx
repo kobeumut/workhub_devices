@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, FlatList, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
-  activeMentionQuery, classifySendFailure, editableText, fileOf, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeRooms, mergeTimeline, messageActions,
-  newReferenceId, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
+  activeMentionQuery, classifySendFailure, editableText, fileOf, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeTimeline, messageActions,
+  newReferenceId, presenceLabel, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
   type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type TalkFeatures, type TalkMessage, type TalkRoom,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
+import { chatReadViewability, useActivity, type TalkState } from './talkState';
 import { Button, Empty, ErrorBanner, Header, Loading, Row, keyboardAvoidBehavior, styles as ui } from './ui';
 import { colors, font, space } from './theme';
 import { formatTime, t } from './i18n';
@@ -16,8 +17,6 @@ import { FileCard, UploadTray, useUploads, VoiceBar } from './talkFiles';
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '😮', '😢', '🙏'];
 const plain = (m: Pick<TalkMessage, 'message' | 'messageParameters'>) => renderMessageSegments(m.message, m.messageParameters).map((s) => s.text).join('');
 
-const ROOM_REFRESH_MS = 30_000;
-
 function lastMessagePreview(r: TalkRoom): string {
   const m = r.lastMessage as TalkMessage | undefined;
   if (!m || !('message' in m)) return '';
@@ -25,14 +24,13 @@ function lastMessagePreview(r: TalkRoom): string {
   return m.actorDisplayName && m.systemMessage === '' ? `${m.actorDisplayName}: ${text}` : text;
 }
 
-export function RoomList({ accountId, selected, onOpen, features, canCreate, version = 0 }: {
+export function RoomList({ accountId, selected, onOpen, features, canCreate, state }: {
   accountId: AccountId;
   selected?: string;
   onOpen: (r: { token: string; displayName: string }) => void;
   features?: TalkFeatures;
   canCreate?: boolean;
-  /** Bumped by the parent after a room was left/deleted/renamed → full reload. */
-  version?: number;
+  state: TalkState;
 }) {
   const { backend } = useServices();
   const [query, setQuery] = useState('');
@@ -40,12 +38,6 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, ver
   const [hits, setHits] = useState<MessageSearchHit[] | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState<unknown>();
-  const cursor = useRef<number | null>(null);
-  const state = useAsync(async () => {
-    const r = await backend.rooms(accountId);
-    cursor.current = r.modifiedBefore;
-    return mergeRooms([], r.rooms, 'full');
-  }, [accountId, version]);
 
   useEffect(() => setHits(null), [query]);
   const searchMessages = async () => {
@@ -59,24 +51,6 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, ver
       setSearchBusy(false);
     }
   };
-
-  // Foreground refresh: deltas while visible, full reload every 5th tick (deletions aren't in deltas).
-  useEffect(() => {
-    let n = 0;
-    const id = setInterval(async () => {
-      if (AppState.currentState !== 'active') return;
-      n++;
-      try {
-        if (n % 5 === 0 || !cursor.current) return state.reload();
-        const r = await backend.rooms(accountId, cursor.current);
-        cursor.current = r.modifiedBefore ?? cursor.current;
-        if (r.rooms.length) state.setData((prev) => mergeRooms(prev ?? [], r.rooms, 'delta'));
-      } catch {
-        /* surfaced on next full reload */
-      }
-    }, ROOM_REFRESH_MS);
-    return () => clearInterval(id);
-  }, [accountId, backend, state]);
 
   const rooms = (state.data ?? []).filter((r) => !query || r.displayName.toLocaleLowerCase('tr').includes(query.toLocaleLowerCase('tr')));
   return (
@@ -125,6 +99,7 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, ver
         </View>
       ) : null}
       <ErrorBanner error={state.error} onRetry={state.reload} />
+      <ErrorBanner error={state.presenceError} />
       {state.loading && !state.data ? (
         <Loading />
       ) : (
@@ -137,7 +112,7 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, ver
           renderItem={({ item }) => (
             <Row
               title={`${item.isFavorite ? '★ ' : ''}${item.displayName}`}
-              subtitle={lastMessagePreview(item)}
+              subtitle={[item.type === 1 ? presenceLabel(item.status) : '', lastMessagePreview(item)].filter(Boolean).join(' · ')}
               right={item.lastActivity ? formatTime(item.lastActivity) : ''}
               badge={item.unreadMessages > 0 ? (item.unreadMention ? `@${item.unreadMessages}` : item.unreadMessages) : undefined}
               selected={item.token === selected}
@@ -184,13 +159,14 @@ type Mode = { kind: 'reply'; message: TalkMessage } | { kind: 'edit'; message: T
  * (`features`) and role-gated from the CURRENT room; edits, deletions and reactions of others
  * arrive through the same feed (update system messages, merged by `mergeTimeline`).
  */
-export function ChatView({ accountId, room: roomRef, selfId, features, onBack, onRoomChanged, onRoomGone }: {
+export function ChatView({ accountId, room: roomRef, selfId, features, onBack, onRoomChanged, onRead, onRoomGone }: {
   accountId: AccountId;
   room: { token: string; displayName: string };
   selfId: string;
   features: TalkFeatures;
   onBack?: () => void;
   onRoomChanged?: () => void;
+  onRead?: () => void;
   onRoomGone?: () => void;
 }) {
   const { backend, platform } = useServices();
@@ -223,18 +199,32 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
   const acts = room ? roomActions(room, features) : null;
   const title = room?.displayName || roomRef.displayName;
 
+  const active = useActivity();
+  const readable = active && panel === null;
+  const visibleId = useRef(0);
+  const marker = useRef<ReturnType<typeof readMarker> | null>(null);
+  const viewRead = useRef<(id: number) => void>(() => {});
+  viewRead.current = (id) => {
+    visibleId.current = Math.max(visibleId.current, id);
+    if (readable && platform.isActive?.()) marker.current?.read(visibleId.current);
+  };
+  const viewability = useRef(({ viewableItems }: { viewableItems: Array<{ item: ChatItem }> }) => {
+    const ids = viewableItems.flatMap(({ item }) => item.kind === 'server' ? [item.message.id] : []);
+    viewRead.current(Math.max(0, ...ids));
+  }).current;
+  const viewabilityConfig = useRef(chatReadViewability).current;
   useEffect(() => {
+    if (!readable) return;
+    const m = readMarker(
+      (id) => platform.isActive?.() ? backend.markRead(accountId, token, id) : Promise.reject(new Error('inactive')),
+      () => onRead?.(), setActionError,
+    );
+    marker.current = m;
+    m.read(visibleId.current);
+    const retry = setInterval(() => { if (platform.isActive?.()) m.read(visibleId.current); }, 5000);
     platform.onForegroundRoute?.({ accountId, route: { name: 'room', token } });
-    return () => platform.onForegroundRoute?.(null);
-  }, [accountId, token, platform]);
-
-  const markReadUpTo = useCallback(
-    (list: ChatItem[]) => {
-      const last = lastServerId(list);
-      if (last && AppState.currentState === 'active') backend.markRead(accountId, token, last).catch(() => {});
-    },
-    [accountId, token, backend],
-  );
+    return () => { clearInterval(retry); m.stop(); marker.current = null; platform.onForegroundRoute?.(null); };
+  }, [accountId, token, platform, backend, readable, onRead]);
 
   // initial history
   useEffect(() => {
@@ -248,27 +238,23 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
         if (!alive) return;
         const merged = mergeTimeline([], r.messages);
         setItems(merged);
-        markReadUpTo(merged);
       })
       .catch((e) => alive && setError(e))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [accountId, token, backend, markReadUpTo]);
+  }, [accountId, token, backend]);
 
   // long-poll loop
   useEffect(() => {
-    if (loading) return;
+    if (loading || !active) return;
     let alive = true;
     let attempt = 0;
     let pollId = '';
     const loop = async () => {
       while (alive) {
-        if (AppState.currentState !== 'active') {
-          await new Promise((r) => setTimeout(r, 2000));
-          continue;
-        }
+        if (!platform.isActive?.()) return;
         pollId = `poll-${token}-${Date.now()}`;
         try {
           const last = lastServerId(itemsRef.current);
@@ -279,7 +265,6 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
           if (r.messages.length) {
             const merged = mergeTimeline(itemsRef.current, r.messages);
             setItems(merged);
-            markReadUpTo(merged);
             // Room renamed / permissions changed by someone else → refresh the gate source.
             if (r.messages.some((m) => /^(conversation_renamed|description_set|description_removed|moderator_promoted|moderator_demoted|read_only|read_only_off|user_removed)$/.test(m.systemMessage))) reloadRoom();
           }
@@ -295,7 +280,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
       alive = false;
       if (pollId) void backend.cancel(pollId);
     };
-  }, [accountId, token, backend, loading, markReadUpTo, reloadRoom]);
+  }, [accountId, token, backend, platform, loading, active, reloadRoom]);
 
   // Mention autocomplete for the `@…` word before the caret (debounced).
   const mentionAt = features.mentions && acts?.chat ? activeMentionQuery(text, caret) : null;
@@ -473,6 +458,8 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
         <FlatList
           inverted
           data={reversed}
+          onViewableItemsChanged={viewability}
+          viewabilityConfig={viewabilityConfig}
           extraData={[selected, picker, confirmDelete, reactors, acts]}
           keyExtractor={(i) => (i.kind === 'server' ? `s${i.message.id}` : `p${i.referenceId}`)}
           ListEmptyComponent={<Empty text={t.noMessages} />}

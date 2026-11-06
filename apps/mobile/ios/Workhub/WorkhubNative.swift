@@ -51,6 +51,12 @@ final class WorkhubNative: RCTEventEmitter {
   @objc func pushForget(_ tag: String, resolver r: RCTPromiseResolveBlock, rejecter _: RCTPromiseRejectBlock) { PushAccount.forget(tag); r(nil) }
   @objc func consumeInitialRoute(_ r: RCTPromiseResolveBlock, rejecter _: RCTPromiseRejectBlock) { r(WorkhubNative.pendingRoute); WorkhubNative.pendingRoute = nil }
   @objc func setForeground(_ tag: String?, room: String?) { WorkhubNative.fgTag = tag; WorkhubNative.fgRoom = room }
+  @objc func setBadgeCount(_ count: NSNumber) {
+    let value = count.doubleValue
+    guard value.isFinite, value >= 0, value <= Double(Int32.max), value.rounded(.down) == value else { return }
+    // Main-queue FIFO keeps rapid account-switch/reset updates ordered (including iOS <16).
+    DispatchQueue.main.async { UIApplication.shared.applicationIconBadgeNumber = Int(value) }
+  }
   @objc func requestNotificationPermission(_ r: @escaping RCTPromiseResolveBlock, rejecter _: RCTPromiseRejectBlock) {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { ok, _ in
       if ok { DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() } }

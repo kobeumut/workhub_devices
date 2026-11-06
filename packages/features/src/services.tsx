@@ -28,6 +28,11 @@ export interface PlatformServices {
   onForegroundRoute?(target: RoutedTarget | null): void;
   /** Subscribe to routes coming from notifications / deep links. Returns an unsubscribe. */
   subscribeRoutes?(cb: (target: RoutedTarget) => void): () => void;
+  /** Actual focused/visible foreground, not merely a mounted React tree. */
+  isActive?(): boolean;
+  subscribeActivity?(cb: (active: boolean) => void): () => void;
+  /** Active account's server unread total; zero clears the supported OS badge surface. */
+  setBadgeCount(count: number): void;
   appVersion?: string;
   /**
    * Hand a generated file (e.g. a CSV export) to the OS: desktop shows a save dialog, mobile the

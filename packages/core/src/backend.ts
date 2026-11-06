@@ -95,6 +95,8 @@ export interface Backend {
   chat(accountId: AccountId, token: string, req: ChatRequest): Promise<ChatFetchResult>;
   send(accountId: AccountId, token: string, message: string, referenceId: string, replyTo?: number): Promise<TalkMessage | null>;
   markRead(accountId: AccountId, token: string, lastReadMessage: number): Promise<void>;
+  /** Safe activity heartbeat, not a user-defined status change. False = unsupported. */
+  heartbeat(accountId: AccountId): Promise<boolean>;
   createOneToOne(accountId: AccountId, userId: string): Promise<{ token: string }>;
 
   /**
@@ -465,7 +467,9 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
   const clientError = (code: string) => new OcsError('client', 422, undefined, undefined, code);
 
   /** Talk capabilities per account, cached briefly (they change only on server upgrades/config). */
-  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean; folder: string | null }>();
+  // Survives view remounts: a late old read must never overtake a newer read.
+  const readQueues = new Map<AccountId, Map<string, { confirmed: number; tail: Promise<void> }>>();
+  const talkCaps = new Map<AccountId, { at: number; features: TalkFeatures; canCreate: boolean; folder: string | null; heartbeat: boolean; passiveNotifications: boolean; readMarker: boolean }>();
   const talkFor = async (id: AccountId, need?: keyof TalkFeatures) => {
     const c = await client(id);
     let hit = talkCaps.get(id);
@@ -476,11 +480,14 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
         features: talkFeaturesOf(caps.talk.features, { attachmentsAllowed: caps.talk.attachments.allowed }),
         canCreate: caps.talk.canCreate,
         folder: caps.talk.attachments.folder,
+        heartbeat: caps.userStatus && (caps.nextcloudMajor ?? 0) >= 25,
+        passiveNotifications: caps.talk.features.has('chat-keep-notifications'),
+        readMarker: caps.talk.features.has('chat-read-marker'),
       };
       talkCaps.set(id, hit);
     }
     if (need && !hit.features[need]) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
-    return { c, f: hit.features, canCreate: hit.canCreate, folder: hit.folder };
+    return { c, f: hit.features, canCreate: hit.canCreate, folder: hit.folder, heartbeat: hit.heartbeat, passiveNotifications: hit.passiveNotifications, readMarker: hit.readMarker };
   };
   /** Room gate on the CURRENT room (fresh read). */
   const roomFor = async (id: AccountId, token: string, need: keyof RoomActions, feature?: keyof TalkFeatures) => {
@@ -575,6 +582,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     },
 
     async logout(accountId) {
+      readQueues.delete(accountId);
       const acc = await account(accountId);
       const c = await client(accountId);
       const report = await logoutAccount(acc, deps.secrets, {
@@ -617,7 +625,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     },
 
     async chat(accountId, token, req) {
-      const c = await client(accountId);
+      const { c, passiveNotifications } = await talkFor(accountId);
       const abort = new AbortController();
       if (req.pollId) polls.set(req.pollId, abort);
       try {
@@ -627,6 +635,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
           ...(req.limit ? { limit: req.limit } : {}),
           ...(req.timeout ? { timeout: req.timeout } : {}),
           setReadMarker: false,
+          ...(passiveNotifications ? { markNotificationsAsRead: false } : {}),
           signal: abort.signal,
         });
       } finally {
@@ -640,8 +649,35 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       return sendMessage(c, token, { message, referenceId, ...(replyTo ? { replyTo } : {}) });
     },
 
+    async heartbeat(accountId) {
+      const { c, heartbeat } = await talkFor(accountId);
+      if (!heartbeat) return false;
+      try {
+        await c.request('/ocs/v2.php/apps/user_status/api/v1/heartbeat', { method: 'PUT', body: { status: 'online' } });
+        return true;
+      } catch (e) {
+        if (e instanceof OcsError && (e.status === 404 || e.status === 405)) return false;
+        throw e;
+      }
+    },
+
     async markRead(accountId, token, lastReadMessage) {
-      await markRead(await client(accountId), token, lastReadMessage);
+      let rooms = readQueues.get(accountId);
+      if (!rooms) { rooms = new Map(); readQueues.set(accountId, rooms); }
+      let queue = rooms.get(token);
+      if (!queue) { queue = { confirmed: 0, tail: Promise.resolve() }; rooms.set(token, queue); }
+      const owner = rooms;
+      const state = queue;
+      const next = state.tail.catch(() => {}).then(async () => {
+        const { c, readMarker } = await talkFor(accountId);
+        if (readQueues.get(accountId) !== owner) return; // logged out while queued
+        if (!readMarker) throw new OcsError('forbidden', 403, undefined, undefined, 'TALK_FEATURE_MISSING');
+        if (lastReadMessage <= state.confirmed) return;
+        await markRead(c, token, lastReadMessage);
+        state.confirmed = lastReadMessage;
+      });
+      state.tail = next;
+      await next;
     },
 
     async createOneToOne(accountId, userId) {
@@ -1176,7 +1212,7 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
 /** Every Backend method name; the Electron main rejects anything else. */
 export const BACKEND_METHODS = [
   'listAccounts', 'beginLogin', 'completeLogin', 'cancel', 'logout', 'session',
-  'rooms', 'chat', 'send', 'markRead', 'createOneToOne',
+  'rooms', 'chat', 'send', 'markRead', 'heartbeat', 'createOneToOne',
   'talkRoom', 'editMessage', 'deleteMessage', 'react', 'reactions', 'mentions', 'searchMessages', 'createRoom', 'updateRoom',
   'participants', 'inviteCandidates', 'addParticipant', 'removeParticipant', 'setModerator', 'leaveRoom', 'deleteRoom',
   'shareFile', 'downloadFile', 'voiceClip', 'transfer',
@@ -1500,6 +1536,7 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   rooms: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && isOptInt(a[1]),
   chat: (a) => a.length === 3 && isAccountId(a[0]) && isStr(64)(a[1]) && isObj(a[2]),
   send: (a) => (a.length === 4 || a.length === 5) && isAccountId(a[0]) && isStr(64)(a[1]) && isStr(32000)(a[2]) && isStr(128)(a[3]) && isOptInt(a[4]),
+  heartbeat: (a) => a.length === 1 && isAccountId(a[0]),
   markRead: (a) => a.length === 3 && isAccountId(a[0]) && isStr(64)(a[1]) && isInt(a[2]),
   createOneToOne: (a) => a.length === 2 && isAccountId(a[0]) && isStr(256)(a[1]),
   talkRoom: (a) => a.length === 2 && isAccountId(a[0]) && isToken(a[1]),

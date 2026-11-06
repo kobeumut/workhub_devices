@@ -103,6 +103,11 @@ class WorkhubNativeModule(private val ctx: ReactApplicationContext) : ReactConte
     fgRoom = room
   }
 
+  @ReactMethod fun setBadgeCount(count: Double) {
+    if (!count.isFinite() || count < 0 || count > Int.MAX_VALUE || count % 1.0 != 0.0) return
+    WorkhubNotifications.setBadgeCount(ctx, count.toInt())
+  }
+
   @ReactMethod
   fun requestNotificationPermission(p: Promise) {
     if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {

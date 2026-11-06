@@ -43,6 +43,13 @@ const backend = createDirectBackend({
 /** Login pages the renderer may ask to open: only URLs main itself received from beginLogin. */
 const allowedExternal = new Set<string>();
 let tray: Tray | null = null;
+let badgeCount = 0;
+function updateBadge(count: number) {
+  badgeCount = count;
+  if (process.platform === 'darwin' || process.platform === 'linux') app.badgeCount = count;
+  tray?.setToolTip(count ? `Workhub — ${count} okunmamış mesaj` : 'Workhub');
+  if (process.platform === 'darwin') tray?.setTitle(count ? String(count) : '');
+}
 let quitting = false;
 const rendererIndex = join(__dirname, 'renderer', 'index.html');
 const rendererUrl = pathToFileURL(rendererIndex).toString();
@@ -90,7 +97,11 @@ function createWindow() {
       win?.hide();
     }
   });
+  win.on('blur', () => notifier.setForeground(null));
+  win.on('hide', () => notifier.setForeground(null));
+  win.on('minimize', () => notifier.setForeground(null));
   win.on('closed', () => {
+    notifier.setForeground(null);
     win = null;
   });
   void win.loadFile(rendererIndex);
@@ -103,7 +114,7 @@ function createTray() {
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAHElEQVR4nGNgYGD4z0ABYBzVPKp5VPOo5mGjGQD5hgEPS3YHEwAAAABJRU5ErkJggg==',
   );
   tray = new Tray(icon);
-  tray.setToolTip('Workhub');
+  updateBadge(badgeCount);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Workhub’u aç', click: () => focusWith(null) },
@@ -175,10 +186,15 @@ ipcMain.handle('workhub:releaseFile', async (e, handle: unknown) => {
   if (isOurFrame(e.sender, e.senderFrame?.url)) files.release(handle);
 });
 
+ipcMain.on('workhub:badge', (e, count: unknown) => {
+  if (!isOurFrame(e.sender, e.senderFrame?.url) || typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0 || count > 2_147_483_647) return;
+  updateBadge(count);
+});
+
 ipcMain.on('workhub:foreground', (e, target: unknown) => {
   if (!isOurFrame(e.sender, e.senderFrame?.url)) return;
   const t = target as RoutedTarget | null;
-  notifier.setForeground(t && typeof t.accountId === 'string' && t.route && typeof t.route.name === 'string' ? t : null);
+  notifier.setForeground(win?.isVisible() && win.isFocused() && t && typeof t.accountId === 'string' && t.route && typeof t.route.name === 'string' ? t : null);
 });
 
 app.on('second-instance', () => focusWith(null));
