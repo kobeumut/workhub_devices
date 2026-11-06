@@ -8,6 +8,7 @@ import { accountTag, ensurePush, removePush } from './push';
 import { filesSupported, mobileFileHost, mobileFileServices } from './files';
 import { useAndroidKeyboardPadding } from './keyboard';
 import { configureDevLogs } from './devLogs';
+import { mobileActivity } from './activity';
 import identity from '../../../config/app-identity.json';
 
 configureDevLogs();
@@ -29,7 +30,12 @@ async function tagToAccount(tag: string): Promise<AccountSummary | undefined> {
 
 export default function App() {
   const platform = useMemo<PlatformServices>(
-    () => ({
+    () => {
+      let foregroundGeneration = 0;
+      const activity = mobileActivity();
+      return ({
+      ...activity,
+      setBadgeCount: (count) => native.setBadgeCount(count),
       kind: Platform.OS === 'ios' ? 'ios' : 'android',
       openExternal: async (url) => {
         await Linking.openURL(url);
@@ -46,9 +52,12 @@ export default function App() {
         }
       },
       onForegroundRoute: (t: RoutedTarget | null) => {
+        const generation = ++foregroundGeneration;
         if (!t || t.route.name !== 'room') return native.setForeground(null, null);
         const token = t.route.token;
-        void accountTag({ id: t.accountId }).then((tag) => native.setForeground(tag, token));
+        void accountTag({ id: t.accountId }).then((tag) => {
+          if (generation === foregroundGeneration && activity.isActive()) native.setForeground(tag, token);
+        }).catch(() => undefined);
       },
       subscribeRoutes: (cb) => {
         const deliver = async (raw: string | null) => {
@@ -61,7 +70,8 @@ export default function App() {
         const sub = nativeEvents.addListener('WorkhubRoute', (raw) => void deliver(typeof raw === 'string' ? raw : null));
         return () => sub.remove();
       },
-    }),
+    });
+    },
     [],
   );
   const keyboardPad = useAndroidKeyboardPadding();

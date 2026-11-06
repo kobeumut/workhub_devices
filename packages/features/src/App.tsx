@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import { talkFeaturesOf, type AccountId, type AccountSummary, type AppRoute, type Backend, type RoutedTarget, type SessionInfo } from '@workhub-devices/core';
+import { unreadTotal, talkFeaturesOf, type AccountId, type AccountSummary, type AppRoute, type Backend, type RoutedTarget, type SessionInfo } from '@workhub-devices/core';
 import { ServicesProvider, useAsync, useServices, type PlatformServices } from './services';
 import { LoginScreen } from './LoginScreen';
 import { ChatView, RoomList } from './talk';
+import { useTalkState } from './talkState';
 import { BoardScreen, TaskScreen } from './workhub';
 import { WorkhubHome, WorkhubWide } from './modules';
 import { Icon, type IconName } from './icons';
@@ -99,8 +100,10 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
   const [detail, setDetail] = useState<Detail>(null);
   const [tasksVersion, setTasksVersion] = useState(0);
   const bumpTasks = useCallback(() => setTasksVersion((v) => v + 1), []);
-  const [roomsVersion, setRoomsVersion] = useState(0);
-  const bumpRooms = useCallback(() => setRoomsVersion((v) => v + 1), []);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const rooms = useTalkState(account.id, !!session.data && !loggingOut);
+  const bumpRooms = rooms.reload;
+  const unread = unreadTotal(rooms.data ?? []);
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
 
@@ -137,7 +140,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
         <Header title={t.appName} />
         <ErrorBanner error={session.error} onRetry={session.reload} />
-        <AccountPanel account={account} accounts={accounts} onSwitch={onSwitch} onAdd={onAdd} onLoggedOut={onLoggedOut} session={undefined} />
+        <AccountPanel account={account} accounts={accounts} onSwitch={onSwitch} onAdd={onAdd} onLoggedOut={onLoggedOut} onLoggingOut={setLoggingOut} session={undefined} />
       </View>
     );
   }
@@ -153,7 +156,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             accountId={account.id}
             features={talkFeatures}
             canCreate={s.talkCanCreate}
-            version={roomsVersion}
+            state={rooms}
             {...(detail?.kind === 'room' ? { selected: detail.token } : {})}
             onOpen={(r) => setDetail({ kind: 'room', token: r.token, displayName: r.displayName })}
           />
@@ -174,7 +177,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
       case 'inbox':
         return <InboxScreen accountId={account.id} serverBase={account.serverBase} onRoute={go} />;
       case 'account':
-        return <AccountPanel account={account} accounts={accounts} onSwitch={onSwitch} onAdd={onAdd} onLoggedOut={onLoggedOut} session={s} />;
+        return <AccountPanel account={account} accounts={accounts} onSwitch={onSwitch} onAdd={onAdd} onLoggedOut={onLoggedOut} onLoggingOut={setLoggingOut} session={s} />;
     }
   })();
 
@@ -188,6 +191,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         selfId={selfId}
         features={talkFeatures}
         onRoomChanged={bumpRooms}
+        onRead={bumpRooms}
         onRoomGone={() => {
           setDetail(null);
           bumpRooms();
@@ -214,7 +218,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
           key={key}
           accessibilityRole="tab"
           accessibilityState={{ selected: tab === key }}
-          accessibilityLabel={label}
+          accessibilityLabel={key === 'chats' && unread > 0 ? `${label}, ${unread} okunmamış mesaj` : label}
           onPress={() => {
             setTab(key);
             setDetail(null);
@@ -223,6 +227,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         >
           <View style={{ paddingHorizontal: 16, paddingVertical: 4, borderRadius: 14, backgroundColor: tab === key ? colors.primarySoft : 'transparent' }}>
             <Icon name={icon} size={22} color={tab === key ? colors.primary : colors.muted} strokeWidth={tab === key ? 2.1 : 1.75} />
+            {key === 'chats' && unread > 0 ? <Text style={{ position: 'absolute', right: 0, top: -4, borderRadius: 10, paddingHorizontal: 5, backgroundColor: colors.primary, color: '#fff', fontSize: 11 }}>{unread}</Text> : null}
           </View>
           <Text style={{ fontSize: 12, color: tab === key ? colors.primary : colors.muted, fontWeight: tab === key ? '700' : '500' }}>{label}</Text>
         </Pressable>
@@ -321,24 +326,27 @@ function Incompatible({ issues }: { issues: SessionInfo['issues'] }) {
   );
 }
 
-function AccountPanel({ account, accounts, onSwitch, onAdd, onLoggedOut, session }: {
+function AccountPanel({ account, accounts, onSwitch, onAdd, onLoggedOut, onLoggingOut, session }: {
   account: AccountSummary;
   accounts: AccountSummary[];
   onSwitch: (id: AccountId) => void;
   onAdd: () => void;
   onLoggedOut: () => void;
   session: SessionInfo | undefined;
+  onLoggingOut: (value: boolean) => void;
 }) {
   const { backend, platform } = useServices();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>();
   const logout = async () => {
     setBusy(true);
+    onLoggingOut(true);
     try {
       const r = await backend.logout(account.id);
       setMsg(r.appPasswordRevoked ? t.logoutDone : `${t.logoutDone} Sunucudaki uygulama parolası çevrimdışı olduğu için iptal edilemedi; Nextcloud ayarlarından silebilirsiniz.`);
       onLoggedOut();
     } catch (e) {
+      onLoggingOut(false);
       setMsg(describeError(e));
     } finally {
       setBusy(false);

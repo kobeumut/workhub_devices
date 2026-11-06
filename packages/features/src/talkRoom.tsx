@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
-  isModeratorType, roomActions, PARTICIPANT_TYPE, TALK_LIMITS,
+  isModeratorType, presenceLabel, roomActions, PARTICIPANT_TYPE, TALK_LIMITS,
   type AccountId, type InviteCandidate, type MessageSearchHit, type RoomKind, type TalkFeatures, type TalkParticipant, type TalkRoom,
 } from '@workhub-devices/core';
 import { useServices } from './services';
+import { useActivity } from './talkState';
 import { Button, Empty, ErrorBanner, Field, Header, Loading, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
 import { formatTime } from './i18n';
@@ -148,13 +149,23 @@ export function RoomSettings({ accountId, room, features, selfId, onChanged, onG
   const [error, setError] = useState<unknown>();
   const [notice, setNotice] = useState('');
 
+  const active = useActivity();
   useEffect(() => {
+    if (!active) { setPeople((prev) => prev?.map(({ status: _status, ...p }) => p) ?? null); return; }
     let alive = true;
-    backend.participants(accountId, room.token).then((p) => alive && setPeople(p), (e) => alive && setError(e));
-    return () => {
-      alive = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const people = await backend.participants(accountId, room.token);
+        if (alive) { setPeople(people); setError(undefined); }
+      } catch (e) {
+        if (alive) { setError(e); setPeople((prev) => prev?.map(({ status: _status, ...p }) => p) ?? null); }
+      }
+      if (alive) timer = setTimeout(() => void refresh(), 5000);
     };
-  }, [accountId, room.token, backend]);
+    void refresh();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [accountId, room.token, backend, active]);
 
   // Debounced invite autocomplete (moderators only).
   useEffect(() => {
@@ -245,6 +256,7 @@ export function RoomSettings({ accountId, room, features, selfId, onChanged, onG
                 <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: space(2), borderBottomWidth: 1, borderColor: colors.border, gap: space(2), flexWrap: 'wrap' }}>
                   <Text style={{ flex: 1, color: colors.text }}>
                     {p.displayName || p.actorId}{self ? ' (siz)' : ''}
+                    {p.actorType === 'users' ? ` · ${presenceLabel(p.status)}` : ''}
                     {ROLE_LABEL[p.participantType] ? <Text style={{ color: colors.muted }}> · {ROLE_LABEL[p.participantType]}</Text> : null}
                   </Text>
                   {canTouch && (p.actorType === 'users' || p.actorType === 'guests' || p.actorType === 'emails') ? (

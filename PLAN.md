@@ -1,5 +1,16 @@
 # Workhub Devices uygulama planı — GENE-47
 
+## GENE-89 — unread ve presence (6 Kasım 2026)
+
+- [x] Hesap kapsamlı sunucu unread uzlaştırması (ön planda 5 sn), oda + sekme toplamı, başarılı/görünür okuma sonrası yenileme; tekrar olaylarda yerel artırma yok.
+- [x] Masaüstü odak/görünürlük; mobil AppState + Android blur/focus ile okuma/poll/foreground-route yaşam döngüsü. FlatList görünürlük bildirimi olmadan mark-read yok; hesap/oda değişimi ve cleanup eski sonuçları yalıtır.
+- [x] Capability kontrollü user-status heartbeat (60 sn); invisible/DND tercihlerine dokunmadan arka planda durdurma, sunucunun expiry davranışını koruma. Offline/away yazılmaz.
+- [x] Oda/başlık/katılımcıda erişilebilir sunucu presence; bilinmeyen, arka plan ve başarısız yenileme online gösterilmez.
+- [x] GENE-90 birleşik kapsam: `PlatformServices.setBadgeCount` → Electron dock/tray, iOS native badge, Android sessiz sayı bildirimi; sıfır/çıkış/hesap değişiminde temizleme. Platform/izin sınırları `docs/test-evidence.md` içinde.
+- [x] `npm run check`: core 154 + relay 8 + desktop 3; mobil typecheck ve Jest 5; desktop build geçti. Backend/IPC, tekrar olay, çoklu oda, uzlaştırma, görünür-okuma, rate limit ve yaşam döngüsü regresyonları.
+- [ ] İki kullanıcıyla canlı mesaj → badge → görünür okuma → azalış ve karşı tarafta presence: **unverified**. Dev sunucusu bu çalışma ortamından erişilemedi; canlı kullanıcı girdileri yok.
+- [ ] Gerçek masaüstü/mobil smoke, native badge ve push doğrulaması: **unverified**. Electron smoke login ekranını açtı, giriş tamamlanamadı; Android offline build eksik Kotlin cache nedeniyle durdu; iOS Pods yok. Ayrıntılı Gap/test matrisi `docs/test-evidence.md` içinde.
+
 ## Hedef ve mevcut durum
 
 Talk sohbetleri ana ekran olacak; kullanıcı mesaj bildiriminin içinden cevaplayabilecek, Workhub'daki işleriyle çalışabilecek ve kendisine atanan görevleri bildirimden açabilecek. Hedefler: iOS, Android, Windows, macOS, Linux. Yeni kodun deposu `kobeumut/workhub_devices`; Workhub sunucusunun mevcut API'si korunacak.

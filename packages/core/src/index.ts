@@ -4,6 +4,7 @@ export * from './loginFlow';
 export * from './accounts';
 export * from './capabilities';
 export * from './talk';
+export * from './talkSync';
 export * from './routing';
 export * from './workhub';
 export * from './webpush';

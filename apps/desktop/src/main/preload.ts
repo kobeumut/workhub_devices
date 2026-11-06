@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('workhub', {
   pickFiles: () => ipcRenderer.invoke('workhub:pickFiles'),
   stageRecording: (wav: Uint8Array) => ipcRenderer.invoke('workhub:stageRecording', wav),
   releaseFile: (handle: string) => ipcRenderer.invoke('workhub:releaseFile', handle),
+  setBadgeCount: (count: number) => ipcRenderer.send('workhub:badge', count),
   setForeground: (target: unknown) => ipcRenderer.send('workhub:foreground', target),
   onRoute: (cb: (target: unknown) => void) => {
     const h = (_e: unknown, t: unknown) => cb(t);

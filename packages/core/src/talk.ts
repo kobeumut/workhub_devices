@@ -10,6 +10,8 @@ export interface TalkRoom {
   displayName: string;
   unreadMessages: number;
   unreadMention: boolean;
+  /** Server-provided one-to-one peer status; absent/unknown is never online. */
+  status?: string;
   isFavorite: boolean;
   lastActivity: number;
   readOnly: number;
@@ -123,6 +125,8 @@ export async function fetchChat(client: OcsClient, token: string, o: ChatFetchOp
       setReadMarker: o.setReadMarker ?? false,
       markNotificationsAsRead: o.markNotificationsAsRead,
       includeLastKnown: false,
+      // Presence belongs to the foreground heartbeat, never to a history/long-poll request.
+      noStatusUpdate: 1,
     },
     // long-poll: give the server its full timeout plus a margin before aborting locally
     timeoutMs: ((o.lookIntoFuture ? Math.min(o.timeout ?? 30, 60) : 0) + 15) * 1000,
@@ -609,6 +613,7 @@ export interface TalkParticipant {
   actorId: string;
   displayName: string;
   participantType: number;
+  status?: string;
 }
 
 export type RoomKind = 'group' | 'public';
@@ -635,9 +640,10 @@ export const talkRoomApi = {
     await c.request(`${ROOM_API}/${assertRoomToken(token)}/description`, { method: 'PUT', body: { description } });
   },
   async participants(c: OcsClient, token: string): Promise<TalkParticipant[]> {
-    const r = await c.request<TalkParticipant[]>(`${ROOM_API}/${assertRoomToken(token)}/participants`, { query: { includeStatus: false } });
+    const r = await c.request<TalkParticipant[]>(`${ROOM_API}/${assertRoomToken(token)}/participants`, { query: { includeStatus: true } });
     return (Array.isArray(r.data) ? r.data : []).map((p) => ({
       attendeeId: p.attendeeId, actorType: p.actorType, actorId: p.actorId, displayName: p.displayName ?? '', participantType: p.participantType,
+      ...(typeof p.status === 'string' ? { status: p.status } : {}),
     }));
   },
   /** Returns the (possibly changed) room type. */

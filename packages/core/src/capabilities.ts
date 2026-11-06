@@ -5,12 +5,14 @@ export interface RawServerCapabilities {
   version?: { major?: number; minor?: number; micro?: number; string?: string };
   capabilities?: {
     spreed?: { features?: unknown; config?: Record<string, unknown>; version?: string };
+    user_status?: { enabled?: boolean };
     notifications?: { 'ocs-endpoints'?: unknown; push?: unknown; 'admin-notifications'?: unknown };
     workhub?: { version?: string; apiVersion?: string; taskBackend?: string; modules?: Record<string, unknown> };
   };
 }
 
 export interface ServerCapabilities {
+  userStatus: boolean;
   nextcloudMajor: number | null;
   nextcloudVersion: string | null;
   talk: {
@@ -36,6 +38,7 @@ export function parseServerCapabilities(raw: RawServerCapabilities): ServerCapab
   const caps = raw.capabilities ?? {};
   const talkFeatures = strings(caps.spreed?.features);
   return {
+    userStatus: caps.user_status?.enabled === true,
     nextcloudMajor: typeof raw.version?.major === 'number' ? raw.version.major : null,
     nextcloudVersion: raw.version?.string ?? null,
     talk: {

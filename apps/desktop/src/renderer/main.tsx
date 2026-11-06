@@ -13,7 +13,8 @@ declare global {
       pickFiles(): Promise<PickedFile[]>;
       stageRecording(wav: Uint8Array): Promise<PickedFile | null>;
       releaseFile(handle: string): Promise<void>;
-      setForeground(target: RoutedTarget | null): void;
+      setBadgeCount(count: number): void;
+    setForeground(target: RoutedTarget | null): void;
       onRoute(cb: (t: RoutedTarget) => void): () => void;
       platform: string;
     };
@@ -24,6 +25,21 @@ const bridge = window.workhub;
 const backend = createWireBackend((m, a) => bridge.invoke(m, a));
 const platform: PlatformServices = {
   kind: 'desktop',
+  setBadgeCount: (count) => bridge.setBadgeCount(count),
+  isActive: () => document.visibilityState === 'visible' && document.hasFocus(),
+  subscribeActivity: (cb) => {
+    const report = () => cb(document.visibilityState === 'visible' && document.hasFocus());
+    document.addEventListener('visibilitychange', report);
+    window.addEventListener('focus', report);
+    window.addEventListener('blur', report);
+    window.addEventListener('online', report);
+    return () => {
+      document.removeEventListener('visibilitychange', report);
+      window.removeEventListener('focus', report);
+      window.removeEventListener('blur', report);
+      window.removeEventListener('online', report);
+    };
+  },
   openExternal: async (url) => {
     await bridge.openExternal(url);
   },

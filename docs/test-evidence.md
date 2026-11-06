@@ -1,4 +1,53 @@
-# Test kanıtları — 2026-11-02 (GENE-48)
+# Test kanıtları — Workhub Devices
+
+## GENE-89 / GENE-90 — unread, presence ve native badge (2026-11-06)
+
+Bu bölüm bu dalın kanıtıdır; aşağıdaki eski dilimlerdeki canlı/emülatör sonuçları bu değişikliğe aktarılmaz. Sunucu kodu, imzalama/push anahtarları ve bağımlılık sürümleri değiştirilmedi.
+
+| Alan | Komut / yöntem | Sonuç |
+|---|---|---|
+| Birim/sözleşme | `npm run check` | PASS: core 154/154, relay 8/8, desktop 3/3; workspace typecheck temiz |
+| Mobil ortak UI / yaşam döngüsü | `cd apps/mobile && npm run typecheck && npm test -- --runInBand` | PASS: typecheck; 4 suite / 5 test. Gerçek cihaz testi değildir |
+| Masaüstü derleme | `npm run build -w @workhub-devices/desktop` | PASS: main/preload/renderer; mevcut Vite CJS-config ve bundle-size uyarıları |
+| Electron offscreen smoke | `npm run smoke -w @workhub-devices/desktop` | Login ekranı PASS; Login Flow v2 `text not found: Sohbetler` ile durdu. `WH_SERVER`, `WH_A_USER`, `WH_A_PASS` tanımlı değil. Sonrasında smoke harness'ı açıkça simüle edilmiş focus/visibility kullanacak ve presence metninden bağımsız moderatör seçicisi kullanacak şekilde düzeltildi; tam smoke yeniden çalıştırılmadı, son build geçti. Gerçek OS odak kanıtı değildir |
+| Android native compile/unit | `cd apps/mobile/android && ./gradlew --offline :app:compileDebugKotlin :app:testDebugUnitTest` | BLOCKED: `Could not download kotlin-stdlib-2.2.0.jar ... No cached version available for offline mode`; uygulama Kotlin derlemesine ulaşmadı. Native badge **unverified** |
+| iOS native | Pods bulunmuyor; native derleme/kurulum yapılmadı | **unverified**: Swift/ObjC badge köprüsü, gerçek ikon ve izin davranışı |
+| Canlı iki kullanıcı | Görevdeki dev HTTP adresi için TCP bağlantı denemesi | Bağlantı denemesi timeout; canlı kullanıcı girdileri yok. Mesaj → artış → okuma → azalış, karşı istemcide presence ve gerçek push zinciri **unverified** |
+
+### Regresyonların kapsamı
+
+- `packages/core/test/talkSync.test.ts`: sunucu snapshot'ı esaslı çoklu oda toplamı; kendi/tekrar mesajı nedeniyle yerel artırma yapılmaması; uzak istemci okuması, oda kaldırma ve reconnect uzlaştırması; read sonrasındaki eski in-flight snapshot'ın uygulanmaması; seri/monoton görünür read marker, hata sonrası retry, stop ve geç sonuç yalıtımı; room/heartbeat/read için `Retry-After`; heartbeat cleanup ve destek yokken durma.
+- `packages/core/test/presence.test.ts`: `includeStatus`, `noStatusUpdate`, `setReadMarker=0`; açık `user_status` capability, eski sürüm/eksik destek; credentials kapsamlı heartbeat route, argüman doğrulama; raw/OCS hataları ve bilinmeyen presence metni.
+- Mobil `talkActivity.test.tsx`: ortak hook'ta unread 3 → arka plan → yeniden bağlanıp 0; aynı toplamın native badge'e iletilmesi; 120 sn arka planda heartbeat olmaması; hesap değişiminde geç eski sonucun reddi; unmount'ta badge 0 ve sonraki timer tick'lerinde backend çağrısı olmaması. `activity.test.ts`: Android bildirim çekmecesi blur'unda AppState active kalsa da etkinliğin kesilmesi; focus ve abonelik cleanup.
+- `chatViewability.test.js`: kurulu RN FlatList viewability algoritmusával a képernyőnél háromszor magasabb üzenet, teljesen látható rövid sor és offscreen sor; viewport-lefedettség alapján a hosszú üzenet is olvasható. A 300 ms minimum láthatósági idő megmarad.
+- Bu hook/core/algoritmus testleri native FlatList hit-testing, ekran görüntüsü, gerçek OS badge veya iki cihaz/push kanıtı değildir.
+
+### API ve yaşam döngüsü sözleşmesi
+
+Doğrulanan upstream sözleşmeler: [Talk conversation](https://nextcloud-talk.readthedocs.io/en/latest/conversation/), [Talk chat](https://nextcloud-talk.readthedocs.io/en/latest/chat/), Nextcloud `user_status` ve Talk stable25 kaynakları. `GET room?includeStatus=true&noStatusUpdate=true` salt okunur snapshot verir; geçmiş ve long-poll `setReadMarker=0` ile fetch'in kendisi mesajları okundu saymaz. Read yalnız aktif/odaklı ChatView'de FlatList'in gerçekten görünür bildirdiği sunucu mesaj ID'sine gider; ayrıntı paneli/arka plan bunu tetiklemez. Başarılı read sonrasında merkezi oda listesi yeniden alınır. Listelerin fetch edilmesi veya odanın açılması tek başına read değildir.
+
+Durum desteği `user_status.enabled` ve desteklenen Nextcloud major >=25 ile fail-closed; eski/eksik sürümde heartbeat yok. `PUT /ocs/v2.php/apps/user_status/api/v1/heartbeat` yalnız `status=online` gönderir. Sunucu etkinliği hesaplar ve manuel invisible/dnd tercihini korur; istemci `status` tercih setter'ını kullanmaz, cleanup'ta offline yazmaz (başka aktif istemciyi offline yapmamak için). Destekli sunucuda foreground hesap oturumu başına hemen ve 60 sn'de bir heartbeat; oda snapshot'ı 5 sn'de bir. Arka plan, odak kaybı, hesap değişimi ve çıkış timer/abonelikleri durdurur. Ağ hatasında son unread korunur ama cached online etiketi gizlenir; hata görünür, sonraki poll/resume yeniden uzlaştırır. Sunucu rate limit süresine uyulur. Manuel görünürlük tercihi canlı karşı tarafla bu dalda doğrulanmadı.
+
+### Native badge / Gap matrisi
+
+`PlatformServices.setBadgeCount(count)` aktif hesabın aynı sunucu unread toplamını kullanır; başka hesapların toplamı eklenmez. Sıfır, çıkış ve hesap cleanup'ında temizlenir; resume'da sunucudan yenilenir. Native/IPC sınırında negatif, kesirli, taşan değerler reddedilir. Yeni dependency veya OEM launcher broadcast'i yok.
+
+| Platform/yüzey | Uygulanan | Gap / doğrulama |
+|---|---|---|
+| Ortak UI | Sohbetler sekmesi, oda sayacı; oda/başlık/katılımcı durumunda accessibilityLabel | Otomatik core/hook testleri var; gerçek OS erişilebilirlik ve FlatList görünürlük testi **unverified** |
+| macOS | Electron `app.badgeCount`, tray sayı başlığı ve sayılı tooltip | Dock bildirimi için OS izni gerekir; gerçek Dock/tray **unverified** |
+| Linux | Electron `app.badgeCount`, tray tooltip | Launcher desteğine bağlı (örn. Unity); desteklemeyen launcher'da tooltip dışında sayısal ikon garantisi yok. **unverified** |
+| Windows | Tray tooltip'te toplam | **Gap:** Electron sayısal app/Dock badge API'si Windows'ta yok; taskbar/ikon overlay sayısı uygulanmadı. Native tray **unverified** |
+| iOS | Swift/ObjC `setBadgeCount`; ana kuyrukta sıralı icon badge ve sıfırlama | Bildirim badge izni/OS ayarına bağlı. UIKit uyumlu setter kullanıldı; modern iOS'ta deprecated API. Native build/izin/ikon **unverified** |
+| Android | Ayrı düşük önem/sessiz `talk-unread` bildirimi, `setNumber(total)`; 0'da yalnız bu bildirim kaldırılır | Android standart API'si bağımsız launcher sayısı sunmaz; aktif bildirim + destekli launcher gerekir. İzin reddi çökmez. Dot-only launcher sayıyı göstermez; kullanıcı bildirimi kapatabilir; mevcut ayrı push bildirimleri OEM launcher toplamını etkileyebilir. Tam ikon sayısı eşitliği ve gerçek cihaz **unverified** |
+
+**Kalan Gap'ler:** uygulama arka planda JS poll/heartbeat yapmaz; OS ikon toplamı arka planda push geldiği anda yeniden hesaplanmaz (resume'da uzlaştırılır). Açık/odaklı odada mevcut native foreground-route filtresi bildirimleri bastırır; push payload'ından yerel unread artırılmaz. Push suppression'ın kapalı/soğuk başlangıç ve gerçek FCM/APNs tarafı bu dalda doğrulanmadı. Eski Talk sunucusunda `noStatusUpdate` / read-marker suppression parametreleri yoksa sunucu davranışı garanti edilmez. Tam listeler 5 sn'de alınıyor; büyük hesaplar için delta optimizasyonu ertelendi. Ek sunucu değişikliği yapılmadı.
+
+### Canlı kabul tekrarı (henüz çalıştırılmadı)
+
+Erişilebilir dev sunucusu ve iki test hesabıyla masaüstü + mobil/native web karşı tarafı açın. A/B iki farklı odaya mesaj göndersin; sekme/oda/izinli OS toplamlarını kaydedin. A'nın mesajı ve aynı poll/push olayının tekrarı ikinci kez sayılmamalı. Sadece görünür mesajlar okunsun; detay paneli veya arka plandaki açık sohbet read göndermemeli; diğer oda sayacı korunmalı. B'nin başka istemcide okuması, bağlantı kesilip gelmesi ve yeniden açılışta sunucuyla aynı toplamı doğrulayın. Karşı tarafta online ve invisible/dnd tercihlerini, arka plan/resume, logout ve hesap switch'i deneyin; başka aktif istemci offline olmamalı. Ağ kayıtlarında içerik/credential saklamadan heartbeat/read-marker ID'leri ve snapshot toplamlarını eşleştirin. Gerçek platform ikonu/izinleri için ayrı cihaz kanıtı gerekir.
+
+## İlk doğrulama — 2026-11-02 (GENE-48)
 
 Sunucu: yerel Docker dev (Nextcloud 35.0.2, Talk 25.0.6, Notifications 8.0.1, Workhub 0.5.0), `docs/dev-server.md`.
 

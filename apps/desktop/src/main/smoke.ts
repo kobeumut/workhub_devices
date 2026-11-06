@@ -85,6 +85,10 @@ export async function runSmoke(win: BrowserWindow, out: string) {
 
   try {
     await new Promise<void>((r) => (wc.isLoading() ? wc.once('did-finish-load', () => r()) : r()));
+    // Offscreen smoke simulates foreground; it cannot verify native OS focus/visibility.
+    await js(`Object.defineProperty(document, 'hasFocus', { value: () => true, configurable: true });
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      window.dispatchEvent(new Event('focus'));`);
     win.setMinimumSize(320, 320);
     win.setContentSize(Number(process.env.WORKHUB_SMOKE_WIDTH ?? 1280), Number(process.env.WORKHUB_SMOKE_HEIGHT ?? 820));
     await step('login screen', async () => {
@@ -164,7 +168,11 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         }
         await waitText(`${member} eklendi.`, 10_000);
         if (!(await click(`${member}: moderatör yap`))) throw new Error('promote');
-        await waitText(`${member} · Moderatör`, 10_000);
+        const promotedBy = Date.now() + 10_000;
+        while (!(await js<boolean>(`!!document.querySelector('[aria-label=${JSON.stringify(`${member}: moderatörlüğü al`)}]')`))) {
+          if (Date.now() > promotedBy) throw new Error('promote not applied');
+          await sleep(300);
+        }
         await shot('03b-talk-room-settings');
         if (!(await click(`${member}: moderatörlüğü al`))) throw new Error('demote');
         const end2 = Date.now() + 10_000;
