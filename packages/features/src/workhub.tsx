@@ -418,6 +418,7 @@ export function TaskScreen({ accountId, cardId, onBack, onClose, timeEnabled, go
                 ['Atananlar', task.assignees.length ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2) }}><AvatarStack people={task.assignees} size={24} /><Text style={{ color: colors.text, flexShrink: 1 }}>{task.assignees.map((a) => a.displayName).join(', ')}</Text></View> : <Text style={{ color: colors.muted }}>—</Text>],
                 ['Başlangıç', <Text style={{ color: task.startDate ? colors.text : colors.muted }}>{task.startDate ? formatDate(task.startDate) : '—'}</Text>],
                 ['Bitiş', task.dueDate ? <DueBadge due={task.dueDate} done={task.done} /> : <Text style={{ color: colors.muted }}>—</Text>],
+                ['Puan', <Text style={{ color: task.storyPoints != null ? colors.text : colors.muted }}>{task.storyPoints != null ? String(task.storyPoints) : '—'}</Text>],
                 ['Tahmini', <Text style={{ color: task.estimateSec != null ? colors.text : colors.muted }}>{task.estimateSec != null ? `${Math.round((task.estimateSec / 3600) * 100) / 100} sa` : '—'}</Text>],
               ] as const
             ).map(([k, v]) => (

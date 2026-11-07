@@ -66,6 +66,8 @@ export interface TaskDetail extends Task {
   /** Description WITHOUT checklist lines; the server preserves the checklist on PATCH. */
   description: string;
   estimateSec: number | null;
+  /** Story points (whole number); null/absent = not sized (absent on servers older than Workhub 0.5.1). */
+  storyPoints?: number | null;
   subtaskItems: SubtaskItem[];
   /** Tasks this task waits for. */
   predecessors: TaskLink[];
@@ -151,6 +153,7 @@ export interface TaskPatch {
   startDate?: string | null;
   dueDate?: string | null;
   estimateSec?: number | null;
+  storyPoints?: number | null;
   priority?: Priority | null;
 }
 
@@ -992,13 +995,19 @@ export interface TaskForm {
   dueDate: string;
   /** Hours as typed ('' = no estimate); comma or dot decimals. */
   estimateHours: string;
+  /** Story points as typed ('' = not sized). */
+  storyPoints: string;
   /** Selected NON-priority label ids. */
   labels: number[];
   /** Selected user ids (board members). */
   assignees: string[];
 }
 
-export type TaskFormError = 'title_empty' | 'date_invalid' | 'date_range' | 'estimate_invalid';
+export type TaskFormError = 'title_empty' | 'date_invalid' | 'date_range' | 'estimate_invalid' | 'points_invalid';
+
+/** Suggested story point scale (modified Fibonacci); the server accepts any whole number 0–1000. */
+export const STORY_POINT_SCALE = [0, 1, 2, 3, 5, 8, 13, 21] as const;
+export const MAX_STORY_POINTS = 1000;
 
 const dayOf = (iso: string | null) => (iso ? iso.slice(0, 10) : '');
 const sameSet = <T>(a: T[], b: T[]) => a.length === b.length && a.every((x) => b.includes(x));
@@ -1012,6 +1021,7 @@ export function taskFormOf(task: TaskDetail, labels: ProjectLabel[]): TaskForm {
     startDate: dayOf(task.startDate),
     dueDate: dayOf(task.dueDate),
     estimateHours: task.estimateSec == null ? '' : String(Math.round((task.estimateSec / 3600) * 100) / 100),
+    storyPoints: task.storyPoints == null ? '' : String(task.storyPoints),
     labels: task.labels.filter((id) => !priorityIds.has(id)),
     assignees: task.assignees.filter((a) => a.type === 'user').map((a) => a.id),
   };
@@ -1038,6 +1048,12 @@ export function buildTaskPatch(task: TaskDetail, labels: ProjectLabel[], form: T
     if (!/^\d+(\.\d+)?$/.test(est) || !Number.isFinite(h) || h > 10_000) return { error: 'estimate_invalid' };
     estimateSec = Math.round(h * 3600);
   }
+  let storyPoints: number | null = null;
+  const pts = form.storyPoints.trim();
+  if (pts) {
+    storyPoints = Number(pts);
+    if (!/^\d{1,4}$/.test(pts) || storyPoints > MAX_STORY_POINTS) return { error: 'points_invalid' };
+  }
   const patch: TaskPatch = {};
   if (title !== task.title) patch.title = title;
   if (form.description !== base.description) patch.description = form.description;
@@ -1045,6 +1061,7 @@ export function buildTaskPatch(task: TaskDetail, labels: ProjectLabel[], form: T
   if (start !== base.startDate) patch.startDate = start || null;
   if (due !== base.dueDate) patch.dueDate = due || null;
   if (estimateSec !== (task.estimateSec ?? null)) patch.estimateSec = estimateSec;
+  if (storyPoints !== (task.storyPoints ?? null)) patch.storyPoints = storyPoints;
   if (!sameSet(form.labels, base.labels)) {
     const priorityIds = new Set(labels.filter((l) => l.priority).map((l) => l.id));
     patch.labels = [...new Set([...form.labels.filter((id) => !priorityIds.has(id)), ...task.labels.filter((id) => priorityIds.has(id))])];
@@ -1141,6 +1158,9 @@ export interface WorkloadMember {
   plannedSec: number;
   actualSec: number | null;
   taskCount: number;
+  /** Open story points / task ids without points (absent on servers older than 0.5.1). */
+  storyPoints?: number;
+  missingPoints?: number[];
   overdue: number[];
   unscheduled: number[];
   overallocatedDays: number;
@@ -1155,6 +1175,7 @@ export interface WorkloadTask {
   startDate: string | null;
   dueDate: string | null;
   estimateSec: number | null;
+  storyPoints?: number | null;
 }
 
 export interface WorkloadMatrix {

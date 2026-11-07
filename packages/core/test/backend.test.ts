@@ -69,12 +69,15 @@ test('task PATCH over the wire: only known, well-typed fields pass', async () =>
     { labels: [1, -2] },
     { estimateSec: -1 },
     { estimateSec: 1.5 },
+    { storyPoints: -1 },
+    { storyPoints: 1.5 },
+    { storyPoints: 1001 },
     { __proto__: { done: true } },
   ]) {
     assert.deepEqual(await dispatchWire(b, 'updateTask', ['acc', 1, patch]), bad, JSON.stringify(patch));
   }
   // valid shapes reach the backend (unknown account → unauthorized, not a validation error)
-  for (const patch of [{ title: 'Yeni' }, { dueDate: null, startDate: '2026-11-03' }, { assignees: [], labels: [] }, { priority: null, estimateSec: 3600 }, { dueDate: '2026-11-03T09:00:00Z' }]) {
+  for (const patch of [{ title: 'Yeni' }, { dueDate: null, startDate: '2026-11-03' }, { assignees: [], labels: [] }, { priority: null, estimateSec: 3600 }, { storyPoints: 5 }, { storyPoints: null }, { dueDate: '2026-11-03T09:00:00Z' }]) {
     const r = await dispatchWire(b, 'updateTask', ['acc', 1, patch]);
     assert.equal(r.ok === false && r.error.kind, 'unauthorized', JSON.stringify(patch));
   }
