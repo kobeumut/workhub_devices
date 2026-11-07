@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { buildTaskPatch, taskFormOf, type AccountId, type BoardPayload, type Priority, type TaskDetail, type TaskForm, type TaskFormError } from '@workhub-devices/core';
+import { buildTaskPatch, STORY_POINT_SCALE, taskFormOf, type AccountId, type BoardPayload, type Priority, type TaskDetail, type TaskForm, type TaskFormError } from '@workhub-devices/core';
 import { useServices } from './services';
 import { Button, ErrorBanner, Field, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
@@ -21,6 +21,7 @@ const FORM_ERROR: Record<TaskFormError, string> = {
   date_invalid: 'Tarihleri YYYY-AA-GG biçiminde girin (ör. 2026-11-30).',
   date_range: 'Başlangıç tarihi bitişten sonra olamaz.',
   estimate_invalid: 'Tahmini süreyi saat olarak girin (ör. 1,5).',
+  points_invalid: 'Hikaye puanını 0–1000 arası tam sayı olarak girin.',
 };
 
 export function Chip({ label, selected, onPress, disabled }: { label: string; selected: boolean; onPress: () => void; disabled?: boolean }) {
@@ -97,6 +98,13 @@ export function TaskEditor({ accountId, task, board, onSaved, onCancel }: { acco
         </View>
       </View>
       <Field label="Tahmini süre (saat)" value={form.estimateHours} onChangeText={(v) => set({ estimateHours: v })} keyboardType="decimal-pad" placeholder="—" />
+      <Text style={ui.label}>Hikaye puanı</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
+        {STORY_POINT_SCALE.map((p) => (
+          <Chip key={p} label={String(p)} selected={form.storyPoints === String(p)} onPress={() => set({ storyPoints: form.storyPoints === String(p) ? '' : String(p) })} />
+        ))}
+      </View>
+      <Field label="Hikaye puanı (tam sayı)" value={form.storyPoints} onChangeText={(v) => set({ storyPoints: v })} keyboardType="number-pad" placeholder="—" />
       {plainLabels.length ? (
         <>
           <Text style={ui.label}>Etiketler</Text>

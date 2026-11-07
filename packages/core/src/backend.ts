@@ -1255,6 +1255,7 @@ const TASK_PATCH: Record<keyof TaskPatch, (v: unknown) => boolean> = {
   startDate: isDateOrNull,
   dueDate: isDateOrNull,
   estimateSec: (v) => v === null || (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 10_000 * 3600),
+  storyPoints: (v) => v === null || (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 1000),
   priority: (v) => v === null || PRIORITIES.includes(v as string),
 };
 export const isValidTaskPatch = (v: unknown): v is TaskPatch => {
