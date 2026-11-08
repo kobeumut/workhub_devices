@@ -93,6 +93,16 @@ export function mergeRooms(prev: readonly TalkRoom[], next: readonly TalkRoom[],
   return [...map.values()].sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite) || b.lastActivity - a.lastActivity);
 }
 
+/** Newest activity first (falls back to the last message time); stable on ties. Favorites keep their star but not a pinned slot. */
+export function roomActivity(r: Pick<TalkRoom, 'lastActivity' | 'lastMessage'>): number {
+  const last = r.lastMessage && 'timestamp' in r.lastMessage ? Number(r.lastMessage.timestamp) : 0;
+  const a = Number.isFinite(r.lastActivity) ? r.lastActivity : 0;
+  return Math.max(a, Number.isFinite(last) ? last : 0);
+}
+export function sortRooms<T extends Pick<TalkRoom, 'lastActivity' | 'lastMessage'>>(rooms: readonly T[]): T[] {
+  return rooms.map((r, i) => ({ r, i })).sort((x, y) => roomActivity(y.r) - roomActivity(x.r) || x.i - y.i).map((x) => x.r);
+}
+
 // ---- Chat -----------------------------------------------------------------
 
 export interface ChatFetchResult {

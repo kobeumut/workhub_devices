@@ -103,7 +103,9 @@ export function Header({ title, onBack, right }: { title: string; onBack?: () =>
   );
 }
 
-export function Row({ title, subtitle, right, onPress, selected, badge }: {
+export function Row({ title, subtitle, right, onPress, selected, badge, dotColor, unread }: {
+  dotColor?: string;
+  unread?: boolean;
   title: string;
   subtitle?: string;
   right?: string;
@@ -118,11 +120,14 @@ export function Row({ title, subtitle, right, onPress, selected, badge }: {
       style={({ pressed }) => [styles.row, selected && { backgroundColor: colors.primarySoft }, pressed && { backgroundColor: colors.hover }]}
     >
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={styles.rowTitle}>
-          {title}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {dotColor ? <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dotColor }} accessibilityElementsHidden /> : null}
+          <Text numberOfLines={1} style={[styles.rowTitle, { flexShrink: 1 }, unread && { fontWeight: '800' }]}>
+            {title}
+          </Text>
+        </View>
         {subtitle ? (
-          <Text numberOfLines={1} style={styles.rowSubtitle}>
+          <Text numberOfLines={1} style={[styles.rowSubtitle, unread && { fontWeight: '700', color: colors.text }]}>
             {subtitle}
           </Text>
         ) : null}

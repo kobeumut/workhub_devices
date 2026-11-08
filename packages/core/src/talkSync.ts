@@ -6,6 +6,18 @@ export function unreadTotal(rooms: readonly TalkRoom[]): number {
   return rooms.reduce((n, r) => n + (Number.isSafeInteger(r.unreadMessages) && r.unreadMessages > 0 ? r.unreadMessages : 0), 0);
 }
 
+/** green = online, yellow = away, red = busy/dnd, gray = offline/unknown. */
+export type PresenceTone = 'green' | 'yellow' | 'red' | 'gray';
+export function presenceTone(status: unknown): PresenceTone {
+  switch (status) {
+    case 'online': return 'green';
+    case 'away': return 'yellow';
+    case 'busy':
+    case 'dnd': return 'red';
+    default: return 'gray';
+  }
+}
+
 export function presenceLabel(status: unknown): string {
   switch (status) {
     case 'online': return 'Çevrimiçi';
