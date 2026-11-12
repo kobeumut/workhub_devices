@@ -251,3 +251,8 @@ Bu faz ilk mesajlaşma diliminin gizli ön şartı değildir; çağrı desteklen
 Başlıca riskler: birleşik push yönlendirmesi/provider ownership; kurulu NC/Talk sürüm uyumsuzluğu; Electron'un native widget beklentisinden farkı; native background crypto/reply; API'si olmayan web işlevleri; lisans/mağaza yükümlülükleri; erişilemeyen Windows/Linux test makineleri. Öncelik ilk iki riski kodu büyütmeden çözmektir. Credential veya runtime erişimi yoksa uydurma başarı yerine blocker kaydı bırakılır.
 
 Opus2'nin uygulama görevi şu belgeleri kaynak almalı ve PR/commit linkleriyle aşama kanıtlarını tutmalı. Asgari teslim: beş hedefte doğrulanmış Talk + ilk Workhub dilimi ve gerçek birleşik bildirim; tam iş kapanışı için Faz 5 envanteri ve Faz 6 kabulü gerekir. Web fallback/desktop reply kısıtları kullanıcı kabulüyle açıkça kaydedilmeden kapsam daraltılmaz. Workhub sunucusunda değişiklik zorunlu görünürse önce kanıt/onay; varsayılan sıfır Workhub diff.
+
+## GENE-92: Hikaye puanı (story points)
+
+- [x] Görev düzenleme formunda hikaye puanı (Fibonacci çipleri + tam sayı alanı, 0–1000), görev ayrıntısında "Puan" satırı, İş yükü matrisinde kişi başına açık puan / puansız sayısı; PATCH `storyPoints` allowlist'te. Sunucu sözleşmesi Workhub 0.5.1 (ADR-0006); eski sunucuda alan yoktur ve boş sayılır.
+- [x] `npm run check` geçti (typecheck + 154 core testi). Canlı sunucu/cihaz doğrulaması yapılmadı: **unverified**.

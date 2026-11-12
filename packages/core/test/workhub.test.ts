@@ -72,7 +72,7 @@ test('task form → minimal PATCH; labels keep the priority label; validation', 
     description: 'açıklama', estimateSec: 5400, subtaskItems: [], predecessors: [], successors: [],
   };
   const form = taskFormOf(task, labels);
-  assert.deepEqual(form, { title: 'Eski', description: 'açıklama', priority: 'urgent', startDate: '', dueDate: '2026-11-10', estimateHours: '1.5', labels: [2], assignees: ['bob'] });
+  assert.deepEqual(form, { title: 'Eski', description: 'açıklama', priority: 'urgent', startDate: '', dueDate: '2026-11-10', estimateHours: '1.5', storyPoints: '', labels: [2], assignees: ['bob'] });
   assert.deepEqual(buildTaskPatch(task, labels, form), { patch: {} });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, title: ' Yeni ', labels: [3], assignees: ['alice'], dueDate: '', estimateHours: '2,25', priority: null }), {
     patch: { title: 'Yeni', priority: null, dueDate: null, estimateSec: 8100, labels: [3, 1], assignees: ['alice'] },
@@ -82,6 +82,11 @@ test('task form → minimal PATCH; labels keep the priority label; validation', 
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, startDate: '2026-12-01' }), { error: 'date_range' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, estimateHours: '-1' }), { error: 'estimate_invalid' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, estimateHours: '' }), { patch: { estimateSec: null } });
+  // story points: set, clear, 0 is a value, invalid input rejected
+  assert.deepEqual(buildTaskPatch(task, labels, { ...form, storyPoints: '5' }), { patch: { storyPoints: 5 } });
+  assert.deepEqual(buildTaskPatch({ ...task, storyPoints: 8 }, labels, { ...form, storyPoints: '' }), { patch: { storyPoints: null } });
+  assert.deepEqual(buildTaskPatch(task, labels, { ...form, storyPoints: '0' }), { patch: { storyPoints: 0 } });
+  for (const bad of ['-1', '1.5', 'abc', '1001']) assert.deepEqual(buildTaskPatch(task, labels, { ...form, storyPoints: bad }), { error: 'points_invalid' });
 });
 
 test('project management: bodies, idempotency and client-side guards', async () => {

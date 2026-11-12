@@ -357,6 +357,7 @@ export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId:
                       <Text numberOfLines={1} style={{ fontWeight: '600', color: colors.text }}>{mem.displayName}</Text>
                       <Text style={{ fontSize: font.small, color: mem.overdue.length ? colors.danger : colors.muted }}>
                         {mem.taskCount} görev{mem.overdue.length ? ` · ${mem.overdue.length} gecikmiş` : ''}{mem.unscheduled.length ? ` · ${mem.unscheduled.length} tarihsiz` : ''}
+                        {mem.storyPoints != null ? ` · ${mem.storyPoints} puan` : ''}{mem.missingPoints?.length ? ` · ${mem.missingPoints.length} puansız` : ''}
                       </Text>
                     </View>
                     {mem.days.map((d) => {
@@ -403,7 +404,7 @@ export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId:
                   <Pressable key={x.cardId} accessibilityRole="button" accessibilityLabel={`${title}, ${info?.boardTitle ?? ''}, bu gün ${hours(x.plannedSec)} saat`} disabled={!onOpenTask} onPress={() => onOpenTask?.(x.cardId)} style={{ paddingVertical: space(2), borderTopWidth: 1, borderColor: colors.border }}>
                     <Text style={{ color: onOpenTask ? colors.primary : colors.text, fontWeight: '600' }}>{title}</Text>
                     <Text style={{ color: colors.muted, fontSize: font.small }}>
-                      {info?.boardTitle ?? ''} · bu gün {hours(x.plannedSec)} sa{info?.estimateSec == null ? ' · tahmin yok' : ` · tahmin ${hours(info.estimateSec)} sa`}
+                      {info?.boardTitle ?? ''} · bu gün {hours(x.plannedSec)} sa{info?.estimateSec == null ? ' · tahmin yok' : ` · tahmin ${hours(info.estimateSec)} sa`}{info?.storyPoints != null ? ` · ${info.storyPoints} puan` : ''}
                     </Text>
                   </Pressable>
                 );
