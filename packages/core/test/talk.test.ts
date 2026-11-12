@@ -98,3 +98,11 @@ test('reconnect backoff is bounded', () => {
   assert.equal(reconnectDelay(0, () => 0), 500);
   assert.equal(reconnectDelay(20, () => 1), 30_000);
 });
+
+import { sortRooms } from '../src/talk';
+import { presenceTone } from '../src/talkSync';
+test('sortRooms puts newest activity first and presenceTone maps colors', () => {
+  const r = (t: string, a: number) => ({ token: t, lastActivity: a }) as never;
+  assert.deepEqual(sortRooms([r('a', 1), r('c', 3), r('b', 2)]).map((x: { token: string }) => x.token), ['c', 'b', 'a']);
+  assert.deepEqual(['online', 'away', 'dnd', 'offline', undefined].map(presenceTone), ['green', 'yellow', 'red', 'gray', 'gray']);
+});

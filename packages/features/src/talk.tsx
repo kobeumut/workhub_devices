@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   activeMentionQuery, classifySendFailure, editableText, fileOf, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeTimeline, messageActions,
-  newReferenceId, presenceLabel, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
+  newReferenceId, presenceLabel, presenceTone, sortRooms, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
   type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type TalkFeatures, type TalkMessage, type TalkRoom,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
@@ -52,7 +52,7 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
     }
   };
 
-  const rooms = (state.data ?? []).filter((r) => !query || r.displayName.toLocaleLowerCase('tr').includes(query.toLocaleLowerCase('tr')));
+  const rooms = sortRooms(state.data ?? []).filter((r) => !query || r.displayName.toLocaleLowerCase('tr').includes(query.toLocaleLowerCase('tr')));
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={{ padding: space(2), flexDirection: 'row', gap: space(2), alignItems: 'center' }}>
@@ -115,6 +115,8 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
               subtitle={[item.type === 1 ? presenceLabel(item.status) : '', lastMessagePreview(item)].filter(Boolean).join(' · ')}
               right={item.lastActivity ? formatTime(item.lastActivity) : ''}
               badge={item.unreadMessages > 0 ? (item.unreadMention ? `@${item.unreadMessages}` : item.unreadMessages) : undefined}
+              unread={item.unreadMessages > 0}
+              dotColor={item.type === 1 ? PRESENCE_COLORS[presenceTone(item.status)] : undefined}
               selected={item.token === selected}
               onPress={() => onOpen(item)}
             />
@@ -124,6 +126,8 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
     </View>
   );
 }
+
+const PRESENCE_COLORS = { green: '#16a34a', yellow: '#eab308', red: '#dc2626', gray: '#9ca3af' } as const;
 
 function MessageText({ m, selfId }: { m: TalkMessage; selfId: string }) {
   const segs = renderMessageSegments(m.message, m.messageParameters);
