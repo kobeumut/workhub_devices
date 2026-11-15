@@ -66,13 +66,13 @@ test('room actions: management only for moderators of group/public rooms; leave/
 
 test('edit/delete/reaction updates from the feed replace the message and its quotes; carriers are hidden', () => {
   let t: ChatItem[] = mergeTimeline([], [msg(10, { reactions: [] }), msg(11, { parent: msg(10) })]);
-  const edited = msg(10, { message: 'yeni', lastEditTimestamp: 2000, reactions: { '👍': 1 } });
+  const edited = msg(10, { message: 'new', lastEditTimestamp: 2000, reactions: { '👍': 1 } });
   t = mergeTimeline(t, [msg(12, { systemMessage: 'message_edited', messageType: 'system', parent: edited })]);
   const byId = (id: number) => t.map((i) => (i.kind === 'server' ? i.message : null)).find((m) => m?.id === id)!;
-  assert.equal(byId(10).message, 'yeni');
+  assert.equal(byId(10).message, 'new');
   assert.equal(byId(10).lastEditTimestamp, 2000);
   assert.deepEqual(byId(10).reactionsSelf, []);
-  assert.equal((byId(11).parent as TalkMessage).message, 'yeni');
+  assert.equal((byId(11).parent as TalkMessage).message, 'new');
   assert.equal(isHiddenSystemMessage(byId(12)), true);
   t = mergeTimeline(t, [msg(13, { systemMessage: 'reaction', messageType: 'system', parent: { ...edited, reactions: { '👍': 2 }, reactionsSelf: ['👍'] } })]);
   assert.deepEqual(reactionSummary(byId(10)), [{ emoji: '👍', count: 2, self: true }]);
@@ -100,22 +100,22 @@ test('reaction validation rejects text, whitespace and control characters', () =
 });
 
 test('mention composer: active query, insertion and quoting', () => {
-  assert.deepEqual(activeMentionQuery('selam @al', 9), { start: 6, query: 'al' });
+  assert.deepEqual(activeMentionQuery('hello @al', 9), { start: 6, query: 'al' });
   assert.equal(activeMentionQuery('mail@host', 9), null);
   assert.deepEqual(activeMentionQuery('@', 1), { start: 0, query: '' });
-  const r = insertMention('selam @al nasılsın', { start: 6, query: 'al' }, 'alice');
-  assert.equal(r.text, 'selam @alice  nasılsın');
+  const r = insertMention('hello @al there', { start: 6, query: 'al' }, 'alice');
+  assert.equal(r.text, 'hello @alice  there');
   assert.equal(r.caret, 13);
   assert.equal(mentionText('john doe'), '@"john doe"');
   assert.equal(mentionText('federated_user/a@b.c'), '@"federated_user/a@b.c"');
   assert.equal(mentionText('all'), '@all');
   assert.equal(mentionsSelf(msg(1, { messageParameters: { 'mention-user1': { type: 'user', id: 'bob', name: 'Bob' } } }), 'bob'), true);
-  assert.equal(mentionsSelf(msg(1, { messageParameters: { 'mention-call1': { type: 'call', id: 'abcd', name: 'Oda' } } }), 'bob'), true);
+  assert.equal(mentionsSelf(msg(1, { messageParameters: { 'mention-call1': { type: 'call', id: 'abcd', name: 'Lobby' } } }), 'bob'), true);
   assert.equal(mentionsSelf(msg(1), 'bob'), false);
   // edit box: placeholders back to mention text
   assert.equal(editableText(msg(1, {
     message: 'hi {mention-user1} {mention-call1} {mention-group1} {x}',
-    messageParameters: { 'mention-user1': { type: 'user', id: 'john doe', name: 'John', 'mention-id': 'john doe' }, 'mention-call1': { type: 'call', id: 'abcd', name: 'Oda' }, 'mention-group1': { type: 'user-group', id: 'staff', name: 'Staff', 'mention-id': 'group/staff' } },
+    messageParameters: { 'mention-user1': { type: 'user', id: 'john doe', name: 'John', 'mention-id': 'john doe' }, 'mention-call1': { type: 'call', id: 'abcd', name: 'Lobby' }, 'mention-group1': { type: 'user-group', id: 'staff', name: 'Staff', 'mention-id': 'group/staff' } },
   })), 'hi @"john doe" @all @"group/staff" {x}');
 });
 
@@ -138,19 +138,19 @@ test('API: edit PUT / delete DELETE / reaction POST+DELETE(query) on the documen
 });
 
 test('search: unified search provider with conversation filter; bad entries dropped; cursor ends', async () => {
-  const entry = (token: string, id: string) => ({ title: 'Alice in Oda', subline: '…merhaba…', attributes: { conversation: token, messageId: id, actorId: 'alice', timestamp: '5' } });
+  const entry = (token: string, id: string) => ({ title: 'Alice in Lobby', subline: '…hello…', attributes: { conversation: token, messageId: id, actorId: 'alice', timestamp: '5' } });
   const f = scriptedFetch(
     json(200, ocs({ isPaginated: true, cursor: 2, entries: [entry('abcd', '7'), entry('../x', '8')] })),
     json(200, ocs({ isPaginated: true, cursor: 4, entries: [entry('abcd', '1')] })),
   );
   const c = client(f);
-  const p = await searchMessages(c, { term: ' merhaba ', token: 'abcd', limit: 2 });
+  const p = await searchMessages(c, { term: ' hello ', token: 'abcd', limit: 2 });
   assert.deepEqual(p.hits.map((h) => h.messageId), [7]);
   assert.equal(p.cursor, 2);
   const q = new URL(f.calls[0]!.url);
   assert.equal(q.pathname, '/ocs/v2.php/search/providers/talk-message/search');
   assert.equal(q.searchParams.get('conversation'), 'abcd');
-  assert.equal(q.searchParams.get('term'), 'merhaba');
+  assert.equal(q.searchParams.get('term'), 'hello');
   assert.equal((await searchMessages(c, { term: 'x', cursor: 2, limit: 2 })).cursor, null);
   await assert.rejects(() => searchMessages(c, { term: '  ' }));
 });
@@ -158,8 +158,8 @@ test('search: unified search provider with conversation filter; bad entries drop
 test('room management routes', async () => {
   const f = scriptedFetch(...Array.from({ length: 6 }, () => json(200, ocs([]))));
   const c = client(f);
-  await talkRoomApi.rename(c, 'abcd', ' Yeni ad ');
-  await talkRoomApi.describe(c, 'abcd', 'açıklama');
+  await talkRoomApi.rename(c, 'abcd', ' New name ');
+  await talkRoomApi.describe(c, 'abcd', 'description');
   await talkRoomApi.removeAttendee(c, 'abcd', 7);
   await talkRoomApi.setModerator(c, 'abcd', 7, true);
   await talkRoomApi.setModerator(c, 'abcd', 7, false);
@@ -172,7 +172,7 @@ test('room management routes', async () => {
     'DELETE /ocs/v2.php/apps/spreed/api/v4/room/abcd/moderators',
     'DELETE /ocs/v2.php/apps/spreed/api/v4/room/abcd/participants/self',
   ]);
-  assert.equal(JSON.parse(String(f.calls[0]!.init.body)).roomName, 'Yeni ad');
+  assert.equal(JSON.parse(String(f.calls[0]!.init.body)).roomName, 'New name');
 });
 
 class Mem implements SecretStore, PlainStore {
@@ -196,7 +196,7 @@ async function loggedIn(...rest: Response[]) {
 }
 const capsWith = (features: string[], canCreate = true) =>
   json(200, ocs({ version: { major: 35 }, capabilities: { spreed: { features, config: { conversations: { 'can-create': canCreate } } } } }));
-const room = (extra: Record<string, unknown> = {}) => json(200, ocs({ token: 'abcd', type: 2, displayName: 'Oda', readOnly: 0, participantType: 3, permissions: 510, attendeeId: 1, canLeaveConversation: true, canDeleteConversation: false, ...extra }));
+const room = (extra: Record<string, unknown> = {}) => json(200, ocs({ token: 'abcd', type: 2, displayName: 'Lobby', readOnly: 0, participantType: 3, permissions: 510, attendeeId: 1, canLeaveConversation: true, canDeleteConversation: false, ...extra }));
 
 test('backend gates fail closed: missing feature, missing role, create disabled — without calling the write route', async () => {
   {
@@ -215,7 +215,7 @@ test('backend gates fail closed: missing feature, missing role, create disabled 
   }
   {
     const { b, id } = await loggedIn(capsWith([], false));
-    await assert.rejects(() => b.createRoom(id, 'group', 'Yeni'), (e: unknown) => e instanceof OcsError && e.errorCode === 'TALK_CREATE_FORBIDDEN');
+    await assert.rejects(() => b.createRoom(id, 'group', 'New'), (e: unknown) => e instanceof OcsError && e.errorCode === 'TALK_CREATE_FORBIDDEN');
   }
   {
     const { b, id } = await loggedIn(capsWith([]), room({ participantType: 1 }));
@@ -224,9 +224,9 @@ test('backend gates fail closed: missing feature, missing role, create disabled 
 });
 
 test('backend: moderator rename+description only sends changed fields, then re-reads', async () => {
-  const { b, f, id } = await loggedIn(capsWith(['room-description']), room({ participantType: 1, description: 'eski' }), json(200, ocs([])), room({ participantType: 1, description: 'yeni' }));
-  const r = await b.updateRoom(id, 'abcd', { name: 'Oda', description: 'yeni' });
-  assert.equal(r.description, 'yeni');
+  const { b, f, id } = await loggedIn(capsWith(['room-description']), room({ participantType: 1, description: 'old' }), json(200, ocs([])), room({ participantType: 1, description: 'new' }));
+  const r = await b.updateRoom(id, 'abcd', { name: 'Lobby', description: 'new' });
+  assert.equal(r.description, 'new');
   assert.deepEqual(f.calls.slice(2).map((x) => `${x.init.method ?? 'GET'} ${new URL(x.url).pathname.split('/').slice(-2).join('/')}`), [
     'GET cloud/capabilities', 'GET room/abcd', 'PUT abcd/description', 'GET room/abcd',
   ]);

@@ -5,6 +5,8 @@
 //      timesheet for the review step (display name WH_SMOKE_SUBJECT, default "Carol") and two
 //      pending requests to WH_A_USER. Optional WH_B_USER/WH_B_PASS (manager of WH_A_USER): seeds two
 //      open requests to WH_C_USER that WH_A_USER manages (convert / resolve).
+// The smoke finds controls by their visible English text, so it always runs the UI in English
+//      (WORKHUB_LOCALE=en, set below), whatever the language of the machine.
 // Optional WH_SMOKE_BIN: run a packaged build instead of the dev tree, e.g.
 //      release/workhub-<version>-x86_64.AppImage or the deb's /opt/Workhub/workhub (GENE-59).
 import { spawn, execFileSync } from 'node:child_process';
@@ -27,7 +29,7 @@ const ocs = async (method, path, body) => {
   });
   return (await r.json()).ocs?.data;
 };
-const goalTitle = `Masaüstü hedefi ${new Date().toISOString().slice(11, 19)}`;
+const goalTitle = `Desktop goal ${new Date().toISOString().slice(11, 19)}`;
 const goal = process.env.WH_A_PASS ? await ocs('POST', '/goals', { title: goalTitle }).catch(() => null) : null;
 // A pending timesheet of a subject (WH_C_*, whose Nextcloud manager is WH_A_USER) for the review step.
 const ocsAs = async (user, pass, method, path, body, extra = {}) => {
@@ -61,20 +63,20 @@ if (process.env.WH_C_USER && process.env.WH_C_PASS) {
   }
 }
 // Requests step: two pending requests C → A (A is the recipient: approve / reject) and two open
-// requests B → C (A manages C: convert / resolve from "Ekibim"). Workhub has no delete; every
+// requests B → C (A manages C: convert / resolve from the "My team" tab). Workhub has no delete; every
 // seeded request ends in a terminal state through the UI.
 const reqStamp = new Date().toISOString().slice(11, 19);
 const reqTitles = { approve: '', reject: '', convert: '', resolve: '' };
 if (process.env.WH_C_USER && process.env.WH_C_PASS) {
   for (const k of ['approve', 'reject']) {
-    const t = `Masaüstü talebi ${k} ${reqStamp}`;
+    const t = `Desktop request ${k} ${reqStamp}`;
     const r = await ocsAs(process.env.WH_C_USER, process.env.WH_C_PASS, 'POST', '/requests', { title: t, description: 'smoke' }, { 'Idempotency-Key': crypto.randomUUID() }).catch(() => null);
     if (r?.state === 'pending') reqTitles[k] = t;
   }
 }
 if (process.env.WH_B_USER && process.env.WH_B_PASS && process.env.WH_C_USER) {
   for (const k of ['convert', 'resolve']) {
-    const t = `Ekip talebi ${k} ${reqStamp}`;
+    const t = `Team request ${k} ${reqStamp}`;
     const r = await ocsAs(process.env.WH_B_USER, process.env.WH_B_PASS, 'POST', '/requests', { title: t, description: 'smoke', recipientUid: process.env.WH_C_USER }, { 'Idempotency-Key': crypto.randomUUID() }).catch(() => null);
     if (r?.state === 'open') reqTitles[k] = t;
   }
@@ -85,6 +87,7 @@ const child = spawn(bin, [...(process.env.WH_SMOKE_BIN ? [] : ['.']), `--user-da
   env: {
     ...process.env,
     WORKHUB_SMOKE_OUT: out,
+    WORKHUB_LOCALE: 'en',
     WORKHUB_ALLOW_HTTP: '1',
     WORKHUB_TEST_INSECURE_STORE: '1',
     WORKHUB_SMOKE_SERVER: process.env.WH_SERVER,

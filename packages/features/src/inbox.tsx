@@ -3,7 +3,7 @@ import { parseServerLink, routeForObject, type AccountId, type AppRoute, type In
 import { useAsync, useServices } from './services';
 import { Empty, ErrorBanner, Loading, Row } from './ui';
 import { colors, space } from './theme';
-import { t } from './i18n';
+import { intlTag, t } from './i18n';
 
 /** Untrusted notification → typed route only (object id first, then validated server link). */
 export function routeOf(n: InboxNotification, serverBase: ServerBase): AppRoute {
@@ -41,7 +41,7 @@ export function InboxScreen({ accountId, serverBase, onRoute }: { accountId: Acc
                 <Row
                   title={item.subject}
                   subtitle={`${item.app === 'spreed' ? 'Talk' : item.app === 'workhub' ? 'Workhub' : item.app}${item.message ? ` · ${item.message}` : ''}`}
-                  right={item.datetime ? new Date(item.datetime).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                  right={item.datetime ? new Date(item.datetime).toLocaleString(intlTag(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
                   onPress={() => {
                     const r = routeOf(item, serverBase);
                     if (r.name !== 'inbox') onRoute(r);

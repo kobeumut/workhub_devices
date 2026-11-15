@@ -4,7 +4,9 @@ import type { AccountSummary } from '@workhub-devices/core';
 import { useServices } from './services';
 import { Button, ErrorBanner, Field, keyboardAvoidBehavior } from './ui';
 import { colors, font, space } from './theme';
-import { t } from './i18n';
+import { messages, t } from './i18n';
+
+const m = messages.shell;
 
 /** Server URL → Nextcloud Login Flow v2 in the system browser → app password stored by the shell. */
 export function LoginScreen({ onDone, onCancel }: { onDone: (a: AccountSummary) => void; onCancel?: () => void }) {
@@ -49,7 +51,7 @@ export function LoginScreen({ onDone, onCancel }: { onDone: (a: AccountSummary) 
         <Text accessibilityRole="header" style={{ fontSize: font.h1, fontWeight: '800', color: colors.text, marginBottom: space(2) }}>
           {t.appName}
         </Text>
-        <Text style={{ color: colors.muted, marginBottom: space(6) }}>Nextcloud sunucunuza bağlanın: sohbetler (Talk) ve işler (Workhub) tek uygulamada.</Text>
+        <Text style={{ color: colors.muted, marginBottom: space(6) }}>{m.loginIntro}</Text>
         {flow ? (
           <View>
             <Text style={{ color: colors.text, marginBottom: space(4) }}>{t.loginWaiting}</Text>

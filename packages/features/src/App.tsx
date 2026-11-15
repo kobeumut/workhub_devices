@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { unreadTotal, talkFeaturesOf, type AccountId, type AccountSummary, type AppRoute, type Backend, type RoutedTarget, type SessionInfo } from '@workhub-devices/core';
-import { ServicesProvider, useAsync, useServices, type PlatformServices } from './services';
+import { ServicesProvider, useAsync, useServices, type LocalePreference, type PlatformServices } from './services';
 import { LoginScreen } from './LoginScreen';
 import { ChatView, RoomList } from './talk';
 import { useTalkState } from './talkState';
@@ -11,7 +11,9 @@ import { Icon, type IconName } from './icons';
 import { InboxScreen } from './inbox';
 import { Button, Empty, ErrorBanner, Header, Loading, card } from './ui';
 import { colors, font, space } from './theme';
-import { describeError, t } from './i18n';
+import { LOCALE_NAMES, SUPPORTED_LOCALES, describeError, detectDeviceLocale, isLocale, messages, setLocale, t, useLocale } from './i18n';
+
+const m = messages.shell;
 
 type Tab = 'chats' | 'tasks' | 'inbox' | 'account';
 type Detail =
@@ -30,8 +32,55 @@ export function WorkhubApp({ backend, platform }: { backend: Backend; platform: 
   );
 }
 
+/** The language choice shown in the Account screen; `choose` applies it at once and persists it. */
+interface LanguageState {
+  pref: LocalePreference;
+  choose(pref: LocalePreference): Promise<void>;
+}
+const LanguageContext = createContext<LanguageState | null>(null);
+
+/** Concrete language for a stored preference; unknown or missing values follow the device. */
+const localeFor = (pref: LocalePreference | null | undefined) => (isLocale(pref) ? pref : detectDeviceLocale());
+
 function Root() {
   const { backend, platform } = useServices();
+  // Device language synchronously on the very first render (no flash of the wrong language);
+  // the saved choice, if the shell can persist one, is applied by the effect below.
+  useState(() => {
+    setLocale(detectDeviceLocale());
+    return true;
+  });
+  // Re-render the whole tree when the language changes (`t.*` / `messages.*` read the active one).
+  useLocale();
+  const [pref, setPref] = useState<LocalePreference>('system');
+  const pickedInSession = useRef(false);
+  useEffect(() => {
+    const store = platform.localePreference;
+    if (!store) return;
+    let alive = true;
+    store.load().then(
+      (saved) => {
+        // A choice made before the stored one arrived wins; a failed read keeps the device language.
+        if (!alive || pickedInSession.current) return;
+        setPref(isLocale(saved) ? saved : 'system');
+        setLocale(localeFor(saved));
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [platform]);
+  const choose = useCallback(
+    async (next: LocalePreference) => {
+      pickedInSession.current = true;
+      setPref(next);
+      setLocale(localeFor(next));
+      await platform.localePreference?.save(next);
+    },
+    [platform],
+  );
+  const language = useMemo(() => ({ pref, choose }), [pref, choose]);
   const accounts = useAsync(() => backend.listAccounts(), []);
   const [active, setActive] = useState<AccountId | null>(null);
   const [adding, setAdding] = useState(false);
@@ -72,16 +121,18 @@ function Root() {
   }
   const acc = list.find((a) => a.id === active) ?? list[0]!;
   return (
-    <AccountShell
-      key={acc.id}
-      account={acc}
-      accounts={list}
-      onSwitch={setActive}
-      onAdd={() => setAdding(true)}
-      onLoggedOut={() => accounts.reload()}
-      pendingRoute={pendingRoute?.accountId === acc.id ? pendingRoute.route : null}
-      clearPendingRoute={() => setPendingRoute(null)}
-    />
+    <LanguageContext.Provider value={language}>
+      <AccountShell
+        key={acc.id}
+        account={acc}
+        accounts={list}
+        onSwitch={setActive}
+        onAdd={() => setAdding(true)}
+        onLoggedOut={() => accounts.reload()}
+        pendingRoute={pendingRoute?.accountId === acc.id ? pendingRoute.route : null}
+        clearPendingRoute={() => setPendingRoute(null)}
+      />
+    </LanguageContext.Provider>
   );
 }
 
@@ -187,7 +238,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
       <ChatView
         key={detail.token}
         accountId={account.id}
-        room={{ token: detail.token, displayName: detail.displayName || 'Sohbet' }}
+        room={{ token: detail.token, displayName: detail.displayName || m.chatFallbackName }}
         selfId={selfId}
         features={talkFeatures}
         onRoomChanged={bumpRooms}
@@ -218,7 +269,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
           key={key}
           accessibilityRole="tab"
           accessibilityState={{ selected: tab === key }}
-          accessibilityLabel={key === 'chats' && unread > 0 ? `${label}, ${unread} okunmamış mesaj` : label}
+          accessibilityLabel={key === 'chats' && unread > 0 ? m.tabChatsUnread(label, unread) : label}
           onPress={() => {
             setTab(key);
             setDetail(null);
@@ -293,7 +344,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
           {s.issues.length ? <Incompatible issues={s.issues} /> : null}
           {listPane}
         </View>
-        <View style={{ flex: 1 }}>{detailPane ?? <Empty text={tab === 'chats' ? 'Bir sohbet seçin' : tab === 'tasks' ? 'Bir proje seçin' : ' '} />}</View>
+        <View style={{ flex: 1 }}>{detailPane ?? <Empty text={tab === 'chats' ? m.selectChat : tab === 'tasks' ? m.selectProject : ' '} />}</View>
       </View>
     );
   }
@@ -314,7 +365,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
 function Incompatible({ issues }: { issues: SessionInfo['issues'] }) {
   const text = issues
     .map((i) =>
-      i.kind === 'talk_missing' ? 'Talk kurulu değil' : i.kind === 'talk_feature_missing' ? `Talk özelliği eksik: ${i.feature}` : i.kind === 'notifications_missing' ? 'Notifications uygulaması yok' : i.kind === 'workhub_missing' ? 'Workhub kurulu değil' : `Workhub API sürümü desteklenmiyor (${i.apiVersion ?? '?'})`,
+      i.kind === 'talk_missing' ? m.issueTalkMissing : i.kind === 'talk_feature_missing' ? m.issueTalkFeatureMissing(i.feature) : i.kind === 'notifications_missing' ? m.issueNotificationsMissing : i.kind === 'workhub_missing' ? m.issueWorkhubMissing : m.issueWorkhubApiUnsupported(i.apiVersion ?? '?'),
     )
     .join(' · ');
   return (
@@ -343,7 +394,7 @@ function AccountPanel({ account, accounts, onSwitch, onAdd, onLoggedOut, onLoggi
     onLoggingOut(true);
     try {
       const r = await backend.logout(account.id);
-      setMsg(r.appPasswordRevoked ? t.logoutDone : `${t.logoutDone} Sunucudaki uygulama parolası çevrimdışı olduğu için iptal edilemedi; Nextcloud ayarlarından silebilirsiniz.`);
+      setMsg(r.appPasswordRevoked ? t.logoutDone : t.logoutAppPasswordNotRevoked);
       onLoggedOut();
     } catch (e) {
       onLoggingOut(false);
@@ -359,9 +410,7 @@ function AccountPanel({ account, accounts, onSwitch, onAdd, onLoggedOut, onLoggi
         <Text style={{ color: colors.muted }}>{account.serverBase}</Text>
         {session ? (
           <Text style={{ color: colors.muted, marginTop: space(2), fontSize: font.small }}>
-            Nextcloud {session.nextcloudVersion ?? '?'} · Talk {session.talkVersion ?? '?'}
-            {session.workhub ? ` · Workhub API ${session.workhub.apiVersion} (${session.workhub.backend})` : ''}
-            {session.webPush ? ' · Web Push hazır' : ' · Web Push kapalı'}
+            {m.serverInfo(session.nextcloudVersion ?? '?', session.talkVersion ?? '?', session.workhub ?? null, session.webPush)}
           </Text>
         ) : null}
         <Button title={t.logout} kind="danger" onPress={() => void logout()} busy={busy} />
@@ -380,7 +429,48 @@ function AccountPanel({ account, accounts, onSwitch, onAdd, onLoggedOut, onLoggi
         ))}
         <Button title={t.addAccount} kind="secondary" onPress={onAdd} />
       </View>
+      <LanguageCard />
       {platform.appVersion ? <Text style={{ color: colors.muted, textAlign: 'center' }}>{t.version} {platform.appVersion}</Text> : null}
     </ScrollView>
+  );
+}
+
+/** Language picker: the device language or one of the supported languages, applied at once. */
+function LanguageCard() {
+  const language = useContext(LanguageContext);
+  const [error, setError] = useState<unknown>();
+  if (!language) return null;
+  const options: { pref: LocalePreference; label: string }[] = [
+    { pref: 'system', label: t.languageSystem },
+    // Endonyms (each language in its own language) so every user can find theirs.
+    ...SUPPORTED_LOCALES.map((l) => ({ pref: l, label: LOCALE_NAMES[l] })),
+  ];
+  return (
+    <View style={card}>
+      <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
+        {t.language}
+      </Text>
+      <View accessibilityRole="radiogroup">
+        {options.map(({ pref, label }) => {
+          const selected = language.pref === pref;
+          return (
+            <Pressable
+              key={pref}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected }}
+              onPress={() => {
+                setError(undefined);
+                language.choose(pref).catch(setError);
+              }}
+              style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space(2) }}
+            >
+              <Text style={{ color: selected ? colors.primary : colors.text, fontWeight: selected ? '700' : '400' }}>{label}</Text>
+              {selected ? <Text style={{ color: colors.primary, fontWeight: '700' }}>✓</Text> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+      <ErrorBanner error={error} />
+    </View>
   );
 }

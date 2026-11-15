@@ -52,9 +52,13 @@ test('server links: pretty, index.php and sub-directory forms; foreign origins r
 });
 
 test('lock screen default hides content; foreground suppression is account-aware', () => {
-  const n = { app: 'spreed', subject: 'Ali: gizli', message: 'detay', shouldNotify: true };
-  assert.deepEqual(presentNotification(n, false), { title: 'Yeni mesaj', body: '', channel: 'chat' });
-  assert.deepEqual(presentNotification(n, true), { title: 'Ali: gizli', body: 'detay', channel: 'chat' });
+  const n = { app: 'spreed', subject: 'Ali: secret', message: 'details', shouldNotify: true };
+  assert.deepEqual(presentNotification(n, false), { title: 'New message', body: '', channel: 'chat' });
+  assert.deepEqual(presentNotification(n, true), { title: 'Ali: secret', body: 'details', channel: 'chat' });
+  // Callers localize the generic titles by passing their own table.
+  assert.equal(presentNotification(n, false, { chat: 'Yeni mesaj', workhub: 'Workhub bildirimi', other: 'Yeni bildirim' }).title, 'Yeni mesaj');
+  assert.equal(presentNotification({ ...n, app: 'workhub' }, false).title, 'Workhub notification');
+  assert.equal(presentNotification({ ...n, app: 'files' }, false).title, 'New notification');
   const a = accountIdFor(normalizeServerUrl('https://a.example'), 'u');
   const b = accountIdFor(normalizeServerUrl('https://b.example'), 'u');
   const room = { name: 'room' as const, token: 'abc' };

@@ -13,6 +13,9 @@ import { WorkloadScreen } from './views';
 import { DashboardsScreen } from './dashboards';
 import { WorkflowsScreen } from './workflows';
 import { AiScreen } from './ai';
+import { messages } from './i18n';
+
+const m = messages.modules;
 
 export type Section = 'projects' | 'workload' | 'workflows' | 'dashboards' | 'time' | 'requests' | 'goals' | 'ai' | 'more';
 
@@ -20,16 +23,16 @@ export type Section = 'projects' | 'workload' | 'workflows' | 'dashboards' | 'ti
 export function workhubSections(workhub: WorkhubBootstrap): { key: Section; label: string; icon: IconName }[] {
   return (
     [
-      ['projects', 'Projeler', 'projects', workhub.modules.projects],
-      ['workload', 'İş yükü', 'users', workhub.modules.projects],
-      ['workflows', 'İş akışları', 'workflow', workhub.modules.projects],
-      ['dashboards', 'Dashboard', 'dashboard', workhub.modules.dashboard],
-      ['ai', 'AI asistanı', 'ai', workhub.modules.ai],
-      ['goals', 'Hedefler', 'goals', workhub.modules.goals],
-      ['requests', 'Talepler', 'requests', workhub.modules.requests],
-      ['time', 'Zaman', 'clock', workhub.modules.time],
+      ['projects', m.sectionProjects, 'projects', workhub.modules.projects],
+      ['workload', m.sectionWorkload, 'users', workhub.modules.projects],
+      ['workflows', m.sectionWorkflows, 'workflow', workhub.modules.projects],
+      ['dashboards', m.sectionDashboards, 'dashboard', workhub.modules.dashboard],
+      ['ai', m.sectionAi, 'ai', workhub.modules.ai],
+      ['goals', m.sectionGoals, 'goals', workhub.modules.goals],
+      ['requests', m.sectionRequests, 'requests', workhub.modules.requests],
+      ['time', m.sectionTime, 'clock', workhub.modules.time],
       // Only server administration remains on the web (password confirmation; see docs/workhub-modules.md).
-      ['more', 'Yönetim', 'admin', workhub.user.isAdmin],
+      ['more', m.sectionAdmin, 'admin', workhub.user.isAdmin],
     ] as const
   )
     .filter(([, , , on]) => on)
@@ -135,7 +138,7 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
   const navProjects = (projects.data ?? []).filter((p) => !p.archived).slice(0, 30);
   return (
     <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.surface }}>
-      <View accessibilityRole="navigation" accessibilityLabel="Workhub gezinmesi" style={{ width: 256, backgroundColor: colors.nav, borderRightWidth: 1, borderColor: colors.border }}>
+      <View accessibilityRole="navigation" accessibilityLabel={m.navLabel} style={{ width: 256, backgroundColor: colors.nav, borderRightWidth: 1, borderColor: colors.border }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2), paddingHorizontal: space(4), minHeight: 56 }}>
           <Icon name="tasks" size={22} color={colors.primary} />
           <Text accessibilityRole="header" style={{ fontSize: font.title, fontWeight: '800', color: colors.textStrong }}>
@@ -163,7 +166,7 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
                       dot={hexColor(p.color)}
                       label={p.title}
                       right={String(p.openCount)}
-                      a11y={`${p.title}, ${p.openCount} açık görev`}
+                      a11y={m.projectNavLabel(p.title, p.openCount)}
                       selected={project === p.id}
                       onPress={() => {
                         setSection('projects');
@@ -203,7 +206,7 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
  * `#[PasswordConfirmationRequired]`; with the per-device app password the server answers 403
  * "Password confirmation is required", and confirming would mean handling the admin's main
  * password in the app — which this app never does. So administration stays in the web UI of
- * the user's own server (approved decision, docs/workhub-modules.md → Yönetim).
+ * the user's own server (approved decision, docs/workhub-modules.md, administration decision).
  */
 export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; workhub: WorkhubBootstrap }) {
   const { platform } = useServices();
@@ -213,9 +216,9 @@ export function MoreScreen({ serverBase, workhub }: { serverBase: ServerBase; wo
   return (
     <ScrollView>
       <Text style={{ padding: space(4), color: colors.muted }}>
-        Workhub yönetimi sunucunuzun web arayüzünde (Yönetim ayarları → Workhub) yapılır: her değişiklik Nextcloud parola onayı ister ve bu uygulama yönetici parolanızı almaz, saklamaz.
+        {m.adminIntro}
       </Text>
-      <Row title="Workhub yönetim ayarları ↗" subtitle="Modüller ve grup kısıtları, AI sağlayıcısı ve kullanım, zaman politikası, iş yükü kapasitesi, Deck içe aktarma" onPress={() => void platform.openExternal(url)} />
+      <Row title={m.adminSettingsTitle} subtitle={m.adminSettingsSubtitle} onPress={() => void platform.openExternal(url)} />
     </ScrollView>
   );
 }

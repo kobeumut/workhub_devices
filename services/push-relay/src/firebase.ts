@@ -1,6 +1,6 @@
 /**
  * Firebase Cloud Functions (2nd gen) entry point.
- * Deploy: see README "Push bildirimleri: Firebase kurulumu".
+ * Deploy: see README → "Push notifications: Firebase setup".
  * Needs no secrets of its own: firebase-admin uses the function's service account.
  */
 import { initializeApp } from 'firebase-admin/app';

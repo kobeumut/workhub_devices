@@ -1,0 +1,28 @@
+<resources>
+    <!-- Notification channels (names shown in the system notification settings). -->
+    <string name="channel_chat">Sohbet mesajları</string>
+    <string name="channel_workhub">Workhub görevleri</string>
+    <string name="channel_other">Diğer bildirimler</string>
+    <string name="channel_unread_count">Okunmamış mesaj sayısı</string>
+
+    <!-- Generic titles shown on the lock screen / when the notification has no subject. -->
+    <string name="notification_title_chat">Yeni mesaj</string>
+    <string name="notification_title_workhub">Workhub bildirimi</string>
+    <string name="notification_title_other">Yeni bildirim</string>
+
+    <!-- Badge notification text: "3 okunmamış mesaj". -->
+    <plurals name="unread_messages">
+        <item quantity="one">%d okunmamış mesaj</item>
+        <item quantity="other">%d okunmamış mesaj</item>
+    </plurals>
+
+    <!-- Quick reply. -->
+    <string name="reply_input_label">Yanıt yazın</string>
+    <string name="reply_action">Yanıtla</string>
+    <string name="reply_sent">Yanıt gönderildi</string>
+    <string name="reply_failed_no_session">Yanıt gönderilemedi: oturum yok</string>
+    <string name="reply_failed_reauth">Yanıt gönderilemedi: tekrar giriş gerekli</string>
+    <string name="reply_failed_no_access">Yanıt gönderilemedi: sohbete erişim yok</string>
+    <string name="reply_failed_offline">Yanıt gönderilemedi: bağlantı yok — sohbeti açıp kontrol edin</string>
+    <string name="reply_failed_status">Yanıt gönderilemedi (%1$d)</string>
+</resources>

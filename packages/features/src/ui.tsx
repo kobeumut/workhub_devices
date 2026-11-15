@@ -2,7 +2,9 @@ import type { ReactNode } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
 import { colors, font, radius, space } from './theme';
 import { Icon } from './icons';
-import { describeError, t } from './i18n';
+import { describeError, messages, t } from './i18n';
+
+const m = messages.shell;
 
 /**
  * KeyboardAvoidingView behaviour per platform. Only iOS uses it: on Android (edge-to-edge is
@@ -135,7 +137,7 @@ export function Row({ title, subtitle, right, onPress, selected, badge, dotColor
       <View style={{ alignItems: 'flex-end' }}>
         {right ? <Text style={styles.rowRight}>{right}</Text> : null}
         {badge ? (
-          <View style={styles.badge} accessibilityLabel={`${badge} okunmamış`}>
+          <View style={styles.badge} accessibilityLabel={m.unreadBadge(badge)}>
             <Text style={styles.badgeText}>{badge}</Text>
           </View>
         ) : null}

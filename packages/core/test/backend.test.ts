@@ -29,7 +29,7 @@ test('login → account persisted (secret separate) → rooms → logout wipes o
   assert.equal(acc.loginName, 'ali');
   assert.deepEqual((await b.listAccounts()).map((a) => a.id), [acc.id]);
   assert.ok(![...plain.m.values()].some((v) => v.includes('pw')), 'app password must not be in plain store');
-  await plain.set(`${acc.id}::draft::abc`, 'taslak');
+  await plain.set(`${acc.id}::draft::abc`, 'draft');
   const r = await b.rooms(acc.id);
   assert.equal(r.rooms[0]!.token, 'abc');
   const rep = await b.logout(acc.id);
@@ -77,7 +77,7 @@ test('task PATCH over the wire: only known, well-typed fields pass', async () =>
     assert.deepEqual(await dispatchWire(b, 'updateTask', ['acc', 1, patch]), bad, JSON.stringify(patch));
   }
   // valid shapes reach the backend (unknown account → unauthorized, not a validation error)
-  for (const patch of [{ title: 'Yeni' }, { dueDate: null, startDate: '2026-11-03' }, { assignees: [], labels: [] }, { priority: null, estimateSec: 3600 }, { storyPoints: 5 }, { storyPoints: null }, { dueDate: '2026-11-03T09:00:00Z' }]) {
+  for (const patch of [{ title: 'New' }, { dueDate: null, startDate: '2026-11-03' }, { assignees: [], labels: [] }, { priority: null, estimateSec: 3600 }, { storyPoints: 5 }, { storyPoints: null }, { dueDate: '2026-11-03T09:00:00Z' }]) {
     const r = await dispatchWire(b, 'updateTask', ['acc', 1, patch]);
     assert.equal(r.ok === false && r.error.kind, 'unauthorized', JSON.stringify(patch));
   }
@@ -97,7 +97,7 @@ test('project management + shares over the wire: strict shapes, unknown keys rej
     ['createProject', ['acc', 'P', 'red', key]],
     ['createProject', ['acc', 'P', null, 'not a key']],
     ['renameProject', ['acc', 1, 'x'.repeat(101)]],
-    ['renameProject', ['acc', 0, 'Yeni']],
+    ['renameProject', ['acc', 0, 'New']],
     ['addProjectMember', ['acc', 1, { ...grant, type: 'circle' }, key]],
     ['addProjectMember', ['acc', 1, { ...grant, participant: '' }, key]],
     ['addProjectMember', ['acc', 1, { ...grant, edit: 'yes' }, key]],
@@ -117,9 +117,9 @@ test('project management + shares over the wire: strict shapes, unknown keys rej
     assert.deepEqual(await dispatchWire(b, m, args as unknown as unknown[]), bad, `${m} ${JSON.stringify(args)}`);
   }
   for (const [m, args] of [
-    ['createProject', ['acc', 'Proje', '#ff0000', key]],
-    ['createProject', ['acc', 'Proje', null, key]],
-    ['renameProject', ['acc', 1, 'Yeni ad']],
+    ['createProject', ['acc', 'Project', '#ff0000', key]],
+    ['createProject', ['acc', 'Project', null, key]],
+    ['renameProject', ['acc', 1, 'New name']],
     ['addProjectMember', ['acc', 1, grant, key]],
     ['addProjectMember', ['acc', 1, { type: 'group', participant: 'staff', edit: false, share: false, manage: false }, key]],
     ['createStack', ['acc', 1, 'Review', 3]],

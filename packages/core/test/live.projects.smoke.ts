@@ -63,7 +63,7 @@ async function main() {
   await step('column: create at the end, rename', async () => {
     const before = (await workhubApi.board(A, boardId)).project.stacks;
     const order = nextStackOrder(before);
-    const st = await workhubApi.createStack(A, boardId, 'İnceleme', order);
+    const st = await workhubApi.createStack(A, boardId, 'Review', order);
     stackId = st!.id;
     assert.equal(st!.order, order);
     await workhubApi.renameStack(A, stackId, 'QA');

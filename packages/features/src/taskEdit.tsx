@@ -4,25 +4,29 @@ import { buildTaskPatch, STORY_POINT_SCALE, taskFormOf, type AccountId, type Boa
 import { useServices } from './services';
 import { Button, ErrorBanner, Field, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
-import { t } from './i18n';
+import { intlTag, messages, t } from './i18n';
+
+const m = messages.tasks;
 
 type Board = BoardPayload['project'];
 
-const PRIORITIES: Array<[Priority | null, string]> = [
-  [null, 'Yok'],
-  ['low', 'Düşük'],
-  ['normal', 'Normal'],
-  ['high', 'Yüksek'],
-  ['urgent', 'Acil'],
+/** Priority choices with their labels; built per call so the labels follow the active language. */
+const priorities = (): Array<[Priority | null, string]> => [
+  [null, m.priorityNone],
+  ['low', m.priorityLow],
+  ['normal', m.priorityNormal],
+  ['high', m.priorityHigh],
+  ['urgent', m.priorityUrgent],
 ];
 
-const FORM_ERROR: Record<TaskFormError, string> = {
-  title_empty: 'Başlık boş olamaz.',
-  date_invalid: 'Tarihleri YYYY-AA-GG biçiminde girin (ör. 2026-11-30).',
-  date_range: 'Başlangıç tarihi bitişten sonra olamaz.',
-  estimate_invalid: 'Tahmini süreyi saat olarak girin (ör. 1,5).',
-  points_invalid: 'Hikaye puanını 0–1000 arası tam sayı olarak girin.',
-};
+const formError = (error: TaskFormError): string =>
+  ({
+    title_empty: m.formTitleEmpty,
+    date_invalid: m.formDateInvalid,
+    date_range: m.formDateRange,
+    estimate_invalid: m.formEstimateInvalid,
+    points_invalid: m.formPointsInvalid,
+  })[error];
 
 export function Chip({ label, selected, onPress, disabled }: { label: string; selected: boolean; onPress: () => void; disabled?: boolean }) {
   return (
@@ -55,7 +59,7 @@ export function TaskEditor({ accountId, task, board, onSaved, onCancel }: { acco
 
   const save = async () => {
     const r = buildTaskPatch(task, board.labels, form);
-    if ('error' in r) return setFormErr(FORM_ERROR[r.error]);
+    if ('error' in r) return setFormErr(formError(r.error));
     setFormErr(undefined);
     if (Object.keys(r.patch).length === 0) return onCancel();
     setBusy(true);
@@ -81,33 +85,33 @@ export function TaskEditor({ accountId, task, board, onSaved, onCancel }: { acco
           {formErr}
         </Text>
       ) : null}
-      <Field label="Başlık" value={form.title} onChangeText={(v) => set({ title: v })} />
-      <Field label="Açıklama" value={form.description} onChangeText={(v) => set({ description: v })} multiline style={{ minHeight: 96, paddingTop: 10 }} />
+      <Field label={m.fieldTitle} value={form.title} onChangeText={(v) => set({ title: v })} />
+      <Field label={m.fieldDescription} value={form.description} onChangeText={(v) => set({ description: v })} multiline style={{ minHeight: 96, paddingTop: 10 }} />
       <Text style={ui.label}>{t.priority}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
-        {PRIORITIES.map(([p, label]) => (
+        {priorities().map(([p, label]) => (
           <Chip key={label} label={label} selected={form.priority === p} onPress={() => set({ priority: p })} />
         ))}
       </View>
       <View style={{ flexDirection: 'row', gap: space(2) }}>
         <View style={{ flex: 1 }}>
-          <Field label="Başlangıç (YYYY-AA-GG)" value={form.startDate} onChangeText={(v) => set({ startDate: v })} placeholder="—" autoCapitalize="none" />
+          <Field label={m.fieldStart} value={form.startDate} onChangeText={(v) => set({ startDate: v })} placeholder="—" autoCapitalize="none" />
         </View>
         <View style={{ flex: 1 }}>
-          <Field label="Bitiş (YYYY-AA-GG)" value={form.dueDate} onChangeText={(v) => set({ dueDate: v })} placeholder="—" autoCapitalize="none" />
+          <Field label={m.fieldDue} value={form.dueDate} onChangeText={(v) => set({ dueDate: v })} placeholder="—" autoCapitalize="none" />
         </View>
       </View>
-      <Field label="Tahmini süre (saat)" value={form.estimateHours} onChangeText={(v) => set({ estimateHours: v })} keyboardType="decimal-pad" placeholder="—" />
-      <Text style={ui.label}>Hikaye puanı</Text>
+      <Field label={m.fieldEstimate} value={form.estimateHours} onChangeText={(v) => set({ estimateHours: v })} keyboardType="decimal-pad" placeholder="—" />
+      <Text style={ui.label}>{m.storyPoints}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
         {STORY_POINT_SCALE.map((p) => (
           <Chip key={p} label={String(p)} selected={form.storyPoints === String(p)} onPress={() => set({ storyPoints: form.storyPoints === String(p) ? '' : String(p) })} />
         ))}
       </View>
-      <Field label="Hikaye puanı (tam sayı)" value={form.storyPoints} onChangeText={(v) => set({ storyPoints: v })} keyboardType="number-pad" placeholder="—" />
+      <Field label={m.storyPointsWhole} value={form.storyPoints} onChangeText={(v) => set({ storyPoints: v })} keyboardType="number-pad" placeholder="—" />
       {plainLabels.length ? (
         <>
-          <Text style={ui.label}>Etiketler</Text>
+          <Text style={ui.label}>{m.labels}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
             {plainLabels.map((l) => (
               <Chip key={l.id} label={l.title} selected={form.labels.includes(l.id)} onPress={() => set({ labels: toggle(form.labels, l.id) })} />
@@ -117,13 +121,13 @@ export function TaskEditor({ accountId, task, board, onSaved, onCancel }: { acco
       ) : null}
       <Text style={ui.label}>{t.assignees}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
-        {board.members.length === 0 ? <Text style={{ color: colors.muted }}>Projede üye yok.</Text> : null}
+        {board.members.length === 0 ? <Text style={{ color: colors.muted }}>{m.noMembers}</Text> : null}
         {board.members.map((m) => (
           <Chip key={m.uid} label={m.displayName} selected={form.assignees.includes(m.uid)} onPress={() => set({ assignees: toggle(form.assignees, m.uid) })} />
         ))}
       </View>
       {task.assignees.some((a) => a.type === 'group') ? (
-        <Text style={{ color: colors.muted, fontSize: font.small, marginBottom: space(2) }}>Grup atamaları burada değişmez.</Text>
+        <Text style={{ color: colors.muted, fontSize: font.small, marginBottom: space(2) }}>{m.groupAssignmentsNote}</Text>
       ) : null}
       <View style={{ flexDirection: 'row', gap: space(2) }}>
         <View style={{ flex: 1 }}>
@@ -160,10 +164,10 @@ export function SubtaskSection({ accountId, task, canEdit, onChanged }: { accoun
   return (
     <View style={card}>
       <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
-        Alt işler {items.length ? `(${items.filter((i) => i.done).length}/${items.length})` : ''}
+        {m.subtasksHeading(items.filter((i) => i.done).length, items.length)}
       </Text>
       <ErrorBanner error={err} />
-      {items.length === 0 ? <Text style={{ color: colors.muted }}>Alt iş yok.</Text> : null}
+      {items.length === 0 ? <Text style={{ color: colors.muted }}>{m.noSubtasks}</Text> : null}
       {items.map((it) => (
         <View key={`${it.index}:${it.text}`} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 40 }}>
           <Pressable
@@ -177,8 +181,8 @@ export function SubtaskSection({ accountId, task, canEdit, onChanged }: { accoun
             <Text style={{ color: colors.text, textDecorationLine: it.done ? 'line-through' : 'none', flex: 1 }}>{it.text}</Text>
           </Pressable>
           {canEdit ? (
-            <Pressable accessibilityRole="button" accessibilityLabel={`Alt işi sil: ${it.text}`} onPress={busy ? undefined : () => void run(() => backend.deleteSubtask(accountId, task.id, it.index, it.text))} style={{ padding: space(2) }}>
-              <Text style={{ color: colors.danger }}>Sil</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={m.deleteSubtaskLabel(it.text)} onPress={busy ? undefined : () => void run(() => backend.deleteSubtask(accountId, task.id, it.index, it.text))} style={{ padding: space(2) }}>
+              <Text style={{ color: colors.danger }}>{m.deleteAction}</Text>
             </Pressable>
           ) : null}
         </View>
@@ -186,15 +190,15 @@ export function SubtaskSection({ accountId, task, canEdit, onChanged }: { accoun
       {canEdit ? (
         <View style={{ flexDirection: 'row', gap: space(2), marginTop: space(2) }}>
           <TextInput
-            accessibilityLabel="Yeni alt iş"
-            placeholder="Yeni alt iş"
+            accessibilityLabel={m.newSubtask}
+            placeholder={m.newSubtask}
             placeholderTextColor={colors.muted}
             value={text}
             onChangeText={setText}
             onSubmitEditing={() => text.trim() && void run(async () => { await backend.addSubtask(accountId, task.id, text.trim()); setText(''); })}
             style={[ui.input, { flex: 1 }]}
           />
-          <Button title="Alt iş ekle" busy={busy} disabled={!text.trim()} onPress={() => void run(async () => { await backend.addSubtask(accountId, task.id, text.trim()); setText(''); })} />
+          <Button title={m.addSubtask} busy={busy} disabled={!text.trim()} onPress={() => void run(async () => { await backend.addSubtask(accountId, task.id, text.trim()); setText(''); })} />
         </View>
       ) : null}
     </View>
@@ -210,7 +214,7 @@ export function DependencySection({ accountId, task, board, tasks, canEdit, onCh
   const [err, setErr] = useState<unknown>();
   if (board.features?.dependencies === false) return null;
   const linked = new Set([task.id, ...task.predecessors.map((p) => p.id), ...task.successors.map((s) => s.id)]);
-  const candidates = tasks.filter((x) => !linked.has(x.id) && !x.archived && x.title.toLocaleLowerCase('tr').includes(filter.trim().toLocaleLowerCase('tr'))).slice(0, 20);
+  const candidates = tasks.filter((x) => !linked.has(x.id) && !x.archived && x.title.toLocaleLowerCase(intlTag()).includes(filter.trim().toLocaleLowerCase(intlTag()))).slice(0, 20);
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setErr(undefined);
@@ -232,8 +236,8 @@ export function DependencySection({ accountId, task, board, tasks, canEdit, onCh
         {l.title}
       </Text>
       {canEdit ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={`Bağımlılığı kaldır: ${l.title}`} onPress={busy ? undefined : () => void run(() => backend.removeDependency(accountId, task.id, l.dependencyId))} style={{ padding: space(2) }}>
-          <Text style={{ color: colors.danger }}>Kaldır</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={m.removeDependencyLabel(l.title)} onPress={busy ? undefined : () => void run(() => backend.removeDependency(accountId, task.id, l.dependencyId))} style={{ padding: space(2) }}>
+          <Text style={{ color: colors.danger }}>{m.remove}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -241,19 +245,19 @@ export function DependencySection({ accountId, task, board, tasks, canEdit, onCh
   return (
     <View style={card}>
       <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
-        Bağımlılıklar
+        {m.dependencies}
       </Text>
       <ErrorBanner error={err} />
-      {task.predecessors.length + task.successors.length === 0 ? <Text style={{ color: colors.muted }}>Bağımlılık yok.</Text> : null}
-      {task.predecessors.map((p) => row('Bekliyor:', p))}
-      {task.successors.map((s) => row('Engelliyor:', s))}
-      {canEdit && !picking ? <Button title="Bekleyeceği görevi ekle" kind="secondary" onPress={() => setPicking(true)} /> : null}
+      {task.predecessors.length + task.successors.length === 0 ? <Text style={{ color: colors.muted }}>{m.noDependencies}</Text> : null}
+      {task.predecessors.map((p) => row(m.waitsForPrefix, p))}
+      {task.successors.map((s) => row(m.blocksPrefix, s))}
+      {canEdit && !picking ? <Button title={m.addPredecessor} kind="secondary" onPress={() => setPicking(true)} /> : null}
       {picking ? (
         <View style={{ marginTop: space(2) }}>
-          <TextInput accessibilityLabel="Görev ara" placeholder="Görev ara" placeholderTextColor={colors.muted} value={filter} onChangeText={setFilter} style={[ui.input, { marginBottom: space(2) }]} />
-          {candidates.length === 0 ? <Text style={{ color: colors.muted }}>Uygun görev yok.</Text> : null}
+          <TextInput accessibilityLabel={m.searchTask} placeholder={m.searchTask} placeholderTextColor={colors.muted} value={filter} onChangeText={setFilter} style={[ui.input, { marginBottom: space(2) }]} />
+          {candidates.length === 0 ? <Text style={{ color: colors.muted }}>{m.noEligibleTasks}</Text> : null}
           {candidates.map((c) => (
-            <Pressable key={c.id} accessibilityRole="button" accessibilityLabel={`Bekle: ${c.title}`} onPress={busy ? undefined : () => void run(() => backend.addDependency(accountId, c.id, task.id))} style={{ paddingVertical: space(2) }}>
+            <Pressable key={c.id} accessibilityRole="button" accessibilityLabel={m.waitForLabel(c.title)} onPress={busy ? undefined : () => void run(() => backend.addDependency(accountId, c.id, task.id))} style={{ paddingVertical: space(2) }}>
               <Text style={{ color: colors.primary }}>{c.title}</Text>
             </Pressable>
           ))}

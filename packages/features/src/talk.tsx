@@ -2,16 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   activeMentionQuery, classifySendFailure, editableText, fileOf, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeTimeline, messageActions,
-  newReferenceId, presenceLabel, presenceTone, sortRooms, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
+  newReferenceId, presenceTone, sortRooms, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
   type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type TalkFeatures, type TalkMessage, type TalkRoom,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { chatReadViewability, useActivity, type TalkState } from './talkState';
 import { Button, Empty, ErrorBanner, Header, Loading, Row, keyboardAvoidBehavior, styles as ui } from './ui';
 import { colors, font, space } from './theme';
-import { formatTime, t } from './i18n';
-import { MessageSearch, NewRoomForm, RoomSettings, SearchResults } from './talkRoom';
+import { formatTime, intlTag, messages, t } from './i18n';
+import { MessageSearch, NewRoomForm, presenceText, RoomSettings, SearchResults } from './talkRoom';
 import { FileCard, UploadTray, useUploads, VoiceBar } from './talkFiles';
+
+const tk = messages.talk;
 
 /** Quick reactions offered in the picker (any emoji is accepted by the server). */
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👏', '😮', '😢', '🙏'];
@@ -52,19 +54,19 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
     }
   };
 
-  const rooms = sortRooms(state.data ?? []).filter((r) => !query || r.displayName.toLocaleLowerCase('tr').includes(query.toLocaleLowerCase('tr')));
+  const rooms = sortRooms(state.data ?? []).filter((r) => !query || r.displayName.toLocaleLowerCase(intlTag()).includes(query.toLocaleLowerCase(intlTag())));
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={{ padding: space(2), flexDirection: 'row', gap: space(2), alignItems: 'center' }}>
         <TextInput
-          accessibilityLabel="Sohbetlerde ara"
-          placeholder="Ara"
+          accessibilityLabel={tk.searchChatsLabel}
+          placeholder={tk.search}
           placeholderTextColor={colors.muted}
           value={query}
           onChangeText={setQuery}
           style={[ui.input, { flex: 1 }]}
         />
-        {canCreate && !creating ? <Button kind="secondary" title="+ Yeni sohbet" onPress={() => setCreating(true)} /> : null}
+        {canCreate && !creating ? <Button kind="secondary" title={tk.newChat} onPress={() => setCreating(true)} /> : null}
       </View>
       {creating ? (
         <NewRoomForm
@@ -81,16 +83,16 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
         <View>
           {!hits ? (
             <View style={{ paddingHorizontal: space(2) }}>
-              <Button kind="secondary" title={`Mesajlarda ara: “${query.trim()}”`} accessibilityLabel="Mesajlarda ara" onPress={() => void searchMessages()} busy={searchBusy} />
+              <Button kind="secondary" title={tk.searchMessagesFor(query.trim())} accessibilityLabel={tk.searchMessagesLabel} onPress={() => void searchMessages()} busy={searchBusy} />
             </View>
           ) : (
             <View style={{ maxHeight: 280 }}>
-              <Text accessibilityRole="header" style={{ paddingHorizontal: space(4), fontWeight: '700', color: colors.text }}>Mesajlar ({hits.length})</Text>
+              <Text accessibilityRole="header" style={{ paddingHorizontal: space(4), fontWeight: '700', color: colors.text }}>{tk.messagesCount(hits.length)}</Text>
               <ScrollView>
                 {hits.length ? (
                   <SearchResults hits={hits} onPick={(h) => onOpen({ token: h.token, displayName: state.data?.find((r) => r.token === h.token)?.displayName ?? '' })} />
                 ) : (
-                  <Text style={{ color: colors.muted, padding: space(4) }}>Eşleşen mesaj yok.</Text>
+                  <Text style={{ color: colors.muted, padding: space(4) }}>{tk.noMatchingMessages}</Text>
                 )}
               </ScrollView>
             </View>
@@ -112,7 +114,7 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
           renderItem={({ item }) => (
             <Row
               title={`${item.isFavorite ? '★ ' : ''}${item.displayName}`}
-              subtitle={[item.type === 1 ? presenceLabel(item.status) : '', lastMessagePreview(item)].filter(Boolean).join(' · ')}
+              subtitle={[item.type === 1 ? presenceText(item.status) : '', lastMessagePreview(item)].filter(Boolean).join(' · ')}
               right={item.lastActivity ? formatTime(item.lastActivity) : ''}
               badge={item.unreadMessages > 0 ? (item.unreadMention ? `@${item.unreadMessages}` : item.unreadMessages) : undefined}
               unread={item.unreadMessages > 0}
@@ -137,7 +139,7 @@ function MessageText({ m, selfId }: { m: TalkMessage; selfId: string }) {
         s.type === 'mention' ? (
           <Text
             key={i}
-            accessibilityLabel={`Bahsedilen: ${s.text.slice(1)}`}
+            accessibilityLabel={tk.mentioned(s.text.slice(1))}
             style={[{ color: colors.primary, fontWeight: '600' }, (s.mentionType === 'user' && s.id === selfId) || s.mentionType === 'call' ? { backgroundColor: colors.bubbleMine } : null]}
           >
             {s.text}
@@ -360,7 +362,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
         setItems((prev) => mergeTimeline(prev, [sys]));
         setMode(null);
         setText('');
-        setNotice('Mesaj düzenlendi.');
+        setNotice(tk.messageEdited);
       });
       return;
     }
@@ -428,8 +430,8 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
         {...(onBack ? { onBack } : {})}
         right={
           <View style={{ flexDirection: 'row', gap: space(2) }}>
-            {features.search ?  <Button kind="secondary" title="🔍 Ara" accessibilityLabel="Bu sohbette ara" onPress={() => { setSelected(null); setPanel(panel === 'search' ? null : 'search'); }} /> : null}
-            {room ? <Button kind="secondary" title="Bilgi" accessibilityLabel="Sohbet bilgileri" onPress={() => setPanel('info')} /> : null}
+            {features.search ?  <Button kind="secondary" title={tk.searchButton} accessibilityLabel={tk.searchThisChat} onPress={() => { setSelected(null); setPanel(panel === 'search' ? null : 'search'); }} /> : null}
+            {room ? <Button kind="secondary" title={tk.infoButton} accessibilityLabel={tk.chatInfo} onPress={() => setPanel('info')} /> : null}
           </View>
         }
       />
@@ -450,7 +452,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
             onPick={(h) => {
               const loaded = items.some((i) => i.kind === 'server' && i.message.id === h.messageId);
               setSelected(loaded ? h.messageId : null);
-              setNotice(loaded ? 'Mesaj seçildi (vurgulu).' : 'Bu mesaj yüklü son 100 mesajdan daha eski.');
+              setNotice(loaded ? tk.messageHighlighted : tk.messageTooOld);
               setPanel(null);
             }}
           />
@@ -500,7 +502,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected: isSel }}
-                  accessibilityHint="Mesaj işlemlerini göster"
+                  accessibilityHint={tk.showMessageActions}
                   onPress={() => {
                     setSelected(isSel ? null : m.id);
                     setPicker(null);
@@ -515,11 +517,11 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                   {!mine ? <Text style={{ fontSize: font.small, fontWeight: '700', color: colors.muted }}>{m.actorDisplayName}</Text> : null}
                   {m.parent ? (
                     <Text numberOfLines={2} style={{ fontSize: font.small, color: colors.muted, borderLeftWidth: 2, borderColor: colors.border, paddingLeft: space(2), marginBottom: 2 }}>
-                      {'message' in m.parent ? `${m.parent.actorDisplayName}: ${m.parent.messageType === 'comment_deleted' ? 'Silinmiş mesaj' : plain(m.parent)}` : 'Silinmiş mesaj'}
+                      {'message' in m.parent ? `${m.parent.actorDisplayName}: ${m.parent.messageType === 'comment_deleted' ? tk.deletedMessage : plain(m.parent)}` : tk.deletedMessage}
                     </Text>
                   ) : null}
                   {deleted ? (
-                    <Text style={{ color: colors.muted, fontStyle: 'italic' }}>🗑 Bu mesaj silindi</Text>
+                    <Text style={{ color: colors.muted, fontStyle: 'italic' }}>{tk.messageWasDeleted}</Text>
                   ) : file ? (
                     <>
                       {file.caption ? <MessageText m={m} selfId={selfId} /> : null}
@@ -529,8 +531,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                     <MessageText m={m} selfId={selfId} />
                   )}
                   <Text style={{ fontSize: 11, color: colors.muted, alignSelf: 'flex-end' }}>
-                    {formatTime(m.timestamp)}
-                    {m.lastEditTimestamp && !deleted ? ' · düzenlendi' : ''}
+                    {tk.messageTime(formatTime(m.timestamp), !!m.lastEditTimestamp && !deleted)}
                   </Text>
                 </Pressable>
                 {reacts.length && !deleted ? (
@@ -539,7 +540,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                       <Pressable
                         key={r.emoji}
                         accessibilityRole="button"
-                        accessibilityLabel={`${r.emoji} tepkisi, ${r.count} kişi${r.self ? ', sizin tepkiniz — kaldırmak için dokunun' : can.react ? ' — eklemek için dokunun' : ''}`}
+                        accessibilityLabel={tk.reactionChip(r.emoji, r.count, r.self, can.react)}
                         accessibilityState={{ selected: r.self, disabled: !can.react }}
                         onPress={can.react ? () => void toggleReaction(m, r.emoji, r.self) : undefined}
                         style={{ flexDirection: 'row', paddingHorizontal: space(2), paddingVertical: 2, borderRadius: 12, borderWidth: 1, borderColor: r.self ? colors.primary : colors.border, backgroundColor: r.self ? colors.bubbleMine : colors.bg }}
@@ -551,33 +552,33 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                 ) : null}
                 {isSel && !deleted ? (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(1), marginTop: space(1), justifyContent: mine ? 'flex-end' : 'flex-start' }}>
-                    {can.reply ? <Button kind="secondary" title="Yanıtla" onPress={() => { setMode({ kind: 'reply', message: m }); setSelected(null); }} /> : null}
-                    {can.edit ? <Button kind="secondary" title="Düzenle" accessibilityLabel="Mesajı düzenle" onPress={() => { setMode({ kind: 'edit', message: m }); setText(editableText(m)); setSelected(null); }} /> : null}
-                    {can.react ? <Button kind="secondary" title="Tepki ekle" onPress={() => setPicker(picker === m.id ? null : m.id)} /> : null}
+                    {can.reply ? <Button kind="secondary" title={tk.reply} onPress={() => { setMode({ kind: 'reply', message: m }); setSelected(null); }} /> : null}
+                    {can.edit ? <Button kind="secondary" title={t.edit} accessibilityLabel={tk.editMessage} onPress={() => { setMode({ kind: 'edit', message: m }); setText(editableText(m)); setSelected(null); }} /> : null}
+                    {can.react ? <Button kind="secondary" title={tk.addReaction} onPress={() => setPicker(picker === m.id ? null : m.id)} /> : null}
                     {features.reactions && reacts.length ? (
-                      <Button kind="secondary" title="Tepki verenler" onPress={() => void runAction(async () => setReactors({ id: m.id, map: await backend.reactions(accountId, token, m.id) }))} />
+                      <Button kind="secondary" title={tk.whoReacted} onPress={() => void runAction(async () => setReactors({ id: m.id, map: await backend.reactions(accountId, token, m.id) }))} />
                     ) : null}
                     {can.delete ? (
                       confirmDelete === m.id ? (
-                        <Button kind="danger" title="Evet, sil" onPress={() => void runAction(async () => {
+                        <Button kind="danger" title={tk.yesDelete} onPress={() => void runAction(async () => {
                           const sys = await backend.deleteMessage(accountId, token, m.id);
                           setItems((prev) => mergeTimeline(prev, [sys]));
                           setSelected(null);
                           setConfirmDelete(null);
                         })} />
                       ) : (
-                        <Button kind="danger" title="Sil" accessibilityLabel="Mesajı sil" onPress={() => setConfirmDelete(m.id)} />
+                        <Button kind="danger" title={tk.deleteLabel} accessibilityLabel={tk.deleteMessage} onPress={() => setConfirmDelete(m.id)} />
                       )
                     ) : null}
-                    {!can.reply && !can.edit && !can.react && !can.delete ? <Text style={{ color: colors.muted, fontSize: font.small }}>Bu mesaj için işlem yok.</Text> : null}
+                    {!can.reply && !can.edit && !can.react && !can.delete ? <Text style={{ color: colors.muted, fontSize: font.small }}>{tk.noMessageActions}</Text> : null}
                   </View>
                 ) : null}
                 {picker === m.id ? (
-                  <View accessibilityLabel="Tepki seç" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(1), marginTop: space(1) }}>
+                  <View accessibilityLabel={tk.pickReaction} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(1), marginTop: space(1) }}>
                     {QUICK_REACTIONS.map((e) => {
                       const minePrev = (m.reactionsSelf ?? []).includes(e);
                       return (
-                        <Pressable key={e} accessibilityRole="button" accessibilityLabel={`${e} tepkisi ${minePrev ? 'kaldır' : 'ekle'}`} onPress={() => void toggleReaction(m, e, minePrev)}
+                        <Pressable key={e} accessibilityRole="button" accessibilityLabel={tk.quickReaction(e, minePrev)} onPress={() => void toggleReaction(m, e, minePrev)}
                           style={{ padding: space(1), borderRadius: 8, borderWidth: 1, borderColor: minePrev ? colors.primary : colors.border }}>
                           <Text style={{ fontSize: 20 }}>{e}</Text>
                         </Pressable>
@@ -600,21 +601,21 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
       {mode ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: space(3), paddingTop: space(2), gap: space(2), borderTopWidth: 1, borderColor: colors.border }}>
           <Text numberOfLines={1} style={{ flex: 1, color: colors.muted, borderLeftWidth: 2, borderColor: colors.primary, paddingLeft: space(2) }}>
-            {mode.kind === 'reply' ? `Yanıtlanıyor — ${mode.message.actorDisplayName}: ${plain(mode.message)}` : 'Mesaj düzenleniyor'}
+            {mode.kind === 'reply' ? tk.replyingTo(mode.message.actorDisplayName, plain(mode.message)) : tk.editingMessage}
           </Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={mode.kind === 'reply' ? 'Yanıtı iptal et' : 'Düzenlemeyi iptal et'} onPress={() => { if (mode.kind === 'edit') setText(''); setMode(null); }} hitSlop={8}>
+          <Pressable accessibilityRole="button" accessibilityLabel={mode.kind === 'reply' ? tk.cancelReply : tk.cancelEdit} onPress={() => { if (mode.kind === 'edit') setText(''); setMode(null); }} hitSlop={8}>
             <Text style={{ color: colors.primary, fontSize: font.title }}>✕</Text>
           </Pressable>
         </View>
       ) : null}
       {suggestions.length ? (
-        <View accessibilityLabel="Bahsetme önerileri" style={{ borderTopWidth: 1, borderColor: colors.border, maxHeight: 200 }}>
+        <View accessibilityLabel={tk.mentionSuggestions} style={{ borderTopWidth: 1, borderColor: colors.border, maxHeight: 200 }}>
           <ScrollView keyboardShouldPersistTaps="always">
             {suggestions.map((s) => (
-              <Pressable key={`${s.source}:${s.mentionId}`} accessibilityRole="button" accessibilityLabel={`Bahset: ${s.label}`} onPress={() => pickMention(s)}
+              <Pressable key={`${s.source}:${s.mentionId}`} accessibilityRole="button" accessibilityLabel={tk.mentionUser(s.label)} onPress={() => pickMention(s)}
                 style={{ paddingHorizontal: space(4), paddingVertical: space(2) }}>
                 <Text style={{ color: colors.text }}>
-                  @{s.label} <Text style={{ color: colors.muted, fontSize: font.small }}>{s.source === 'calls' ? 'herkes' : s.source === 'groups' ? 'grup' : s.mentionId}</Text>
+                  @{s.label} <Text style={{ color: colors.muted, fontSize: font.small }}>{s.source === 'calls' ? tk.mentionEveryone : s.source === 'groups' ? tk.mentionGroup : s.mentionId}</Text>
                 </Text>
               </Pressable>
             ))}
@@ -629,16 +630,16 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
           onClose={() => setRecording(false)}
         />
       ) : acts && !acts.chat ? (
-        <Text style={{ padding: space(3), color: colors.muted, borderTopWidth: 1, borderColor: colors.border }}>Bu sohbette mesaj yazma izniniz yok (salt okunur veya kısıtlı).</Text>
+        <Text style={{ padding: space(3), color: colors.muted, borderTopWidth: 1, borderColor: colors.border }}>{tk.readOnlyNotice}</Text>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', padding: space(2), borderTopWidth: mode ? 0 : 1, borderColor: colors.border, gap: space(2) }}>
           {canAttach ? (
-            <Pressable accessibilityRole="button" accessibilityLabel="Dosya ekle" accessibilityHint={features.caption ? 'Yazdığınız metin tek dosyada açıklama olarak gönderilir' : undefined} onPress={() => void attach()} style={[ui.button, ui.secondary, { paddingHorizontal: space(3) }]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={tk.attachFile} accessibilityHint={features.caption ? tk.attachFileCaptionHint : undefined} onPress={() => void attach()} style={[ui.button, ui.secondary, { paddingHorizontal: space(3) }]}>
               <Text style={{ fontSize: font.title }}>📎</Text>
             </Pressable>
           ) : null}
           {canRecord ? (
-            <Pressable accessibilityRole="button" accessibilityLabel="Sesli not kaydet" onPress={() => { setActionError(undefined); setRecording(true); }} style={[ui.button, ui.secondary, { paddingHorizontal: space(3) }]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={tk.recordVoiceNote} onPress={() => { setActionError(undefined); setRecording(true); }} style={[ui.button, ui.secondary, { paddingHorizontal: space(3) }]}>
               <Text style={{ fontSize: font.title }}>🎤</Text>
             </Pressable>
           ) : null}
@@ -668,7 +669,7 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
               }
             }}
           />
-          <Pressable accessibilityRole="button" accessibilityLabel={mode?.kind === 'edit' ? 'Düzenlemeyi kaydet' : t.send} onPress={submit} disabled={!text.trim()} style={[ui.button, ui.primary, { opacity: text.trim() ? 1 : 0.5 }]}>
+          <Pressable accessibilityRole="button" accessibilityLabel={mode?.kind === 'edit' ? tk.saveEdit : t.send} onPress={submit} disabled={!text.trim()} style={[ui.button, ui.primary, { opacity: text.trim() ? 1 : 0.5 }]}>
             <Text style={ui.buttonText}>{mode?.kind === 'edit' ? t.save : t.send}</Text>
           </Pressable>
         </View>

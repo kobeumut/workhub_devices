@@ -40,7 +40,7 @@ const widget = (id: number, over: Partial<DashboardWidget> = {}): DashboardWidge
   x: 0, y: 0, w: 3, h: 1, sortOrder: id, schemaVer: 1, version: 1, ...over,
 });
 const dash = (over: Partial<Dashboard> = {}): Dashboard => ({
-  id: 7, title: 'Ekip', description: '', owner: { uid: 'ali', displayName: 'Ali' }, role: 'manage', filters: {}, zone: 'Europe/Istanbul', refreshSec: 60, version: 3,
+  id: 7, title: 'Team', description: '', owner: { uid: 'ali', displayName: 'Ali' }, role: 'manage', filters: {}, zone: 'Europe/Istanbul', refreshSec: 60, version: 3,
   createdAt: '', updatedAt: '', sources: [{ id: 4, title: 'P', color: '0082c9' }], sourcesPartial: false, sourcesRestricted: false, widgets: [widget(1)], limits: { widgets: 20, sources: 100 }, ...over,
 });
 
@@ -86,10 +86,10 @@ test('create sends Idempotency-Key; query maps {} results to a map; drilldown/CS
     json(200, ocs({ widgetId: 1, generatedAt: '', asOf: '', restricted: false, partial: false, columns: [], items: [], nextCursor: null })),
     new Response('Widget,Value\n"Total",3\n', { status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8' } }),
   );
-  await b.dashboardCreate(id, { title: '  Ekip ', template: 'project_summary', sources: [4] }, 'abcdef12-3456');
+  await b.dashboardCreate(id, { title: '  Team ', template: 'project_summary', sources: [4] }, 'abcdef12-3456');
   const create = f.calls.at(-1)!;
   assert.equal(headerOf(create, 'Idempotency-Key'), 'abcdef12-3456');
-  assert.equal(JSON.parse(create.init.body as string).title, 'Ekip');
+  assert.equal(JSON.parse(create.init.body as string).title, 'Team');
   const q = await b.dashboardQuery(id, 7, { refresh: true });
   assert.deepEqual(q.results, {});
   assert.deepEqual(JSON.parse(f.calls.at(-1)!.init.body as string), { refresh: true });
@@ -154,18 +154,23 @@ test('IPC validators: filter fields/limits/dates, config shape, layout, cursor, 
 });
 
 test('formatting, bars, role order, ordering, drill-down support', () => {
-  assert.equal(formatWidgetValue(1234), (1234).toLocaleString('tr-TR'));
-  assert.equal(formatWidgetValue(4550, 'bp'), '%45,5');
-  assert.equal(formatWidgetValue(5400, 'seconds'), '1,5 sa');
-  assert.equal(formatWidgetValue(60, 'seconds'), '<0,1 sa');
+  assert.equal(formatWidgetValue(1234), '1,234');
+  assert.equal(formatWidgetValue(4550, 'bp'), '45.5%');
+  assert.equal(formatWidgetValue(5400, 'seconds'), '1.5 h');
+  assert.equal(formatWidgetValue(60, 'seconds'), '<0.1 h');
   assert.equal(formatWidgetValue(null, 'bp'), '—');
+  // Turkish formatting: decimal comma, percent sign first, `sa` for hours.
+  assert.equal(formatWidgetValue(1234, 'count', 'tr-TR'), (1234).toLocaleString('tr-TR'));
+  assert.equal(formatWidgetValue(4550, 'bp', 'tr-TR'), '%45,5');
+  assert.equal(formatWidgetValue(5400, 'seconds', 'tr-TR'), '1,5 sa');
+  assert.equal(formatWidgetValue(60, 'seconds', 'tr-TR'), '<0,1 sa');
   const bars = barData([{ key: 'a', label: 'A', value: 5 }, { key: 'b', label: 'B', value: 10 }, { key: 'c', label: 'C', value: 0 }]);
   assert.deepEqual(bars.map((x) => x.fraction), [0.5, 1, 0]);
   assert.deepEqual(bars.map((x) => Math.round(x.share * 100)), [33, 67, 0]);
   assert.deepEqual(barData([{ key: 'z', label: 'Z', value: 0 }]).map((x) => x.fraction), [0]);
   assert.ok(dashboardRoleAtLeast('manage', 'edit') && dashboardRoleAtLeast('edit', 'edit') && !dashboardRoleAtLeast('view', 'edit') && !dashboardRoleAtLeast(undefined, 'view'));
   assert.deepEqual(sortWidgets([widget(1, { y: 1, x: 6 }), widget(2, { y: 0, x: 3 }), widget(3, { y: 1, x: 0 }), widget(4, { y: 0, x: 0 })]).map((w) => w.id), [4, 2, 3, 1]);
-  assert.equal(widgetTitle(widget(1, { title: 'Toplam' })), 'Toplam');
+  assert.equal(widgetTitle(widget(1, { title: 'Total' })), 'Total');
   assert.equal(widgetTitle(widget(1, { title: '  ' })), 'Total work');
   assert.ok(canDrilldown(widget(1)));
   assert.ok(canDrilldown(widget(1, { kind: 'distribution' })) && canDrilldown(widget(1, { kind: 'list' })));
@@ -223,9 +228,9 @@ test('config form by schema: int range, enum, idList; empty → server default',
 
 test('dashboard / widget patches carry only changed fields + version', () => {
   const d = dash();
-  const same = { title: 'Ekip', description: '', zone: 'Europe/Istanbul', refreshSec: '60', sources: [4], filters: {} };
+  const same = { title: 'Team', description: '', zone: 'Europe/Istanbul', refreshSec: '60', sources: [4], filters: {} };
   assert.deepEqual(buildDashboardPatch(d, same), { patch: null });
-  assert.deepEqual(buildDashboardPatch(d, { ...same, title: ' Yeni ', refreshSec: '0', sources: [9, 4, 9] }), { patch: { version: 3, title: 'Yeni', refreshSec: 0, sources: [4, 9] } });
+  assert.deepEqual(buildDashboardPatch(d, { ...same, title: ' New ', refreshSec: '0', sources: [9, 4, 9] }), { patch: { version: 3, title: 'New', refreshSec: 0, sources: [4, 9] } });
   assert.deepEqual(buildDashboardPatch(d, { ...same, filters: { doneState: 'open' } }), { patch: { version: 3, filters: { doneState: 'open' } } });
   assert.deepEqual(buildDashboardPatch(d, { ...same, title: '' }), { error: 'title_required' });
   assert.deepEqual(buildDashboardPatch(d, { ...same, refreshSec: '30' }), { error: 'refresh_range' });
@@ -233,8 +238,8 @@ test('dashboard / widget patches carry only changed fields + version', () => {
 
   const w = widget(1, { config: { days: 7, pageSize: 10, preset: 'all', sort: 'due' }, x: 6, w: 6 });
   assert.equal(buildWidgetPatch(w, { title: '', config: { preset: 'all' }, filter: {}, w: 6, h: 1 }), null);
-  assert.deepEqual(buildWidgetPatch(w, { title: 'Açık', config: { preset: 'open' }, filter: { doneState: 'open' }, w: 12, h: 2 }), {
-    version: 1, title: 'Açık', config: { preset: 'open' }, filter: { doneState: 'open' }, w: 12, x: 0, h: 2,
+  assert.deepEqual(buildWidgetPatch(w, { title: 'Open items', config: { preset: 'open' }, filter: { doneState: 'open' }, w: 12, h: 2 }), {
+    version: 1, title: 'Open items', config: { preset: 'open' }, filter: { doneState: 'open' }, w: 12, x: 0, h: 2,
   });
 });
 

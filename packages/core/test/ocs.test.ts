@@ -5,6 +5,7 @@ import { normalizeServerUrl } from '../src/serverUrl';
 import { headerOf, json, ocs, scriptedFetch } from './helpers';
 
 const serverBase = normalizeServerUrl('https://cloud.example.com/nc');
+// The login name contains a non-ASCII letter (Turkish "ş") on purpose: it exercises the UTF-8 Basic-auth encoding.
 const client = (fetch: ReturnType<typeof scriptedFetch>, timeoutMs?: number) =>
   new OcsClient({ serverBase, getCredentials: async () => ({ loginName: 'ayşe', appPassword: 'app-pw' }), fetch, ...(timeoutMs ? { timeoutMs } : {}) });
 
@@ -19,7 +20,7 @@ const kindOf = async (p: Promise<unknown>) => {
 
 test('sends OCS headers, UTF-8 basic auth, no redirects, json body', async () => {
   const f = scriptedFetch(json(200, ocs({ ok: 1 })));
-  const r = await client(f).request<{ ok: number }>('/ocs/v2.php/apps/workhub/api/v1/tasks/5', { method: 'PATCH', body: { title: 'Ş' } });
+  const r = await client(f).request<{ ok: number }>('/ocs/v2.php/apps/workhub/api/v1/tasks/5', { method: 'PATCH', body: { title: 'Ş' } }); // non-ASCII body (Turkish "Ş"): JSON stays UTF-8
   assert.deepEqual(r.data, { ok: 1 });
   const c = f.calls[0]!;
   assert.equal(c.url, 'https://cloud.example.com/nc/ocs/v2.php/apps/workhub/api/v1/tasks/5?format=json');

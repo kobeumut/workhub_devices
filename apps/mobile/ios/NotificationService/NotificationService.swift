@@ -19,7 +19,7 @@ final class NotificationService: UNNotificationServiceExtension {
       if let activation = json["activationToken"] as? String {
         NextcloudHTTP.shared.call(account, "POST", "/ocs/v2.php/apps/notifications/api/v2/webpush/activate", json: ["activationToken": activation]) { _, _ in
           // Activation pushes must not bother the user; without the filtering entitlement iOS still shows it briefly.
-          c.title = "Workhub"; c.body = "Bildirimler etkinleştirildi"
+          c.title = "Workhub"; c.body = L10n.notificationsEnabled
           self.finish(generic: false)
         }
         return
@@ -27,7 +27,7 @@ final class NotificationService: UNNotificationServiceExtension {
       if json["delete"] as? Bool == true || json["delete-multiple"] as? Bool == true || json["delete-all"] as? Bool == true {
         let nids: [Int] = (json["nids"] as? [Int]) ?? ((json["nid"] as? Int).map { [$0] } ?? [])
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: nids.map { "\(tag):\($0)" })
-        c.title = "Workhub"; c.body = "Bildirim güncellendi" // hidden only with com.apple.developer.usernotifications.filtering
+        c.title = "Workhub"; c.body = L10n.notificationUpdated // hidden only with com.apple.developer.usernotifications.filtering
         return finish(generic: false)
       }
       return present(tag: tag, nid: json["nid"] as? Int ?? 0, app: json["app"] as? String ?? "", type: json["type"] as? String ?? "", id: json["id"] as? String ?? "", subject: json["subject"] as? String ?? "")
@@ -47,7 +47,7 @@ final class NotificationService: UNNotificationServiceExtension {
   private func present(tag: String, nid: Int, app: String, type: String, id: String, subject: String) {
     guard let c = content else { return }
     let route = WorkhubRouting.route(app: app, type: type, id: id)
-    c.title = subject.isEmpty ? (app == "workhub" ? "Workhub bildirimi" : "Yeni mesaj") : subject
+    c.title = subject.isEmpty ? (app == "workhub" ? L10n.titleWorkhub : L10n.titleMessage) : subject
     c.body = ""
     c.threadIdentifier = "\(tag):\(app)"
     c.userInfo = ["workhubRoute": ["tag": tag, "route": route]]
@@ -59,7 +59,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
   private func finish(generic: Bool) {
     guard let c = content, let h = handler else { return }
-    if generic { c.title = "Workhub"; c.body = "Yeni bildirim" }
+    if generic { c.title = "Workhub"; c.body = L10n.titleGeneric }
     handler = nil
     h(c)
   }

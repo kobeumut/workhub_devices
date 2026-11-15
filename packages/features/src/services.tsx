@@ -1,5 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AccountSummary, AppRoute, Backend, PickedFile, RoutedTarget } from '@workhub-devices/core';
+import type { Locale } from './i18n';
+
+/** The language choice: a concrete locale, or `'system'` to follow the device language. */
+export type LocalePreference = Locale | 'system';
 
 /** Microphone → finished voice note (WAV, staged in the shell; the UI only gets a handle). */
 export interface VoiceRecorder {
@@ -52,6 +56,16 @@ export interface PlatformServices {
   voice?: VoiceRecorder;
   /** Play a downloaded voice note (bytes from the Backend, never a URL with credentials). */
   playAudio?(clip: { mime: string; base64: string }): Promise<AudioPlayback>;
+  /**
+   * Persistence for the language picked in the Account screen. It is a non-secret preference, so a
+   * plain key-value store (e.g. AsyncStorage, `localStorage`) is enough. `load` resolves `null`
+   * when nothing was saved yet. Absent: the UI follows the device language and a choice made in
+   * the picker only lasts for the current session.
+   */
+  localePreference?: {
+    load(): Promise<LocalePreference | null>;
+    save(pref: LocalePreference): Promise<void>;
+  };
 }
 
 interface Ctx {

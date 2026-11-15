@@ -32,7 +32,7 @@ async function loggedIn(...rest: Array<Response | ((c: Call) => Response)>) {
 }
 
 const req = (over: Partial<WorkRequest> = {}): WorkRequest => ({
-  id: 5, version: 2, title: 'Yeni laptop', description: '', requesterUid: 'carol', requesterName: 'Carol', recipientName: 'Alice', managerName: 'Bob',
+  id: 5, version: 2, title: 'New laptop', description: '', requesterUid: 'carol', requesterName: 'Carol', recipientName: 'Alice', managerName: 'Bob',
   canManage: false, canRespond: false, rejectionReason: null, respondedAt: null, state: 'pending', taskState: null, createdAt: '2026-11-02T10:00:00+00:00',
   convertedAt: null, resolvedAt: null, taskClosedAt: null, checkedAt: null, card: null, cardRestricted: false, ...over,
 });
@@ -59,8 +59,8 @@ test('requests API: paths, bodies, Idempotency-Key, cursors, report query', asyn
   await requestsApi.get(c, 5);
   await requestsApi.history(c, 5, 9);
   await requestsApi.respond(c, 5, 2, 'approve', null, KEY);
-  await requestsApi.respond(c, 5, 2, 'reject', 'Bütçe yok', KEY);
-  await requestsApi.resolve(c, 5, 3, 'Gerek kalmadı', KEY);
+  await requestsApi.respond(c, 5, 2, 'reject', 'No budget', KEY);
+  await requestsApi.resolve(c, 5, 3, 'No longer needed', KEY);
   await requestsApi.convert(c, 5, 3, 11, 12, KEY);
   await requestsApi.report(c, { scope: 'team', type: 'request', state: 'any', from: '2026-10-01', to: '2026-11-02' });
   const W = 'https://ex.com/ocs/v2.php/apps/workhub/api/v1/requests';
@@ -70,8 +70,8 @@ test('requests API: paths, bodies, Idempotency-Key, cursors, report query', asyn
     'GET /report?format=json&scope=team&type=request&state=any&from=2026-10-01&to=2026-11-02',
   ]);
   assert.deepEqual(JSON.parse(String(f.calls[3]!.init.body)), { version: 2, decision: 'approve' });
-  assert.deepEqual(JSON.parse(String(f.calls[4]!.init.body)), { version: 2, decision: 'reject', reason: 'Bütçe yok' });
-  assert.deepEqual(JSON.parse(String(f.calls[5]!.init.body)), { version: 3, reason: 'Gerek kalmadı' });
+  assert.deepEqual(JSON.parse(String(f.calls[4]!.init.body)), { version: 2, decision: 'reject', reason: 'No budget' });
+  assert.deepEqual(JSON.parse(String(f.calls[5]!.init.body)), { version: 3, reason: 'No longer needed' });
   assert.deepEqual(JSON.parse(String(f.calls[6]!.init.body)), { version: 3, boardId: 11, stackId: 12 });
   for (const i of [3, 4, 5, 6]) assert.equal(headerOf(f.calls[i], 'Idempotency-Key'), KEY);
   await assert.rejects(requestsApi.convert(c, 5, 3, 0, 12, KEY), (e: unknown) => e instanceof OcsError && e.kind === 'client');
@@ -91,7 +91,7 @@ test('backend gate: requests off → 403 without API call; resolve/convert need 
   }
   {
     const { b, f, id } = await loggedIn(bootstrap(true), context(false), json(200, ocs(req({ canRespond: true }))));
-    await assert.rejects(b.requestResolve(id, 5, 2, 'neden', KEY), (e: unknown) => e instanceof OcsError && e.errorCode === 'REQUEST_MANAGER_REQUIRED');
+    await assert.rejects(b.requestResolve(id, 5, 2, 'reason', KEY), (e: unknown) => e instanceof OcsError && e.errorCode === 'REQUEST_MANAGER_REQUIRED');
     await assert.rejects(b.requestConvert(id, 5, 2, 1, 2, KEY), (e: unknown) => e instanceof OcsError && e.errorCode === 'REQUEST_MANAGER_REQUIRED');
     assert.equal(f.calls.filter((x) => x.url.includes('/requests/context')).length, 1, 'context cached');
     await assert.rejects(b.requestRespond(id, 5, 2, 'reject', '  ', KEY), (e: unknown) => e instanceof OcsError && e.errorCode === 'REASON_REQUIRED');

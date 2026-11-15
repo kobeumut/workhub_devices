@@ -25,9 +25,9 @@ object WorkhubNotifications {
   fun ensureChannels(ctx: Context) {
     if (Build.VERSION.SDK_INT < 26) return
     val nm = ctx.getSystemService(NotificationManager::class.java)
-    nm.createNotificationChannel(NotificationChannel(CH_CHAT, "Sohbet mesajları", NotificationManager.IMPORTANCE_HIGH))
-    nm.createNotificationChannel(NotificationChannel(CH_WORKHUB, "Workhub görevleri", NotificationManager.IMPORTANCE_DEFAULT))
-    nm.createNotificationChannel(NotificationChannel(CH_OTHER, "Diğer bildirimler", NotificationManager.IMPORTANCE_LOW))
+    nm.createNotificationChannel(NotificationChannel(CH_CHAT, ctx.getString(R.string.channel_chat), NotificationManager.IMPORTANCE_HIGH))
+    nm.createNotificationChannel(NotificationChannel(CH_WORKHUB, ctx.getString(R.string.channel_workhub), NotificationManager.IMPORTANCE_DEFAULT))
+    nm.createNotificationChannel(NotificationChannel(CH_OTHER, ctx.getString(R.string.channel_other), NotificationManager.IMPORTANCE_LOW))
   }
 
   /** Android badges require an active notification and a supporting launcher. No OEM broadcasts. */
@@ -36,7 +36,7 @@ object WorkhubNotifications {
     if (count == 0) { nm.cancel("talk-unread", 0); return }
     if (Build.VERSION.SDK_INT >= 26) {
       ctx.getSystemService(NotificationManager::class.java).createNotificationChannel(
-        NotificationChannel("talk-unread", "Okunmamış mesaj sayısı", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(true) }
+        NotificationChannel("talk-unread", ctx.getString(R.string.channel_unread_count), NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(true) }
       )
     }
     val open = Intent(ctx, MainActivity::class.java).apply {
@@ -45,7 +45,7 @@ object WorkhubNotifications {
     }
     val n = NotificationCompat.Builder(ctx, "talk-unread")
       .setSmallIcon(R.mipmap.ic_launcher).setContentTitle("Workhub")
-      .setContentText("$count okunmamış mesaj").setNumber(count)
+      .setContentText(ctx.resources.getQuantityString(R.plurals.unread_messages, count, count)).setNumber(count)
       .setSilent(true).setOnlyAlertOnce(true).setVisibility(NotificationCompat.VISIBILITY_SECRET)
       .setContentIntent(PendingIntent.getActivity(ctx, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
       .build()
@@ -78,9 +78,9 @@ object WorkhubNotifications {
       else -> CH_OTHER
     }
     val genericTitle = when (channel) {
-      CH_CHAT -> "Yeni mesaj"
-      CH_WORKHUB -> "Workhub bildirimi"
-      else -> "Yeni bildirim"
+      CH_CHAT -> ctx.getString(R.string.notification_title_chat)
+      CH_WORKHUB -> ctx.getString(R.string.notification_title_workhub)
+      else -> ctx.getString(R.string.notification_title_other)
     }
     val notifId = notificationId(tag, nid)
     val open = Intent(ctx, MainActivity::class.java).apply {
@@ -112,8 +112,8 @@ object WorkhubNotifications {
       }
       // RemoteInput requires a MUTABLE PendingIntent; it is explicit (component set) so it cannot be redirected.
       val replyPi = PendingIntent.getBroadcast(ctx, notifId, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-      val input = RemoteInput.Builder(KEY_REPLY).setLabel("Yanıt yazın").build()
-      b.addAction(NotificationCompat.Action.Builder(R.mipmap.ic_launcher, "Yanıtla", replyPi).addRemoteInput(input).setAllowGeneratedReplies(false).build())
+      val input = RemoteInput.Builder(KEY_REPLY).setLabel(ctx.getString(R.string.reply_input_label)).build()
+      b.addAction(NotificationCompat.Action.Builder(R.mipmap.ic_launcher, ctx.getString(R.string.reply_action), replyPi).addRemoteInput(input).setAllowGeneratedReplies(false).build())
     }
     try {
       NotificationManagerCompat.from(ctx).notify(notifId, b.build())

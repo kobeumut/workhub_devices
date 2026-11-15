@@ -21,24 +21,24 @@ export interface NormalizeOptions {
 
 export function normalizeServerUrl(input: string, options: NormalizeOptions = {}): ServerBase {
   const raw = input.trim();
-  if (!raw) throw new ServerUrlError('empty', 'Sunucu adresi boş.');
+  if (!raw) throw new ServerUrlError('empty', 'The server address is empty.');
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
   let url: URL;
   try {
     url = new URL(withScheme);
   } catch {
-    throw new ServerUrlError('invalid', 'Geçersiz sunucu adresi.');
+    throw new ServerUrlError('invalid', 'The server address is invalid.');
   }
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && options.allowInsecureHttp)) {
-    throw new ServerUrlError('insecure', 'Yalnız HTTPS sunucular desteklenir.');
+    throw new ServerUrlError('insecure', 'Only HTTPS servers are supported.');
   }
   if (url.username || url.password) {
-    throw new ServerUrlError('userinfo', 'Adres kullanıcı adı/parola içeremez.');
+    throw new ServerUrlError('userinfo', 'The server address must not contain a username or password.');
   }
   // `URL` drops an empty "?"/"#"; check the raw text too so "https://x/?" is rejected.
-  if (url.search || withScheme.includes('?')) throw new ServerUrlError('query', 'Adres sorgu parametresi içeremez.');
-  if (url.hash || withScheme.includes('#')) throw new ServerUrlError('fragment', 'Adres # parçası içeremez.');
-  if (!url.hostname) throw new ServerUrlError('invalid', 'Geçersiz sunucu adresi.');
+  if (url.search || withScheme.includes('?')) throw new ServerUrlError('query', 'The server address must not contain a query string.');
+  if (url.hash || withScheme.includes('#')) throw new ServerUrlError('fragment', 'The server address must not contain a # fragment.');
+  if (!url.hostname) throw new ServerUrlError('invalid', 'The server address is invalid.');
 
   let path = url.pathname.replace(/\/+$/, '');
   // Users often paste a page URL; keep only the installation root.

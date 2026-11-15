@@ -475,7 +475,8 @@ export function downsample(input: Float32Array, from: number, to: number): Float
   return out;
 }
 
-export const voiceNoteName = (d = new Date()) => {
+/** File name of a recorded voice message; `label` lets the caller localize the prefix. */
+export const voiceNoteName = (d = new Date(), label = 'Voice message') => {
   const p = (n: number) => String(n).padStart(2, '0');
-  return `Sesli not ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.wav`;
+  return `${label} ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.wav`;
 };

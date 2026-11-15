@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { nextStackOrder, upsertShare, PROJECT_TITLE_MAX, RENAME_MAX, type AccountId, type BoardPayload, type ObjectShare, type Principal, type ShareObjectType, type ShareRole } from '@workhub-devices/core';
+import { nextStackOrder, upsertShare, PROJECT_TITLE_MAX, RENAME_MAX, SHARE_ROLES, type AccountId, type BoardPayload, type ObjectShare, type Principal, type ShareObjectType, type ShareRole } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { Button, ErrorBanner, Field, Loading, card, styles as ui } from './ui';
 import { Chip } from './taskEdit';
 import { colors, font, space } from './theme';
-import { describeError, t } from './i18n';
+import { describeError, messages, t } from './i18n';
+
+const m = messages.tasks;
 
 type Board = BoardPayload['project'];
 const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-/** Runs one write at a time and keeps its error visible (403 → "yetkiniz yok", 409 → "değişti"). */
+/** Runs one write at a time and keeps its error visible (403 → "not allowed", 409 → "changed"). */
 function useWrite() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
@@ -180,7 +182,7 @@ export function ProjectAdminPanel({ accountId, board, onChanged }: { accountId: 
   );
 }
 
-const ROLE_LABEL: Record<ShareRole, string> = { view: 'Görüntüle', edit: 'Düzenle', manage: 'Yönet' };
+const roleLabel = (role: ShareRole): string => (role === 'view' ? m.roleView : role === 'edit' ? t.edit : t.manage);
 
 /**
  * Workhub object shares (dashboard / goal / workflow). The list is edited locally and saved as a
@@ -232,8 +234,8 @@ export function SharesEditor({ accountId, type, objectId, onClose }: { accountId
             {sh.displayName}
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(1) }}>
-            {(Object.keys(ROLE_LABEL) as ShareRole[]).map((r) => (
-              <Chip key={r} label={ROLE_LABEL[r]} selected={sh.role === r} onPress={() => set(list.map((x) => (x === sh ? { ...x, role: r } : x)))} />
+            {SHARE_ROLES.map((r) => (
+              <Chip key={r} label={roleLabel(r)} selected={sh.role === r} onPress={() => set(list.map((x) => (x === sh ? { ...x, role: r } : x)))} />
             ))}
             <Pressable accessibilityRole="button" accessibilityLabel={`${t.removeShare}: ${sh.displayName}`} onPress={() => set(list.filter((x) => x !== sh))} style={{ padding: space(1) }}>
               <Text style={{ color: colors.danger }}>{t.removeShare}</Text>

@@ -134,9 +134,10 @@ export function buildFcmMessage(token: string, body: Uint8Array, h: RelayRequest
         'apns-expiration': String(Math.floor(Date.now() / 1000) + ttlSec),
         ...(topic ? { 'apns-collapse-id': topic } : {}),
       },
-      // Generic text; the Notification Service Extension decrypts and replaces it (or hides it
+      // Generic English text (the relay is stateless and does not know the device language); the
+      // Notification Service Extension decrypts and replaces it with localized text (or hides it
       // with the notification-filtering entitlement). Content never travels in clear.
-      payload: { aps: { 'mutable-content': 1, alert: { title: 'Workhub', body: 'Yeni bildirim' }, sound: 'default' } },
+      payload: { aps: { 'mutable-content': 1, alert: { title: 'Workhub', body: 'New notification' }, sound: 'default' } },
     },
   };
 }
@@ -144,7 +145,12 @@ export function buildFcmMessage(token: string, body: Uint8Array, h: RelayRequest
 export async function handleWebPush(req: RelayRequest, deps: RelayDeps): Promise<RelayResponse> {
   if (req.method !== 'POST') return { status: 405, headers: { Allow: 'POST' } };
   const m = /^\/wp\/([^/]+)$/.exec(req.path);
-  const token = m ? decodeURIComponent(m[1] as string) : '';
+  let token = '';
+  try {
+    token = m ? decodeURIComponent(m[1] as string) : '';
+  } catch {
+    // Malformed %-escape (e.g. `/wp/%E0%A4%A`): an unauthenticated request must get a 404, not an exception.
+  }
   if (!FCM_TOKEN.test(token)) return { status: 404 };
   const pinned = req.query.k;
   if (!pinned || !B64URL.test(pinned)) return { status: 404 };

@@ -6,7 +6,7 @@ import {
 import type { BoardPayload, Task } from '../src/workhub';
 
 const task = (id: number, stackId: number, order: number, over: Partial<Task> = {}): Task => ({
-  id, boardId: 1, stackId, order, title: `Görev ${id}`, labels: [], priority: null, assignees: [], startDate: null, dueDate: null, done: null, archived: false,
+  id, boardId: 1, stackId, order, title: `Task ${id}`, labels: [], priority: null, assignees: [], startDate: null, dueDate: null, done: null, archived: false,
   lastModified: '', url: '', subtasks: { done: 0, total: 0 }, ...over,
 });
 
@@ -14,8 +14,8 @@ const board = (tasks: Task[]): BoardPayload => ({
   project: {
     board: { id: 1, title: 'P', color: '0082c9' },
     // Deliberately out of order: columns follow `order`.
-    stacks: [{ id: 20, title: 'Sürüyor', order: 1, isDone: false }, { id: 10, title: 'Yapılacak', order: 0, isDone: false }, { id: 30, title: 'Bitti', order: 2, isDone: true }],
-    labels: [{ id: 5, title: 'Tasarım', color: 'ff0000', priority: null }],
+    stacks: [{ id: 20, title: 'In progress', order: 1, isDone: false }, { id: 10, title: 'To do', order: 0, isDone: false }, { id: 30, title: 'Done', order: 2, isDone: true }],
+    labels: [{ id: 5, title: 'Design', color: 'ff0000', priority: null }],
     members: [],
     permissions: { read: true, edit: true, manage: false, share: false },
   },
@@ -47,15 +47,21 @@ test('reorderTarget moves past visible neighbours only', () => {
 });
 
 test('matchesFilters: search, mine, priority, unassigned, labels, done', () => {
-  const titles = new Map([[5, 'Tasarım']]);
-  const t = task(42, 1, 0, { title: 'Logo İşi', priority: 'high', labels: [5], assignees: [{ type: 'user', id: 'ali', displayName: 'Ali Veli' }] });
+  const titles = new Map([[5, 'Design']]);
+  const t = task(42, 1, 0, { title: 'Logo İşi', priority: 'high', labels: [5], assignees: [{ type: 'user', id: 'ali', displayName: 'Ali Smith' }] });
   const f = emptyFilters();
   assert.equal(matchesFilters(t, f, titles, 'ali'), true);
-  assert.equal(matchesFilters(t, { ...f, q: 'logo i' }, titles, 'ali'), true); // Turkish-aware lowercase of "İ"
+  // Turkish data on purpose: dotted "İ" / dotless "ı" must fold to "i" so Turkish and English users both find items.
+  assert.equal(matchesFilters(t, { ...f, q: 'logo i' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(t, { ...f, q: 'logo işi' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(t, { ...f, q: 'LOGO ISI' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(task(7, 1, 0, { title: 'Işık' }), { ...f, q: 'ışık' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(task(7, 1, 0, { title: 'Işık' }), { ...f, q: 'isik' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(task(8, 1, 0, { title: 'Idea board' }), { ...f, q: 'idea' }, titles, 'ali'), true, 'plain English "I" must match "i"');
   assert.equal(matchesFilters(t, { ...f, q: '#42' }, titles, 'ali'), true);
-  assert.equal(matchesFilters(t, { ...f, q: 'tasar' }, titles, 'ali'), true);
-  assert.equal(matchesFilters(t, { ...f, q: 'veli' }, titles, 'ali'), true);
-  assert.equal(matchesFilters(t, { ...f, q: 'yok' }, titles, 'ali'), false);
+  assert.equal(matchesFilters(t, { ...f, q: 'desi' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(t, { ...f, q: 'smith' }, titles, 'ali'), true);
+  assert.equal(matchesFilters(t, { ...f, q: 'nothing' }, titles, 'ali'), false);
   assert.equal(matchesFilters(t, { ...f, mine: true }, titles, 'ali'), true);
   assert.equal(matchesFilters(t, { ...f, mine: true }, titles, 'bob'), false);
   assert.equal(matchesFilters(t, { ...f, priorities: ['urgent'] }, titles, 'ali'), false);
@@ -101,7 +107,11 @@ test('dueState and initials', () => {
   assert.equal(dueState('2026-11-03T09:00:00Z', null, now, '2026-11-03', day), 'overdue');
   assert.equal(dueState('2026-11-03T18:00:00Z', null, now, '2026-11-03', day), 'today');
   assert.equal(dueState('2026-11-09T18:00:00Z', null, now, '2026-11-03', day), 'future');
+  assert.equal(initials('jane doe'), 'JD');
+  // Turkish names on purpose: "ş"/"ı" upper-case normally; a Turkish locale maps "i" to dotted "İ".
   assert.equal(initials('ayşe yılmaz'), 'AY');
   assert.equal(initials('İsmail'), 'İS');
+  assert.equal(initials('ismail'), 'IS');
+  assert.equal(initials('ismail', 'tr-TR'), 'İS');
   assert.equal(initials('  '), '?');
 });

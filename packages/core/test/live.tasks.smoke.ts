@@ -52,13 +52,13 @@ async function main() {
   await step('edit form → PATCH: title, description, priority, dates, estimate, assignees', async () => {
     const board = await workhubApi.board(A, boardId);
     const task = await workhubApi.task(A, t1);
-    const form = { ...taskFormOf(task, board.project.labels), title: 'Edited title', description: 'Native açıklama', priority: 'high' as const, startDate: '2026-11-03', dueDate: '2026-11-20', estimateHours: '2,5', assignees: [env('WH_B_USER')] };
+    const form = { ...taskFormOf(task, board.project.labels), title: 'Edited title', description: 'Native description', priority: 'high' as const, startDate: '2026-11-03', dueDate: '2026-11-20', estimateHours: '2,5', assignees: [env('WH_B_USER')] };
     const r = buildTaskPatch(task, board.project.labels, form);
     assert.ok('patch' in r);
     await workhubApi.updateTask(A, t1, r.patch);
     const read = await workhubApi.task(A, t1);
     assert.equal(read.title, 'Edited title');
-    assert.equal(read.description.trim(), 'Native açıklama');
+    assert.equal(read.description.trim(), 'Native description');
     assert.equal(read.priority, 'high');
     assert.equal(read.startDate?.slice(0, 10), '2026-11-03');
     assert.equal(read.dueDate?.slice(0, 10), '2026-11-20');
@@ -90,19 +90,19 @@ async function main() {
   });
 
   await step('subtasks: add, check, rename, stale delete → conflict, delete', async () => {
-    await workhubApi.addSubtask(A, t1, 'Birinci');
-    let l = await workhubApi.addSubtask(A, t1, 'İkinci');
-    assert.deepEqual(l!.subtasks.map((s) => s.text), ['Birinci', 'İkinci']);
-    l = await workhubApi.updateSubtask(A, t1, 0, 'Birinci', { done: true });
+    await workhubApi.addSubtask(A, t1, 'First');
+    let l = await workhubApi.addSubtask(A, t1, 'Second');
+    assert.deepEqual(l!.subtasks.map((s) => s.text), ['First', 'Second']);
+    l = await workhubApi.updateSubtask(A, t1, 0, 'First', { done: true });
     assert.equal(l!.progress.done, 1);
-    l = await workhubApi.updateSubtask(A, t1, 1, 'İkinci', { text: 'İkinci (yeni)' });
-    assert.equal(l!.subtasks[1]!.text, 'İkinci (yeni)');
-    const stale = await code(workhubApi.deleteSubtask(A, t1, 1, 'İkinci'));
+    l = await workhubApi.updateSubtask(A, t1, 1, 'Second', { text: 'Second (new)' });
+    assert.equal(l!.subtasks[1]!.text, 'Second (new)');
+    const stale = await code(workhubApi.deleteSubtask(A, t1, 1, 'Second'));
     assert.notEqual(stale, 'ok', 'stale expectedText must not delete');
-    l = await workhubApi.deleteSubtask(A, t1, 1, 'İkinci (yeni)');
-    assert.deepEqual(l!.subtasks.map((s) => s.text), ['Birinci']);
+    l = await workhubApi.deleteSubtask(A, t1, 1, 'Second (new)');
+    assert.deepEqual(l!.subtasks.map((s) => s.text), ['First']);
     const read: TaskDetail = await workhubApi.task(A, t1);
-    assert.equal(read.description.trim(), 'Native açıklama', 'description lost its text');
+    assert.equal(read.description.trim(), 'Native description', 'description lost its text');
     assert.deepEqual(read.subtasks, { done: 1, total: 1 });
     return `stale delete → ${stale}`;
   });

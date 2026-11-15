@@ -5,6 +5,7 @@ import { promises as fs } from 'node:fs';
 import { createDirectBackend, dispatchWire, isWithinServer, unregisterWebPush, type RoutedTarget } from '@workhub-devices/core';
 import { createPlainStore, createSecretStore } from './stores';
 import { DesktopNotifier } from './notifier';
+import { localeOverride, mainTexts } from './i18n';
 import { runSmoke } from './smoke';
 import { createDesktopFiles } from './files';
 import identity from '../../../../config/app-identity.json';
@@ -47,7 +48,7 @@ let badgeCount = 0;
 function updateBadge(count: number) {
   badgeCount = count;
   if (process.platform === 'darwin' || process.platform === 'linux') app.badgeCount = count;
-  tray?.setToolTip(count ? `Workhub — ${count} okunmamış mesaj` : 'Workhub');
+  tray?.setToolTip(count ? mainTexts().trayUnread(count) : 'Workhub');
   if (process.platform === 'darwin') tray?.setTitle(count ? String(count) : '');
 }
 let quitting = false;
@@ -77,6 +78,8 @@ function createWindow() {
     show: !smokeOut,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
+      // Read-only hint for the preload script (see `localeOverride` in preload.ts); only set for tests.
+      ...(localeOverride ? { additionalArguments: [`--workhub-locale=${localeOverride}`] } : {}),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -114,13 +117,14 @@ function createTray() {
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAHElEQVR4nGNgYGD4z0ABYBzVPKp5VPOo5mGjGQD5hgEPS3YHEwAAAABJRU5ErkJggg==',
   );
   tray = new Tray(icon);
+  const x = mainTexts();
   updateBadge(badgeCount);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Workhub’u aç', click: () => focusWith(null) },
+      { label: x.trayOpen, click: () => focusWith(null) },
       { type: 'separator' },
       {
-        label: 'Çıkış (bildirimler durur)',
+        label: x.trayQuit,
         click: () => {
           quitting = true;
           app.quit();

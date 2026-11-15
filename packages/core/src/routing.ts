@@ -135,13 +135,27 @@ export interface Presentation {
   channel: 'chat' | 'workhub' | 'other';
 }
 
-/** Lock-screen default is hidden content; rich preview is an explicit per-user opt-in. */
-export function presentNotification(n: Pick<InboxNotification, 'app' | 'subject' | 'message'>, showPreview: boolean): Presentation {
+/** Generic notification titles shown while content previews are hidden, one per channel. */
+export type HiddenTitles = Record<Presentation['channel'], string>;
+
+/** English defaults; callers pass a localized table as the third argument of `presentNotification`. */
+export const DEFAULT_HIDDEN_TITLES: HiddenTitles = {
+  chat: 'New message',
+  workhub: 'Workhub notification',
+  other: 'New notification',
+};
+
+/**
+ * Lock-screen default is hidden content; rich preview is an explicit per-user opt-in.
+ * `hiddenTitles` localizes the generic titles used when the preview is hidden (English by default).
+ */
+export function presentNotification(
+  n: Pick<InboxNotification, 'app' | 'subject' | 'message'>,
+  showPreview: boolean,
+  hiddenTitles: HiddenTitles = DEFAULT_HIDDEN_TITLES,
+): Presentation {
   const channel = n.app === 'spreed' || n.app === 'talk' ? 'chat' : n.app === 'workhub' ? 'workhub' : 'other';
-  if (!showPreview) {
-    const title = channel === 'chat' ? 'Yeni mesaj' : channel === 'workhub' ? 'Workhub bildirimi' : 'Yeni bildirim';
-    return { title, body: '', channel };
-  }
+  if (!showPreview) return { title: hiddenTitles[channel], body: '', channel };
   return { title: n.subject, body: n.message, channel };
 }
 

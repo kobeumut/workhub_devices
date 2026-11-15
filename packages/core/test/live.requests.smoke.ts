@@ -75,11 +75,11 @@ async function main() {
 
   await step('respond: reject with reason → rejected, reason visible to requester; terminal', async () => {
     const r = await requestsApi.get(A, ids.reject);
-    const out = await requestsApi.respond(A, ids.reject, r.version, 'reject', 'Bütçe yok (smoke)', key());
+    const out = await requestsApi.respond(A, ids.reject, r.version, 'reject', 'No budget (smoke)', key());
     assert.equal(out!.state, 'rejected');
     assert.equal(out!.version, r.version + 1);
     const asC = await requestsApi.get(C, ids.reject);
-    assert.equal(asC.rejectionReason, 'Bütçe yok (smoke)');
+    assert.equal(asC.rejectionReason, 'No budget (smoke)');
     assert.deepEqual(requestActions(await requestsApi.get(A, ids.reject)), { respond: false, resolve: false, convert: false });
   });
 
@@ -105,7 +105,7 @@ async function main() {
     assert.equal(await code(requestsApi.resolve(C, ids.resolve, r.version, 'x', key())), 'not_found:RESOURCE_NOT_FOUND');
     assert.equal(await code(requestsApi.resolve(A, ids.resolve, r.version, 'x', key())), 'not_found:RESOURCE_NOT_FOUND');
     assert.equal(await code(requestsApi.resolve(B, ids.resolve, r.version - 1, 'x', key())), 'conflict:VERSION_CONFLICT');
-    const out = await requestsApi.resolve(B, ids.resolve, r.version, 'Gerek kalmadı (smoke)', key());
+    const out = await requestsApi.resolve(B, ids.resolve, r.version, 'No longer needed (smoke)', key());
     assert.equal(out!.state, 'resolved');
     assert.ok(out!.resolvedAt);
     // Already resolved: the old version is stale now.
@@ -147,7 +147,7 @@ async function main() {
     assert.equal(h2[0], 'request.converted');
     const h3 = (await requestsApi.history(C, ids.reject)).items;
     assert.equal(h3[0]!.action, 'request.rejected');
-    assert.equal(h3[0]!.reason, 'Bütçe yok (smoke)');
+    assert.equal(h3[0]!.reason, 'No budget (smoke)');
     assert.equal(await code(requestsApi.history(B, ids.reject)), 'not_found:RESOURCE_NOT_FOUND', 'B is not a party of a rejected request');
   });
 

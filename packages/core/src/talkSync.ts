@@ -18,16 +18,38 @@ export function presenceTone(status: unknown): PresenceTone {
   }
 }
 
-export function presenceLabel(status: unknown): string {
+/**
+ * Stable presence codes. `core` has no i18n: the UI maps these codes to localized text, either
+ * with its own table or through the `labels` argument of `presenceLabel`.
+ */
+export type PresenceCode = 'online' | 'away' | 'busy' | 'dnd' | 'offline' | 'unknown';
+
+/** Normalizes a server status string; `invisible` reads as `offline`, anything unrecognized as `unknown`. */
+export function presenceCode(status: unknown): PresenceCode {
   switch (status) {
-    case 'online': return 'Çevrimiçi';
-    case 'away': return 'Uzakta';
-    case 'busy': return 'Meşgul';
-    case 'dnd': return 'Rahatsız etmeyin';
+    case 'online': return 'online';
+    case 'away': return 'away';
+    case 'busy': return 'busy';
+    case 'dnd': return 'dnd';
     case 'offline':
-    case 'invisible': return 'Çevrimdışı';
-    default: return 'Durum bilinmiyor';
+    case 'invisible': return 'offline';
+    default: return 'unknown';
   }
+}
+
+/** English default labels, used when no localized table is passed to `presenceLabel`. */
+export const PRESENCE_LABELS_EN: Readonly<Record<PresenceCode, string>> = {
+  online: 'Online',
+  away: 'Away',
+  busy: 'Busy',
+  dnd: 'Do not disturb',
+  offline: 'Offline',
+  unknown: 'Status unknown',
+};
+
+/** Human-readable presence; English unless the caller supplies localized `labels` for every code. */
+export function presenceLabel(status: unknown, labels: Readonly<Record<PresenceCode, string>> = PRESENCE_LABELS_EN): string {
+  return labels[presenceCode(status)];
 }
 
 /** One foreground/account lifetime. Full snapshots also reconcile remote reads and removals.

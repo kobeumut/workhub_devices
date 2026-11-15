@@ -9,11 +9,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
-    // Firebase is configured only once GoogleService-Info.plist is added (README: Push bildirimleri).
+    // Firebase is configured only once GoogleService-Info.plist is added (see README → Push notifications and docs/ios-setup.md).
     if Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil { FirebaseApp.configure() }
     let center = UNUserNotificationCenter.current()
     center.delegate = self
-    let reply = UNTextInputNotificationAction(identifier: "WORKHUB_REPLY", title: "Yanıtla", options: [.authenticationRequired], textInputButtonTitle: "Gönder", textInputPlaceholder: "Yanıt yazın")
+    let reply = UNTextInputNotificationAction(identifier: "WORKHUB_REPLY", title: L10n.reply, options: [.authenticationRequired], textInputButtonTitle: L10n.send, textInputPlaceholder: L10n.replyPlaceholder)
     center.setNotificationCategories([UNNotificationCategory(identifier: "WORKHUB_TALK_REPLY", actions: [reply], intentIdentifiers: [], options: [])])
     return true
   }
@@ -42,8 +42,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
       NextcloudHTTP.shared.call(account, "POST", "/ocs/v2.php/apps/spreed/api/v1/chat/\(token)", json: ["message": text, "referenceId": ref]) { status, _ in
         if status != 201 && status != 200 {
           let c = UNMutableNotificationContent()
-          c.title = "Yanıt gönderilemedi"
-          c.body = status == 401 ? "Tekrar giriş gerekli" : status == 0 ? "Bağlantı yok — sohbeti açıp kontrol edin" : "Sohbete erişim yok (\(status))"
+          c.title = L10n.replyFailedTitle
+          c.body = status == 401 ? L10n.signInAgain : status == 0 ? L10n.noConnection : L10n.noChatAccess(status)
           UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
         UIApplication.shared.endBackgroundTask(task)

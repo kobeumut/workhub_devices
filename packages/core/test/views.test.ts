@@ -156,10 +156,10 @@ test('backend: projects gate fails closed; requests carry the exact server query
     json(200, ocs({ members: [] })),
     json(200, ocs({ project: {}, tasks: [], dependencies: [] })),
   );
-  await b.projectActivity(id, 4, { type: 'comments', actor: 'bob', q: '  hata  ' }, 'MTc5MzY0MzcwMQ==');
+  await b.projectActivity(id, 4, { type: 'comments', actor: 'bob', q: '  error  ' }, 'MTc5MzY0MzcwMQ==');
   const a = new URL(f.calls[3]!.url);
   assert.equal(a.pathname, '/ocs/v2.php/apps/workhub/api/v1/projects/4/views/activity');
-  assert.deepEqual(Object.fromEntries(a.searchParams), { format: 'json', type: 'comments', actor: 'bob', q: 'hata', cursor: 'MTc5MzY0MzcwMQ==', limit: '30' });
+  assert.deepEqual(Object.fromEntries(a.searchParams), { format: 'json', type: 'comments', actor: 'bob', q: 'error', cursor: 'MTc5MzY0MzcwMQ==', limit: '30' });
   await b.workload(id, { from: '2026-11-02', to: '2026-11-08', boardIds: [3, 4], members: ['alice', 'bob'] });
   const w = new URL(f.calls[4]!.url);
   assert.equal(w.pathname, '/ocs/v2.php/apps/workhub/api/v1/workload');

@@ -8,14 +8,32 @@ import { useServices } from './services';
 import { useActivity } from './talkState';
 import { Button, Empty, ErrorBanner, Field, Header, Loading, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
-import { formatTime } from './i18n';
+import { formatTime, messages, t } from './i18n';
 
-const ROLE_LABEL: Record<number, string> = {
-  [PARTICIPANT_TYPE.owner]: 'Sahip',
-  [PARTICIPANT_TYPE.moderator]: 'Moderatör',
-  [PARTICIPANT_TYPE.guestModerator]: 'Misafir moderatör',
-  [PARTICIPANT_TYPE.guest]: 'Misafir',
-};
+const tk = messages.talk;
+
+/** Participant role text in the active language (read at render time, never frozen at import). */
+function roleLabel(participantType: number): string | undefined {
+  switch (participantType) {
+    case PARTICIPANT_TYPE.owner: return t.owner;
+    case PARTICIPANT_TYPE.moderator: return tk.roleModerator;
+    case PARTICIPANT_TYPE.guestModerator: return tk.roleGuestModerator;
+    case PARTICIPANT_TYPE.guest: return tk.roleGuest;
+    default: return undefined;
+  }
+}
+
+/** Localized presence text for a server status; core supplies the stable codes. */
+export function presenceText(status: unknown): string {
+  return presenceLabel(status, {
+    online: tk.presenceOnline,
+    away: tk.presenceAway,
+    busy: tk.presenceBusy,
+    dnd: tk.presenceDnd,
+    offline: tk.presenceOffline,
+    unknown: tk.presenceUnknown,
+  });
+}
 
 /** Two-step confirmation without a modal: first press arms, second press runs. */
 function ConfirmButton({ title, confirmTitle, onConfirm, busy }: { title: string; confirmTitle: string; onConfirm: () => void; busy?: boolean }) {
@@ -23,7 +41,7 @@ function ConfirmButton({ title, confirmTitle, onConfirm, busy }: { title: string
   return armed ? (
     <View style={{ flexDirection: 'row', gap: space(2) }}>
       <Button kind="danger" title={confirmTitle} onPress={onConfirm} {...(busy ? { busy } : {})} />
-      <Button kind="secondary" title="Vazgeç" onPress={() => setArmed(false)} />
+      <Button kind="secondary" title={tk.giveUp} onPress={() => setArmed(false)} />
     </View>
   ) : (
     <Button kind="danger" title={title} onPress={() => setArmed(true)} />
@@ -50,9 +68,9 @@ export function NewRoomForm({ accountId, onCreated, onCancel }: { accountId: Acc
   };
   return (
     <View style={[card, { margin: space(2) }]}>
-      <Field label="Sohbet adı" value={name} onChangeText={setName} maxLength={TALK_LIMITS.roomName} />
+      <Field label={tk.chatName} value={name} onChangeText={setName} maxLength={TALK_LIMITS.roomName} />
       <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: space(2), marginBottom: space(2) }}>
-        {([['group', 'Grup (davetle)'], ['public', 'Herkese açık (bağlantıyla)']] as const).map(([k, label]) => (
+        {([['group', tk.kindGroup], ['public', tk.kindPublic]] as const).map(([k, label]) => (
           <Pressable key={k} accessibilityRole="radio" accessibilityState={{ checked: kind === k }} onPress={() => setKind(k)}
             style={{ paddingHorizontal: space(3), paddingVertical: space(2), borderRadius: 16, borderWidth: 1, borderColor: kind === k ? colors.primary : colors.border, backgroundColor: kind === k ? colors.bubbleMine : colors.bg }}>
             <Text style={{ color: colors.text }}>{label}</Text>
@@ -61,8 +79,8 @@ export function NewRoomForm({ accountId, onCreated, onCancel }: { accountId: Acc
       </View>
       <ErrorBanner error={error} />
       <View style={{ flexDirection: 'row', gap: space(2) }}>
-        <Button title="Sohbeti oluştur" onPress={create} disabled={!name.trim()} busy={busy} />
-        <Button kind="secondary" title="İptal" onPress={onCancel} />
+        <Button title={tk.createChat} onPress={create} disabled={!name.trim()} busy={busy} />
+        <Button kind="secondary" title={t.cancel} onPress={onCancel} />
       </View>
     </View>
   );
@@ -109,16 +127,16 @@ export function MessageSearch({ accountId, token, onPick, onClose }: { accountId
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flexDirection: 'row', gap: space(2), padding: space(2), alignItems: 'center' }}>
-        <TextInput accessibilityLabel={token ? 'Bu sohbette ara' : 'Mesajlarda ara'} placeholder={token ? 'Bu sohbette ara' : 'Mesajlarda ara'} placeholderTextColor={colors.muted}
+        <TextInput accessibilityLabel={token ? tk.searchThisChat : tk.searchMessagesLabel} placeholder={token ? tk.searchThisChat : tk.searchMessagesLabel} placeholderTextColor={colors.muted}
           value={term} onChangeText={setTerm} onSubmitEditing={() => void run(false)} style={[ui.input, { flex: 1 }]} />
-        <Button title="Ara" accessibilityLabel="Aramayı başlat" onPress={() => void run(false)} disabled={!term.trim()} busy={busy && !hits} />
-        {onClose ? <Button kind="secondary" title="Kapat" onPress={onClose} /> : null}
+        <Button title={tk.search} accessibilityLabel={tk.startSearch} onPress={() => void run(false)} disabled={!term.trim()} busy={busy && !hits} />
+        {onClose ? <Button kind="secondary" title={t.close} onPress={onClose} /> : null}
       </View>
       <ErrorBanner error={error} />
       <ScrollView>
-        {hits && hits.length === 0 ? <Empty text="Eşleşen mesaj yok." /> : null}
+        {hits && hits.length === 0 ? <Empty text={tk.noMatchingMessages} /> : null}
         {hits ? <SearchResults hits={hits} onPick={onPick} /> : null}
-        {cursor ? <View style={{ padding: space(2) }}><Button kind="secondary" title="Daha fazla sonuç" onPress={() => void run(true)} busy={busy} /></View> : null}
+        {cursor ? <View style={{ padding: space(2) }}><Button kind="secondary" title={tk.moreResults} onPress={() => void run(true)} busy={busy} /></View> : null}
       </ScrollView>
     </View>
   );
@@ -201,21 +219,21 @@ export function RoomSettings({ accountId, room, features, selfId, onChanged, onG
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Header title="Sohbet bilgileri" right={<Button kind="secondary" title="Kapat" onPress={onClose} />} />
+      <Header title={tk.chatInfo} right={<Button kind="secondary" title={t.close} onPress={onClose} />} />
       <ScrollView contentContainerStyle={{ padding: space(3) }}>
         <ErrorBanner error={error} />
         {notice ? <Text accessibilityRole="alert" style={{ color: colors.ok, marginBottom: space(2) }}>{notice}</Text> : null}
         {acts.rename ? (
           <View style={card}>
-            <Field label="Sohbet adı" value={name} onChangeText={setName} maxLength={TALK_LIMITS.roomName} />
+            <Field label={tk.chatName} value={name} onChangeText={setName} maxLength={TALK_LIMITS.roomName} />
             {acts.describe ? (
-              <Field label="Açıklama" value={description} onChangeText={setDescription} multiline maxLength={TALK_LIMITS.description} style={{ minHeight: 72, paddingTop: 10 }} />
+              <Field label={tk.description} value={description} onChangeText={setDescription} multiline maxLength={TALK_LIMITS.description} style={{ minHeight: 72, paddingTop: 10 }} />
             ) : null}
-            <Button title="Bilgileri kaydet" disabled={!dirty || !name.trim()} busy={busy === 'save'}
+            <Button title={tk.saveInfo} disabled={!dirty || !name.trim()} busy={busy === 'save'}
               onPress={() => void act('save', async () => {
                 const patch = { ...(name.trim() !== room.displayName ? { name: name.trim() } : {}), ...(acts.describe && description !== (room.description ?? '') ? { description } : {}) };
                 onChanged(await backend.updateRoom(accountId, room.token, patch));
-              }, 'Sohbet bilgileri kaydedildi.')} />
+              }, tk.infoSaved)} />
           </View>
         ) : (
           <View style={card}>
@@ -225,20 +243,20 @@ export function RoomSettings({ accountId, room, features, selfId, onChanged, onG
         )}
 
         <Text accessibilityRole="header" style={{ fontWeight: '700', color: colors.text, marginVertical: space(2) }}>
-          Katılımcılar{people ? ` (${people.length})` : ''}
+          {tk.participantsTitle(people ? people.length : undefined)}
         </Text>
         {acts.manageParticipants ? (
           <View style={{ marginBottom: space(2) }}>
-            <TextInput accessibilityLabel="Katılımcı ekle: kişi veya grup ara" placeholder="Katılımcı ekle: kişi veya grup ara" placeholderTextColor={colors.muted}
+            <TextInput accessibilityLabel={tk.addParticipant} placeholder={tk.addParticipant} placeholderTextColor={colors.muted}
               value={search} onChangeText={setSearch} style={ui.input} />
             {cands.filter((c) => !members.has(`${c.source}:${c.id}`)).map((c) => (
-              <Pressable key={`${c.source}:${c.id}`} accessibilityRole="button" accessibilityLabel={`${c.label} ekle`}
+              <Pressable key={`${c.source}:${c.id}`} accessibilityRole="button" accessibilityLabel={tk.addPerson(c.label)}
                 onPress={() => void act(`add:${c.id}`, async () => {
                   setPeople(await backend.addParticipant(accountId, room.token, c.source, c.id));
                   setSearch('');
-                }, `${c.label} eklendi.`)}
+                }, tk.personAdded(c.label))}
                 style={{ padding: space(2), borderBottomWidth: 1, borderColor: colors.border }}>
-                <Text style={{ color: colors.text }}>{c.source === 'groups' ? '👥 ' : ''}{c.label} <Text style={{ color: colors.primary }}>+ ekle</Text></Text>
+                <Text style={{ color: colors.text }}>{c.source === 'groups' ? '👥 ' : ''}{c.label} <Text style={{ color: colors.primary }}>{tk.addSuffix}</Text></Text>
               </Pressable>
             ))}
           </View>
@@ -255,18 +273,18 @@ export function RoomSettings({ accountId, room, features, selfId, onChanged, onG
               return (
                 <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: space(2), borderBottomWidth: 1, borderColor: colors.border, gap: space(2), flexWrap: 'wrap' }}>
                   <Text style={{ flex: 1, color: colors.text }}>
-                    {p.displayName || p.actorId}{self ? ' (siz)' : ''}
-                    {p.actorType === 'users' ? ` · ${presenceLabel(p.status)}` : ''}
-                    {ROLE_LABEL[p.participantType] ? <Text style={{ color: colors.muted }}> · {ROLE_LABEL[p.participantType]}</Text> : null}
+                    {tk.participantName(p.displayName || p.actorId, self)}
+                    {p.actorType === 'users' ? ` · ${presenceText(p.status)}` : ''}
+                    {roleLabel(p.participantType) ? <Text style={{ color: colors.muted }}> · {roleLabel(p.participantType)}</Text> : null}
                   </Text>
                   {canTouch && (p.actorType === 'users' || p.actorType === 'guests' || p.actorType === 'emails') ? (
-                    <Button kind="secondary" title={mod ? 'Moderatörlüğü al' : 'Moderatör yap'} accessibilityLabel={`${p.displayName || p.actorId}: ${mod ? 'moderatörlüğü al' : 'moderatör yap'}`}
+                    <Button kind="secondary" title={mod ? tk.removeModerator : tk.makeModerator} accessibilityLabel={tk.moderatorToggleLabel(p.displayName || p.actorId, mod)}
                       busy={busy === `mod:${p.attendeeId}`}
                       onPress={() => void act(`mod:${p.attendeeId}`, async () => setPeople(await backend.setModerator(accountId, room.token, p.attendeeId, !mod)))} />
                   ) : null}
                   {canTouch && !mod ? (
-                    <Button kind="danger" title="Çıkar" accessibilityLabel={`${p.displayName || p.actorId}: sohbetten çıkar`} busy={busy === `rm:${p.attendeeId}`}
-                      onPress={() => void act(`rm:${p.attendeeId}`, async () => setPeople(await backend.removeParticipant(accountId, room.token, p.attendeeId)), `${p.displayName || p.actorId} çıkarıldı.`)} />
+                    <Button kind="danger" title={tk.removeParticipant} accessibilityLabel={tk.removeParticipantLabel(p.displayName || p.actorId)} busy={busy === `rm:${p.attendeeId}`}
+                      onPress={() => void act(`rm:${p.attendeeId}`, async () => setPeople(await backend.removeParticipant(accountId, room.token, p.attendeeId)), tk.participantRemoved(p.displayName || p.actorId))} />
                   ) : null}
                 </View>
               );
@@ -276,16 +294,16 @@ export function RoomSettings({ accountId, room, features, selfId, onChanged, onG
 
         <View style={{ marginTop: space(4), gap: space(2) }}>
           {acts.leave ? (
-            <ConfirmButton title="Sohbetten ayrıl" confirmTitle="Evet, ayrıl" busy={busy === 'leave'}
+            <ConfirmButton title={tk.leaveChat} confirmTitle={tk.yesLeave} busy={busy === 'leave'}
               onConfirm={() => void act('leave', async () => {
                 await backend.leaveRoom(accountId, room.token);
                 onGone();
               })} />
           ) : (
-            <Text style={{ color: colors.muted }}>Son moderatör olduğunuz için ayrılamazsınız; önce başka birini moderatör yapın.</Text>
+            <Text style={{ color: colors.muted }}>{tk.cannotLeaveLastModerator}</Text>
           )}
           {acts.delete ? (
-            <ConfirmButton title="Sohbeti herkes için sil" confirmTitle="Evet, kalıcı olarak sil" busy={busy === 'delete'}
+            <ConfirmButton title={tk.deleteChatForAll} confirmTitle={tk.yesDeletePermanently} busy={busy === 'delete'}
               onConfirm={() => void act('delete', async () => {
                 await backend.deleteRoom(accountId, room.token);
                 onGone();

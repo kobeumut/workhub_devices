@@ -25,10 +25,10 @@ test('timeline merge dedupes overlapping pages and orders by id', () => {
 test('a lost send is reconciled by referenceId from the poll, not duplicated', () => {
   const ref = 'r'.repeat(64);
   let t: ChatItem[] = mergeTimeline([], [msg(1)]);
-  t = [...t, { kind: 'pending', referenceId: ref, text: 'selam', state: 'sending', createdAt: 1 }];
+  t = [...t, { kind: 'pending', referenceId: ref, text: 'hello', state: 'sending', createdAt: 1 }];
   t = setPendingState(t, ref, classifySendFailure(new OcsError('timeout')));
   assert.equal(t[1]?.kind === 'pending' && t[1].state, 'unknown');
-  t = mergeTimeline(t, [msg(2, { referenceId: ref, message: 'selam' })]);
+  t = mergeTimeline(t, [msg(2, { referenceId: ref, message: 'hello' })]);
   assert.equal(t.length, 2);
   assert.ok(t.every((i) => i.kind === 'server'));
 });
@@ -81,16 +81,16 @@ test('referenceId is 64 hex chars', () => {
 test('rich message rendering produces typed segments, never HTML', () => {
   const segs = renderMessageSegments('<b>Hi</b> {mention-user1} see {file} {unknown} {x}', {
     'mention-user1': { type: 'user', id: 'ali', name: 'Ali <script>' },
-    file: { type: 'file', id: '12', name: 'rapor.pdf', link: 'javascript:alert(1)' },
-    x: { type: 'deck-card', id: '1', name: 'Kart' },
+    file: { type: 'file', id: '12', name: 'report.pdf', link: 'javascript:alert(1)' },
+    x: { type: 'deck-card', id: '1', name: 'Card' },
   });
   assert.deepEqual(segs, [
     { type: 'text', text: '<b>Hi</b> ' },
     { type: 'mention', text: '@Ali <script>', mentionType: 'user', id: 'ali' },
     { type: 'text', text: ' see ' },
-    { type: 'file', text: 'rapor.pdf', id: '12' },
+    { type: 'file', text: 'report.pdf', id: '12' },
     { type: 'text', text: ' {unknown} ' },
-    { type: 'object', text: 'Kart' },
+    { type: 'object', text: 'Card' },
   ]);
 });
 

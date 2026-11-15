@@ -32,6 +32,6 @@
     "relayFunction": "webpush",
     "relayRegion": "europe-west1",
     "relayBase": "",
-    "$comment": "relayBase: Firebase relay function URL, e.g. https://europe-west1-<project>.cloudfunctions.net/webpush (README: Push bildirimleri). Empty = push disabled, app still works."
+    "$comment": "relayBase: Firebase relay function URL, e.g. https://europe-west1-<project>.cloudfunctions.net/webpush (README: Push notifications). Empty = push disabled, app still works."
   }
 }

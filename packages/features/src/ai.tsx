@@ -10,7 +10,9 @@ import { Chip } from './taskEdit';
 import { Tabs } from './time';
 import { ProjectChips, TaskPicker, type PickedTask } from './taskPicker';
 import { colors, font, space } from './theme';
-import { describeError, formatDate } from './i18n';
+import { describeError, formatDate, messages, t } from './i18n';
+
+const m = messages.ai;
 
 /** Hex UUID v4: the server requires a UUID Idempotency-Key for AI create/accept. */
 const uuid = () => {
@@ -20,66 +22,67 @@ const uuid = () => {
 };
 const dateTime = (iso: string | null) => (iso ? `${formatDate(iso)} ${iso.slice(11, 16)}` : '');
 
+/** Label per action. Accessors keep the exported shape while resolving the active language when read. */
 export const AI_ACTION_LABEL: Record<AiAction, string> = {
-  card_summary: 'Görev özeti',
-  board_summary: 'Proje özeti',
-  question: 'Soru sor',
-  create_card_draft: 'Görev taslağı',
-  update_card_draft: 'Görev düzenleme önerisi',
-  suggest_checklist: 'Alt iş önerisi',
+  get card_summary() { return m.actionCardSummary; },
+  get board_summary() { return m.actionBoardSummary; },
+  get question() { return m.actionQuestion; },
+  get create_card_draft() { return m.actionCreateCardDraft; },
+  get update_card_draft() { return m.actionUpdateCardDraft; },
+  get suggest_checklist() { return m.actionSuggestChecklist; },
 };
-const STATE_LABEL: Record<AiRequestState, string> = {
-  accepted: 'Sırada',
-  queued: 'Sırada',
-  running: 'Çalışıyor',
-  cancel_requested: 'İptal ediliyor',
-  succeeded: 'Tamamlandı',
-  failed: 'Başarısız',
-  cancelled: 'İptal edildi',
-};
-const INPUT_ERROR: Record<AiInputError, string> = {
-  message_required: 'Soru veya talimat yazın.',
-  message_too_long: `Metin en fazla ${AI_LIMITS.message} karakter olabilir.`,
-  card_required: 'En az bir görev seçin.',
-  one_card: 'Tam olarak bir görev seçin.',
-  too_many_cards: `En çok ${AI_LIMITS.cardIds} görev seçilebilir.`,
-  one_board: 'Bir proje seçin.',
-  too_many_boards: `En çok ${AI_LIMITS.boardIds} proje seçilebilir.`,
-  no_board_allowed: 'Bu işlem yalnız görev kapsamıyla çalışır.',
-  scope_required: 'Bir proje veya görev seçin.',
-  stack_required: 'Taslağın ekleneceği sütunu seçin.',
-  stack_not_allowed: 'Sütun yalnız görev taslağında seçilir.',
-};
+const stateLabel = (): Record<AiRequestState, string> => ({
+  accepted: m.stateQueued,
+  queued: m.stateQueued,
+  running: m.stateRunning,
+  cancel_requested: m.stateCancelRequested,
+  succeeded: m.stateSucceeded,
+  failed: m.stateFailed,
+  cancelled: m.stateCancelled,
+});
+const inputError = (): Record<AiInputError, string> => ({
+  message_required: m.inputMessageRequired,
+  message_too_long: m.inputMessageTooLong(AI_LIMITS.message),
+  card_required: m.inputCardRequired,
+  one_card: m.inputOneCard,
+  too_many_cards: m.inputTooManyCards(AI_LIMITS.cardIds),
+  one_board: m.inputOneBoard,
+  too_many_boards: m.inputTooManyBoards(AI_LIMITS.boardIds),
+  no_board_allowed: m.inputNoBoardAllowed,
+  scope_required: m.inputScopeRequired,
+  stack_required: m.inputStackRequired,
+  stack_not_allowed: m.inputStackNotAllowed,
+});
 
 /** Server/Backend error codes that have a better explanation than the generic text. */
 function aiError(e: unknown): string {
   if (e instanceof OcsError) {
     switch (e.errorCode) {
       case 'AI_DISABLED':
-        return e.kind === 'forbidden' ? 'AI modülü sizin için kapalı.' : 'AI yönetici tarafından kapatılmış.';
+        return e.kind === 'forbidden' ? m.errDisabledForUser : m.errDisabledByAdmin;
       case 'AI_NOT_CONFIGURED':
-        return 'AI sağlayıcısı yapılandırılmamış; yöneticinize başvurun.';
+        return m.errNotConfigured;
       case 'QUOTA_EXCEEDED':
-        return 'Günlük AI kotası doldu; yarın (UTC) yenilenir.';
+        return m.errQuota;
       case 'RATE_LIMITED':
-        return 'Aynı anda çalışabilecek AI isteği sınırına ulaştınız; mevcut isteklerin bitmesini bekleyin.';
+        return m.errConcurrency;
       case 'SOURCE_CHANGED':
-        return 'Görev, öneri hazırlandıktan sonra değişti; yeni bir öneri isteyin.';
+        return m.errSourceChanged;
       case 'PROPOSAL_EXPIRED':
-        return 'Taslağın süresi doldu; yeni bir öneri isteyin.';
+        return m.errProposalExpired;
       case 'PROPOSAL_NOT_READY':
-        return 'Taslak artık uygulanamaz (kabul edilmiş, reddedilmiş veya süresi dolmuş).';
+        return m.errProposalNotReady;
       case 'ACTION_FORBIDDEN':
-        return 'Bu görev/proje üzerinde düzenleme yetkiniz yok.';
+        return m.errActionForbidden;
       case 'AI_REQUEST_FINISHED':
-        return 'İstek zaten bitmiş.';
+        return m.errRequestFinished;
       case 'INVALID_STACK':
-        return 'Sütun seçilen projeye ait değil.';
+        return m.errInvalidStack;
       case 'AI_INVALID_SCOPE':
       case 'INVALID_SCOPE':
-        return 'Seçim bu işlem için uygun değil.';
+        return m.errInvalidScope;
     }
-    if (e.kind === 'not_found') return 'Kayıt bulunamadı ya da kaynaklardan birine artık erişiminiz yok.';
+    if (e.kind === 'not_found') return m.errNotFound;
   }
   return describeError(e);
 }
@@ -105,16 +108,16 @@ export function AiScreen({ accountId, projectsEnabled, onOpenTask }: { accountId
       {status.loading && !status.data ? <Loading /> : null}
       {status.error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{aiError(status.error)}</Text> : null}
       {status.data ? <StatusCard s={status.data} /> : null}
-      <Tabs value={tab} items={[['new', 'Yeni istek'], ['history', 'Geçmiş']]} onChange={setTab} />
+      <Tabs value={tab} items={[['new', m.tabNew], ['history', m.tabHistory]]} onChange={setTab} />
       {tab === 'new' && status.data ? (
         status.data.enabled && status.data.configured ? (
           projectsEnabled ? (
             <NewRequest accountId={accountId} status={status.data} onCreated={(id) => { status.reload(); setOpen(id); }} />
           ) : (
-            <Text style={{ color: colors.muted }}>AI istekleri proje ve görev seçimi gerektirir; Projeler modülü sizin için kapalı.</Text>
+            <Text style={{ color: colors.muted }}>{m.projectsOff}</Text>
           )
         ) : (
-          <Text style={{ color: colors.muted }}>{status.data.enabled ? 'AI sağlayıcısı yapılandırılmamış; yöneticinize başvurun.' : 'AI yönetici tarafından kapatılmış.'} Eski isteklerinizi Geçmiş'te görebilirsiniz.</Text>
+          <Text style={{ color: colors.muted }}>{status.data.enabled ? m.unavailableNotConfigured : m.unavailableDisabled}</Text>
         )
       ) : null}
       {tab === 'history' ? <History accountId={accountId} onOpen={setOpen} /> : null}
@@ -125,12 +128,12 @@ export function AiScreen({ accountId, projectsEnabled, onOpenTask }: { accountId
 function StatusCard({ s }: { s: AiStatus }) {
   const q = s.quota;
   return (
-    <View style={card} accessibilityLabel={`AI sağlayıcı ${s.providerName || 'yok'}; bugün ${q.remainingToday} istek hakkı kaldı`}>
-      <Text style={{ fontWeight: '700' }}>{s.providerName || 'AI'}</Text>
+    <View style={card} accessibilityLabel={m.statusLabel(s.providerName, q.remainingToday)}>
+      <Text style={{ fontWeight: '700' }}>{s.providerName || m.providerFallback}</Text>
       <Text style={{ color: colors.muted, fontSize: font.small }}>
-        Bugün kalan: {q.remainingToday}/{q.dailyLimit} · Çalışan: {q.inFlight}/{q.maxConcurrent}
+        {m.quotaLine(q.remainingToday, q.dailyLimit, q.inFlight, q.maxConcurrent)}
       </Text>
-      <Text style={{ color: colors.muted, fontSize: font.small }}>Yanıtlar yapay zekâ çıktısıdır; doğruluğunu kontrol edin. Seçtiğiniz görevlerin içeriği yöneticinin yapılandırdığı sağlayıcıya gönderilir.</Text>
+      <Text style={{ color: colors.muted, fontSize: font.small }}>{m.disclaimer}</Text>
     </View>
   );
 }
@@ -177,7 +180,7 @@ function NewRequest({ accountId, status, onCreated }: { accountId: AccountId; st
   const send = async () => {
     const input = build();
     const e = aiInputError(input);
-    if (e) return setErr(INPUT_ERROR[e]);
+    if (e) return setErr(inputError()[e]);
     setErr(undefined);
     setBusy(true);
     try {
@@ -195,23 +198,23 @@ function NewRequest({ accountId, status, onCreated }: { accountId: AccountId; st
   };
   const needsMessage = action === 'question' || action === 'create_card_draft' || action === 'update_card_draft';
   return (
-    <View accessibilityLabel="Yeni AI isteği">
-      <Text style={ui.label}>İşlem</Text>
+    <View accessibilityLabel={m.newRequestLabel}>
+      <Text style={ui.label}>{m.labelAction}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
         {(Object.keys(AI_ACTION_LABEL) as AiAction[]).map((a) => (
           <Chip key={a} label={AI_ACTION_LABEL[a]} selected={action === a} onPress={() => pickAction(a)} />
         ))}
       </View>
       {AI_DRAFT_ACTIONS.includes(action) ? (
-        <Text style={{ color: colors.muted, fontSize: font.small, marginBottom: space(2) }}>Sonuç bir taslaktır; siz onaylamadan görev değişmez.</Text>
+        <Text style={{ color: colors.muted, fontSize: font.small, marginBottom: space(2) }}>{m.draftNotice}</Text>
       ) : null}
       {kind === 'question' ? (
         <View style={{ flexDirection: 'row', gap: space(2), marginBottom: space(2) }}>
-          <Chip label="Projenin tamamı" selected={questionOn === 'board'} onPress={() => { setQuestionOn('board'); setCards([]); }} />
-          <Chip label="Seçili görevler" selected={questionOn === 'cards'} onPress={() => setQuestionOn('cards')} />
+          <Chip label={m.scopeWholeProject} selected={questionOn === 'board'} onPress={() => { setQuestionOn('board'); setCards([]); }} />
+          <Chip label={m.scopeSelectedTasks} selected={questionOn === 'cards'} onPress={() => setQuestionOn('cards')} />
         </View>
       ) : null}
-      <Text style={ui.label}>{kind === 'cards' || (kind === 'question' && questionOn === 'cards') ? `Görevler (en çok ${AI_LIMITS.cardIds})` : kind === 'card' ? 'Görev' : 'Proje'}</Text>
+      <Text style={ui.label}>{kind === 'cards' || (kind === 'question' && questionOn === 'cards') ? m.labelTasksMax(AI_LIMITS.cardIds) : kind === 'card' ? m.labelTask : m.labelProject}</Text>
       {kind === 'board' || kind === 'stack' || (kind === 'question' && questionOn === 'board') ? (
         <>
           <ProjectChips accountId={accountId} value={boardId} onChange={(p) => { setBoardId(p.id); setStackId(null); setBoard(null); }} filter={kind === 'stack' ? (p) => p.edit : undefined} />
@@ -222,20 +225,20 @@ function NewRequest({ accountId, status, onCreated }: { accountId: AccountId; st
       )}
       {needsMessage ? (
         <Field
-          label={action === 'question' ? 'Soru' : 'Talimat'}
+          label={action === 'question' ? m.labelQuestion : m.labelInstruction}
           value={message}
           onChangeText={setMessage}
           multiline
           maxLength={AI_LIMITS.message}
-          placeholder={action === 'create_card_draft' ? 'ör. Müşteri sunumu için hazırlık görevi' : action === 'update_card_draft' ? 'ör. Açıklamayı netleştir' : 'ör. Gecikme riski olan işler hangileri?'}
+          placeholder={action === 'create_card_draft' ? m.placeholderCreateDraft : action === 'update_card_draft' ? m.placeholderUpdateDraft : m.placeholderQuestion}
         />
       ) : null}
       <View style={{ flexDirection: 'row', marginVertical: space(2) }}>
-        <Chip label="Yorumları da gönder" selected={comments} onPress={() => setComments(!comments)} />
+        <Chip label={m.includeComments} selected={comments} onPress={() => setComments(!comments)} />
       </View>
       {err ? <Text accessibilityRole="alert" style={{ color: colors.danger, marginBottom: space(2) }}>{err}</Text> : null}
-      <Button title="Gönder" accessibilityLabel={`${AI_ACTION_LABEL[action]} isteğini gönder`} busy={busy} disabled={status.quota.remainingToday === 0} onPress={() => void send()} />
-      {status.quota.remainingToday === 0 ? <Text style={{ color: colors.muted, marginTop: space(2) }}>Günlük kota doldu.</Text> : null}
+      <Button title={t.send} accessibilityLabel={m.sendRequestLabel(AI_ACTION_LABEL[action])} busy={busy} disabled={status.quota.remainingToday === 0} onPress={() => void send()} />
+      {status.quota.remainingToday === 0 ? <Text style={{ color: colors.muted, marginTop: space(2) }}>{m.quotaFull}</Text> : null}
     </View>
   );
 }
@@ -252,8 +255,8 @@ function StackChips({ accountId, boardId, board, onBoard, value, onChange }: { a
   if (loaded.error) return <Text accessibilityRole="alert" style={{ color: colors.danger }}>{describeError(loaded.error)}</Text>;
   return (
     <>
-      <Text style={ui.label}>Sütun</Text>
-      <View accessibilityLabel="Sütun" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
+      <Text style={ui.label}>{m.labelColumn}</Text>
+      <View accessibilityLabel={m.labelColumn} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
         {(loaded.data?.project.stacks ?? []).map((s) => (
           <Chip key={s.id} label={s.title} selected={value === s.id} onPress={() => onChange(s.id)} />
         ))}
@@ -269,20 +272,20 @@ function History({ accountId, onOpen }: { accountId: AccountId; onOpen: (id: str
   return (
     <View>
       {list.error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{aiError(list.error)}</Text> : null}
-      {list.data && !list.data.length ? <Text style={{ color: colors.muted }}>Henüz AI isteğiniz yok.</Text> : null}
+      {list.data && !list.data.length ? <Text style={{ color: colors.muted }}>{m.noRequests}</Text> : null}
       {(list.data ?? []).map((r) => {
-        const scope = [r.boardCount ? `${r.boardCount} proje` : '', r.cardCount ? `${r.cardCount} görev` : ''].filter(Boolean).join(', ');
+        const scope = [r.boardCount ? m.scopeBoards(r.boardCount) : '', r.cardCount ? m.scopeCards(r.cardCount) : ''].filter(Boolean).join(', ');
         return (
           <View key={r.requestId} style={card}>
             <Text style={{ fontWeight: '700' }}>{AI_ACTION_LABEL[r.action] ?? r.action}</Text>
             <Text style={{ color: colors.muted, fontSize: font.small }}>
-              {STATE_LABEL[r.state] ?? r.state} · {dateTime(r.createdAt)}{scope ? ` · ${scope}` : ''}
+              {stateLabel()[r.state] ?? r.state} · {dateTime(r.createdAt)}{scope ? ` · ${scope}` : ''}
             </Text>
-            <Button title="Aç" kind="secondary" accessibilityLabel={`${AI_ACTION_LABEL[r.action] ?? r.action}, ${STATE_LABEL[r.state] ?? r.state}: aç`} onPress={() => onOpen(r.requestId)} />
+            <Button title={m.open} kind="secondary" accessibilityLabel={m.openRequestLabel(AI_ACTION_LABEL[r.action] ?? r.action, stateLabel()[r.state] ?? r.state)} onPress={() => onOpen(r.requestId)} />
           </View>
         );
       })}
-      <Button title="Yenile" kind="secondary" onPress={list.reload} />
+      <Button title={m.refresh} kind="secondary" onPress={list.reload} />
     </View>
   );
 }
@@ -329,46 +332,46 @@ function AiRequestView({ accountId, requestId, onBack, onOpenTask }: { accountId
   };
   return (
     <ScrollView contentContainerStyle={{ padding: space(4) }}>
-      <Button title="‹ AI" kind="secondary" accessibilityLabel="AI listesine dön" onPress={onBack} />
+      <Button title={m.backButton} kind="secondary" accessibilityLabel={m.backLabel} onPress={onBack} />
       {err ? <Text accessibilityRole="alert" style={{ color: colors.danger, marginVertical: space(2) }}>{aiError(err)}</Text> : null}
       {!d && !err ? <Loading /> : null}
       {d ? (
         <View style={{ marginTop: space(3) }}>
           <Text accessibilityRole="header" style={{ fontSize: font.title, fontWeight: '700' }}>{AI_ACTION_LABEL[d.action] ?? d.action}</Text>
           <Text accessibilityLiveRegion="polite" style={{ color: colors.muted, marginBottom: space(2) }}>
-            {STATE_LABEL[d.state] ?? d.state} · {dateTime(d.createdAt)}
+            {stateLabel()[d.state] ?? d.state} · {dateTime(d.createdAt)}
           </Text>
-          {isAiActive(d.state) && d.state !== 'cancel_requested' ? <Button title="İsteği iptal et" kind="danger" busy={busy} onPress={() => void cancel()} /> : null}
+          {isAiActive(d.state) && d.state !== 'cancel_requested' ? <Button title={m.cancelRequest} kind="danger" busy={busy} onPress={() => void cancel()} /> : null}
           {d.errorCode && d.state !== 'succeeded' ? <Text accessibilityRole="alert" style={{ color: d.state === 'cancelled' ? colors.muted : colors.danger, marginVertical: space(2) }}>{d.errorMessage ?? d.errorCode}</Text> : null}
           {d.restricted ? (
-            <Text style={{ color: colors.muted, marginVertical: space(2) }}>Kaynaklardan birine artık erişiminiz yok; yanıt ve kaynaklar gizlendi.</Text>
+            <Text style={{ color: colors.muted, marginVertical: space(2) }}>{m.restrictedNotice}</Text>
           ) : (
             <>
               {d.message ? (
                 <View style={card}>
-                  <Text style={ui.label}>Sorunuz / talimatınız</Text>
+                  <Text style={ui.label}>{m.yourMessage}</Text>
                   <Text selectable>{d.message}</Text>
                 </View>
               ) : null}
               {d.result !== null ? (
-                <View style={card} accessibilityLabel="AI yanıtı">
-                  <Text style={ui.label}>Yanıt (yapay zekâ çıktısı)</Text>
+                <View style={card} accessibilityLabel={m.answerLabel}>
+                  <Text style={ui.label}>{m.answerTitle}</Text>
                   {/* Plain text only: the model output is never interpreted as HTML/markup. */}
                   <Text selectable>{d.result}</Text>
                 </View>
               ) : null}
-              {d.truncated ? <Text style={{ color: colors.muted, fontSize: font.small }}>Bağlam sağlayıcı sınırına göre kısaltıldı{d.omitted ? ` (${d.omitted} kaynak dışarıda kaldı)` : ''}.</Text> : null}
+              {d.truncated ? <Text style={{ color: colors.muted, fontSize: font.small }}>{m.contextTruncated(d.omitted)}</Text> : null}
               {d.boards.length || d.sources.length ? (
                 <View style={{ marginVertical: space(2) }}>
-                  <Text style={ui.label}>Kaynaklar</Text>
-                  {d.boards.map((b) => <Text key={`b${b.boardId}`}>Proje: {b.title}</Text>)}
+                  <Text style={ui.label}>{m.sources}</Text>
+                  {d.boards.map((b) => <Text key={`b${b.boardId}`}>{m.sourceBoard(b.title)}</Text>)}
                   {d.sources.slice(0, 10).map((s) => (
                     <View key={`c${s.cardId}`} style={{ flexDirection: 'row', alignItems: 'center', gap: space(2), marginBottom: space(1) }}>
-                      <Text style={{ flex: 1 }}>{s.title}{s.truncated ? ' (kısaltıldı)' : ''}</Text>
-                      {onOpenTask ? <Button title="Görevi aç" kind="secondary" accessibilityLabel={`Görevi aç: ${s.title}`} onPress={() => onOpenTask(s.cardId)} /> : null}
+                      <Text style={{ flex: 1 }}>{m.sourceTitle(s.title, s.truncated)}</Text>
+                      {onOpenTask ? <Button title={m.openTask} kind="secondary" accessibilityLabel={m.openTaskLabel(s.title)} onPress={() => onOpenTask(s.cardId)} /> : null}
                     </View>
                   ))}
-                  {d.sources.length > 10 ? <Text style={{ color: colors.muted, fontSize: font.small }}>… ve {d.sources.length - 10} görev daha</Text> : null}
+                  {d.sources.length > 10 ? <Text style={{ color: colors.muted, fontSize: font.small }}>{m.moreTasks(d.sources.length - 10)}</Text> : null}
                 </View>
               ) : null}
               {d.proposal ? <ProposalView accountId={accountId} proposalId={d.proposal.id} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
@@ -380,20 +383,20 @@ function AiRequestView({ accountId, requestId, onBack, onOpenTask }: { accountId
   );
 }
 
-const PROPOSAL_STATE: Record<AiProposal['state'], string> = {
-  ready: 'Onayınızı bekliyor',
-  accepted: 'Uygulandı',
-  dismissed: 'Reddedildi',
-  stale: 'Eskidi (görev değişti)',
-  expired: 'Süresi doldu',
-};
+const proposalState = (): Record<AiProposal['state'], string> => ({
+  ready: m.proposalStateReady,
+  accepted: m.proposalStateAccepted,
+  dismissed: m.proposalStateDismissed,
+  stale: m.proposalStateStale,
+  expired: m.proposalStateExpired,
+});
 
 function Diff({ label, proposed, current }: { label: string; proposed: string; current?: string | null }) {
   return (
-    <View style={{ marginBottom: space(2) }} accessibilityLabel={`${label}: önerilen ${proposed || 'boş'}${current !== undefined ? `, şu anki ${current || 'boş'}` : ''}`}>
+    <View style={{ marginBottom: space(2) }} accessibilityLabel={m.diffLabel(label, proposed, current)}>
       <Text style={ui.label}>{label}</Text>
-      {current !== undefined ? <Text style={{ color: colors.muted }}>Şu an: {current || '—'}</Text> : null}
-      <Text selectable>Önerilen: {proposed || '—'}</Text>
+      {current !== undefined ? <Text style={{ color: colors.muted }}>{m.currentValue(current || '—')}</Text> : null}
+      <Text selectable>{m.proposedValue(proposed || '—')}</Text>
     </View>
   );
 }
@@ -430,38 +433,37 @@ function ProposalView({ accountId, proposalId, onOpenTask }: { accountId: Accoun
   const f = x.proposed;
   const cardId = applied ?? aiResultCardId(x.resultRef);
   return (
-    <View style={card} accessibilityLabel="AI taslağı">
-      <Text accessibilityRole="header" style={{ fontWeight: '700' }}>Taslak — {PROPOSAL_STATE[x.state] ?? x.state}</Text>
-      {x.expiresAt && x.state === 'ready' ? <Text style={{ color: colors.muted, fontSize: font.small }}>Son geçerlilik: {dateTime(x.expiresAt)}</Text> : null}
-      {x.restricted ? <Text style={{ color: colors.muted }}>Hedefe veya kaynaklara artık erişiminiz yok; taslak gösterilemiyor.</Text> : null}
+    <View style={card} accessibilityLabel={m.draftLabel}>
+      <Text accessibilityRole="header" style={{ fontWeight: '700' }}>{m.proposalHeading(proposalState()[x.state] ?? x.state)}</Text>
+      {x.expiresAt && x.state === 'ready' ? <Text style={{ color: colors.muted, fontSize: font.small }}>{m.validUntil(dateTime(x.expiresAt))}</Text> : null}
+      {x.restricted ? <Text style={{ color: colors.muted }}>{m.proposalRestricted}</Text> : null}
       {x.target ? (
         <Text style={{ color: colors.muted, marginBottom: space(2) }}>
-          {x.target.type === 'stack' ? `Hedef: ${x.target.boardTitle} → ${x.target.stackTitle ?? 'silinmiş sütun'}` : `Hedef görev: ${x.current?.title ?? ''} (${x.target.boardTitle})`}
-          {x.target.canEdit ? '' : ' — düzenleme yetkiniz yok'}
+          {x.target.type === 'stack' ? m.targetColumn(x.target.boardTitle, x.target.stackTitle, x.target.canEdit) : m.targetTask(x.current?.title ?? '', x.target.boardTitle, x.target.canEdit)}
         </Text>
       ) : null}
-      {x.stale ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>Görev, öneri hazırlandıktan sonra değişti; bu taslak uygulanamaz.</Text> : null}
+      {x.stale ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{m.staleNotice}</Text> : null}
       {f ? (
         <>
-          {f.title !== undefined ? <Diff label="Başlık" proposed={f.title} {...(x.current ? { current: x.current.title } : {})} /> : null}
+          {f.title !== undefined ? <Diff label={m.fieldTitle} proposed={f.title} {...(x.current ? { current: x.current.title } : {})} /> : null}
           {f.items?.length ? (
             <View style={{ marginBottom: space(2) }}>
-              <Text style={ui.label}>Önerilen alt işler</Text>
+              <Text style={ui.label}>{m.proposedSubtasks}</Text>
               {f.items.map((it, i) => <Text key={i}>☐ {it}</Text>)}
             </View>
           ) : f.description !== undefined ? (
-            <Diff label="Açıklama" proposed={f.description} {...(x.current ? { current: x.current.description } : {})} />
+            <Diff label={m.fieldDescription} proposed={f.description} {...(x.current ? { current: x.current.description } : {})} />
           ) : null}
-          {f.due !== undefined ? <Diff label="Bitiş" proposed={f.due ? formatDate(f.due) : ''} {...(x.current ? { current: x.current.due ? formatDate(x.current.due) : '' } : {})} /> : null}
-          {f.assignees?.length ? <Text>Atananlar: {f.assignees.map((a) => a.displayName).join(', ')}</Text> : null}
-          {f.labels?.length ? <Text>Etiketler: {f.labels.map((l) => l.title).join(', ')}</Text> : null}
+          {f.due !== undefined ? <Diff label={t.due} proposed={f.due ? formatDate(f.due) : ''} {...(x.current ? { current: x.current.due ? formatDate(x.current.due) : '' } : {})} /> : null}
+          {f.assignees?.length ? <Text>{m.assigneesList(f.assignees.map((a) => a.displayName).join(', '))}</Text> : null}
+          {f.labels?.length ? <Text>{m.labelsList(f.labels.map((l) => l.title).join(', '))}</Text> : null}
         </>
       ) : null}
       {err ? <Text accessibilityRole="alert" style={{ color: colors.danger, marginVertical: space(2) }}>{err}</Text> : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(2) }}>
-        {can.accept ? <Button title={x.action === 'create_card_draft' ? 'Görevi oluştur' : 'Göreve uygula'} busy={busy === 'accept'} disabled={!!busy} onPress={() => void act('accept')} /> : null}
-        {can.dismiss ? <Button title="Reddet" kind="secondary" busy={busy === 'dismiss'} disabled={!!busy} onPress={() => void act('dismiss')} /> : null}
-        {x.state === 'accepted' && cardId && onOpenTask ? <Button title="Görevi aç" kind="secondary" onPress={() => onOpenTask(cardId)} /> : null}
+        {can.accept ? <Button title={x.action === 'create_card_draft' ? m.createTask : m.applyToTask} busy={busy === 'accept'} disabled={!!busy} onPress={() => void act('accept')} /> : null}
+        {can.dismiss ? <Button title={m.reject} kind="secondary" busy={busy === 'dismiss'} disabled={!!busy} onPress={() => void act('dismiss')} /> : null}
+        {x.state === 'accepted' && cardId && onOpenTask ? <Button title={m.openTask} kind="secondary" onPress={() => onOpenTask(cardId)} /> : null}
       </View>
     </View>
   );

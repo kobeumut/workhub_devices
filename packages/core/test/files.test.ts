@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   base64ToBytes, bytesToBase64, canOpenSafely, davFilePath, downsample, encodeWav, fileOf, formatBytes, numberedName, safeFileName, shareToRoom,
-  uploadFile, wavInfo, FILE_LIMITS,
+  uploadFile, voiceNoteName, wavInfo, FILE_LIMITS,
 } from '../src/files';
 import { createDirectBackend, dispatchWire, type PlainStore } from '../src/backend';
 import { parseServerCapabilities } from '../src/capabilities';
@@ -28,20 +28,28 @@ const line = (c: Call) => `${c.init.method} ${c.url.replace(/^https:\/\/(example
 test('names: unsafe characters, reserved names, length and numbered conflicts', () => {
   assert.equal(safeFileName('../a/b\\c:d*?.txt'), '_a_b_c_d__.txt');
   assert.equal(safeFileName('  .hidden  '), 'hidden');
-  assert.equal(safeFileName('rapor. '), 'rapor');
+  assert.equal(safeFileName('report. '), 'report');
   assert.equal(safeFileName('CON.txt'), '_CON.txt');
   assert.equal(safeFileName('\u0000\u0007'), '__');
   assert.equal(safeFileName(''), 'file');
+  // Non-ASCII letters (Turkish "ğ" as an example): over-long names are cut to the limit and keep their extension.
   const long = safeFileName(`${'ğ'.repeat(300)}.pdf`);
   assert.equal(long.length, FILE_LIMITS.name);
   assert.ok(long.endsWith('.pdf'));
-  assert.equal(numberedName('Rapor.final.pdf', 2), 'Rapor.final (2).pdf');
+  assert.equal(numberedName('Report.final.pdf', 2), 'Report.final (2).pdf');
   assert.equal(numberedName('README', 1), 'README (1)');
   assert.equal(numberedName('a.txt', 0), 'a.txt');
 });
 
+test('voice message file names: English by default, prefix can be localized', () => {
+  const d = new Date(2026, 10, 2, 9, 5, 7);
+  assert.equal(voiceNoteName(d), 'Voice message 2026-11-02 09-05-07.wav');
+  assert.equal(voiceNoteName(d, 'Sesli not'), 'Sesli not 2026-11-02 09-05-07.wav'); // caller-supplied (Turkish) label
+});
+
 test('WebDAV paths: segments encoded, traversal/control characters refused', () => {
-  assert.equal(davFilePath('alice', '/Talk/Rapor ğ #1?.txt'), '/remote.php/dav/files/alice/Talk/Rapor%20%C4%9F%20%231%3F.txt');
+  // Non-ASCII letter (Turkish "ğ") is percent-encoded as UTF-8, as are space, "#" and "?".
+  assert.equal(davFilePath('alice', '/Talk/Report ğ #1?.txt'), '/remote.php/dav/files/alice/Talk/Report%20%C4%9F%20%231%3F.txt');
   assert.equal(davFilePath('ali ce', 'Talk/x'), '/remote.php/dav/files/ali%20ce/Talk/x');
   for (const bad of ['/Talk/../etc', '/Talk/./x', '', '/', 'a\\b', 'a/\u0001']) {
     assert.throws(() => davFilePath('alice', bad), (e: unknown) => e instanceof OcsError && e.errorCode === 'INVALID_PATH', bad);
@@ -62,7 +70,7 @@ test('file messages: parameters → TalkFile (voice, caption, hide-download)', (
   });
   assert.deepEqual(fileOf(m({})), { id: '42', name: 'a.wav', size: 1234, path: 'Talk/a.wav', mimetype: 'audio/wav', hideDownload: false, voice: false, caption: '' });
   assert.equal(fileOf(m({ messageType: 'voice-message' }))!.voice, true);
-  assert.equal(fileOf(m({ message: 'Bakınız' }))!.caption, 'Bakınız');
+  assert.equal(fileOf(m({ message: 'See attached' }))!.caption, 'See attached');
   const hidden = m({});
   (hidden.messageParameters as Record<string, Record<string, unknown>>).file!['hide-download'] = 'yes';
   assert.equal(fileOf(hidden)!.hideDownload, true);
@@ -90,20 +98,20 @@ test('base64 and WAV: round trip, header check, 16 kHz downsampling', () => {
 
 test('upload (small): MKCOL folder (405 ok) → HEAD probe finds free name → PUT with If-None-Match', async () => {
   const host = new MemoryFileHost();
-  const pick = host.add('Rapor.txt', 'text/plain', new TextEncoder().encode('merhaba'));
+  const pick = host.add('Report.txt', 'text/plain', new TextEncoder().encode('hello'));
   const f = scriptedFetch(status(405), status(200), status(404), status(201));
   const r = await uploadFile(client(f), host, pick.handle, { uid: 'alice', folder: '/Talk' });
-  assert.deepEqual(r, { name: 'Rapor (1).txt', path: '/Talk/Rapor (1).txt' });
+  assert.deepEqual(r, { name: 'Report (1).txt', path: '/Talk/Report (1).txt' });
   assert.deepEqual(f.calls.map(line), [
     'MKCOL /remote.php/dav/files/alice/Talk',
-    'HEAD /remote.php/dav/files/alice/Talk/Rapor.txt',
-    'HEAD /remote.php/dav/files/alice/Talk/Rapor%20(1).txt',
-    'PUT /remote.php/dav/files/alice/Talk/Rapor%20(1).txt',
+    'HEAD /remote.php/dav/files/alice/Talk/Report.txt',
+    'HEAD /remote.php/dav/files/alice/Talk/Report%20(1).txt',
+    'PUT /remote.php/dav/files/alice/Talk/Report%20(1).txt',
   ]);
   const put = f.calls[3]!;
   assert.equal(headerOf(put, 'If-None-Match'), '*');
   assert.equal(headerOf(put, 'Content-Type'), 'text/plain');
-  assert.equal(new TextDecoder().decode(put.init.body as Uint8Array), 'merhaba');
+  assert.equal(new TextDecoder().decode(put.init.body as Uint8Array), 'hello');
   assert.equal(put.init.redirect, 'manual');
 });
 

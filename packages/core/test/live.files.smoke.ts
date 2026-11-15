@@ -111,13 +111,14 @@ async function main() {
   });
 
   const stamp = Date.now().toString(36);
-  const smallName = `Rapor ğüşİ ${stamp}.txt`;
-  const small = new TextEncoder().encode(`GENE-58 küçük dosya ${stamp}\n`.repeat(50));
+  // Non-ASCII file name on purpose (Turkish letters as an example): WebDAV must round-trip UTF-8 names.
+  const smallName = `Report ğüşİ ${stamp}.txt`;
+  const small = new TextEncoder().encode(`GENE-58 small file ${stamp}\n`.repeat(50));
 
   await step('small file: single PUT + share with caption → B sees {file} + caption, fresh path', async () => {
     const pick = A.files.add(smallName, 'text/plain', small);
     const ref = newReferenceId();
-    const r = await A.b.shareFile(A.id, token, pick.handle, { transferId: tx(), referenceId: ref, caption: 'Açıklama ✓' });
+    const r = await A.b.shareFile(A.id, token, pick.handle, { transferId: tx(), referenceId: ref, caption: 'Caption ✓' });
     uploaded.push(r.path);
     assert.equal(r.name, smallName);
     assert.equal(r.path, `${folder}/${smallName}`);
@@ -128,7 +129,7 @@ async function main() {
     const f = fileOf(m!)!;
     assert.equal(f.name, smallName);
     assert.equal(f.size, small.byteLength);
-    assert.equal(f.caption, 'Açıklama ✓');
+    assert.equal(f.caption, 'Caption ✓');
     assert.equal(f.voice, false);
     assert.equal(f.hideDownload, false);
     textMsg = m;
@@ -136,7 +137,7 @@ async function main() {
   });
 
   await step('name conflict: same name again → "name (1).ext", no overwrite', async () => {
-    const pick = A.files.add(smallName, 'text/plain', new TextEncoder().encode('ikinci'));
+    const pick = A.files.add(smallName, 'text/plain', new TextEncoder().encode('second'));
     const r = await A.b.shareFile(A.id, token, pick.handle, { transferId: tx(), referenceId: newReferenceId() });
     uploaded.push(r.path);
     assert.equal(r.name, smallName.replace(/\.txt$/, ' (1).txt'));
@@ -144,7 +145,7 @@ async function main() {
     assert.equal(sha(new Uint8Array(first)), sha(small), 'first file unchanged');
   });
 
-  const bigName = `Büyük ${stamp}.bin`;
+  const bigName = `Large ${stamp}.bin`;
   const big = new Uint8Array(randomBytes(23 * 1024 * 1024 + 123));
   let bigRef = '';
   await step('large file: chunked upload v2 (3 chunks) with progress, then shared', async () => {
@@ -184,7 +185,7 @@ async function main() {
 
   await step('cancel: abort mid-upload → aborted, upload dir removed, nothing shared', async () => {
     const before = (await feedB!.catchUp(), feedB!.count());
-    const name = `İptal ${stamp}.bin`;
+    const name = `Cancel ${stamp}.bin`;
     const pick = A.files.add(name, 'application/octet-stream', new Uint8Array(randomBytes(31 * 1024 * 1024)));
     const id = tx();
     const p = A.b.shareFile(A.id, token, pick.handle, { transferId: id, referenceId: newReferenceId() });
@@ -210,7 +211,7 @@ async function main() {
     return encodeWav(s, 16000);
   })();
   await step('voice note: WAV shared as voice-message; B plays it (voiceClip bytes identical)', async () => {
-    const pick = A.files.add(`Sesli not ${stamp}.wav`, 'audio/wav', wav);
+    const pick = A.files.add(`Voice message ${stamp}.wav`, 'audio/wav', wav);
     voiceRef = newReferenceId();
     const r = await A.b.shareFile(A.id, token, pick.handle, { transferId: tx(), referenceId: voiceRef, voice: true });
     uploaded.push(r.path);
