@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "rootDir": ".",
+    "outDir": ".test-dist",
+    "noEmit": false,
+    "esModuleInterop": true,
+    "types": ["node"]
+  },
+  "include": ["src/i18n/core.ts", "src/i18n/catalogs", "test"]
+}

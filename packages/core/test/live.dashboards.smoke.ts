@@ -154,7 +154,7 @@ async function main() {
 
   await step('dashboard edit: title + global filter (open) narrows KPIs; stale version 409; refreshSec range 422', async () => {
     const d = await dashboardsApi.get(A, dashId);
-    const u = await dashboardsApi.update(A, dashId, { version: d.version, title: `Smoke ${stamp} (açık)`, filters: { doneState: 'open' }, refreshSec: 0 });
+    const u = await dashboardsApi.update(A, dashId, { version: d.version, title: `Smoke ${stamp} (open)`, filters: { doneState: 'open' }, refreshSec: 0 });
     assert.equal(u!.version, d.version + 1);
     assert.deepEqual(u!.filters, { doneState: 'open' });
     const q = await dashboardsApi.query(A, dashId);

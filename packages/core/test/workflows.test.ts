@@ -46,7 +46,7 @@ const graph = (over: Partial<WorkflowGraph> = {}): WorkflowGraph => ({
   ...over,
 });
 const wf = (over: Partial<WorkflowDetail> = {}): WorkflowDetail => ({
-  id: 3, title: 'Akış', description: '', category: 'custom', enabled: true, version: 4, owner: { uid: 'ali', displayName: 'Ali' }, role: 'manage',
+  id: 3, title: 'Flow', description: '', category: 'custom', enabled: true, version: 4, owner: { uid: 'ali', displayName: 'Ali' }, role: 'manage',
   startMode: 'manual', stepCount: 2, entryLabel: 'A', runs: { running: 0, completed: 0 }, createdAt: '', updatedAt: '',
   graph: graph(), boards: [], placeholders: ['workflow.title', 'run.title', 'step.label', 'previous.title', 'previous.url', 'previous.assignees', 'previous.doneBy', 'date'], ...over,
 });
@@ -54,10 +54,10 @@ const step = (id: number, over: Partial<WorkflowStep> = {}): WorkflowStep => ({
   id, nodeId: 'b', label: 'B', state: 'pending_handoff', cardId: null, card: null, assignee: null, doneBy: null, error: null, sourceStepId: 1, sourceCardId: 50,
   canAct: true, createdAt: '', doneAt: null,
   node: { label: 'B', assigneeMode: 'choose', assignees: [], stackId: 10, boardId: 4, dueDays: null },
-  preview: { title: 'Run – B', description: 'Önceki: X', dueDate: '2026-11-09T00:00:00Z' }, ...over,
+  preview: { title: 'Run – B', description: 'Previous: X', dueDate: '2026-11-09T00:00:00Z' }, ...over,
 });
 const run = (over: Partial<WorkflowRun> = {}): WorkflowRun => ({
-  id: 9, workflowId: 3, workflowTitle: 'Akış', title: 'Run', state: 'running', startedBy: { uid: 'ali', displayName: 'Ali' }, version: 2, canManage: true,
+  id: 9, workflowId: 3, workflowTitle: 'Flow', title: 'Run', state: 'running', startedBy: { uid: 'ali', displayName: 'Ali' }, version: 2, canManage: true,
   createdAt: '', finishedAt: null, nodes: [], edges: [], steps: [step(1, { nodeId: 'a', state: 'done', canAct: false }), step(2)], ...over,
 });
 const isCode = (code: string) => (e: unknown) => e instanceof OcsError && e.errorCode === code;
@@ -135,11 +135,11 @@ test('step gate reads the CURRENT run: handled → 409, not allowed → 403, unk
   await assert.rejects(b.workflowHandoff(id, 9, 2, { assigneeUid: 'carol' }, 'abcdef12-3456'), isCode('WORKFLOW_ASSIGNEE_NOT_ALLOWED'));
   await assert.rejects(b.workflowHandoff(id, 9, 2, { assigneeUid: 'bob' }, 'abcdef12-3456'), isCode('WORKFLOW_ASSIGNEE_FIXED'));
   assert.ok(!f.calls.some((c) => c.init.method === 'POST' && c.url.includes('/workflows')));
-  await b.workflowHandoff(id, 9, 2, { assigneeUid: 'bob', title: 'İncele' }, 'abcdef12-3456');
+  await b.workflowHandoff(id, 9, 2, { assigneeUid: 'bob', title: 'Review' }, 'abcdef12-3456');
   const h = f.calls.at(-1)!;
   assert.ok(h.url.endsWith('/workflows/steps/2/handoff?format=json'));
   assert.equal(headerOf(h, 'Idempotency-Key'), 'abcdef12-3456');
-  assert.deepEqual(JSON.parse(String(h.init.body)), { assigneeUid: 'bob', title: 'İncele' });
+  assert.deepEqual(JSON.parse(String(h.init.body)), { assigneeUid: 'bob', title: 'Review' });
   await b.workflowSkip(id, 9, 2, '  gerek yok ');
   const s = f.calls.at(-1)!;
   assert.ok(s.url.endsWith('/workflows/steps/2/skip?format=json'));
@@ -233,10 +233,10 @@ test('graph issues mirror the server rules and editor warnings', () => {
 
 test('graph editing keeps the server rules: no loops, no duplicate, no auto → choose; remove cleans edges and entry', () => {
   let g: WorkflowGraph = { start: { mode: 'manual', nodeId: null, stackId: null, boardId: null, x: 40, y: 120 }, nodes: [], edges: [] };
-  const a = addNode(g, 'Hazırla');
+  const a = addNode(g, 'Prepare');
   g = a.graph;
   assert.equal(g.start.nodeId, a.nodeId, 'first step becomes the entry');
-  const b = addNode(g, 'İncele');
+  const b = addNode(g, 'Review');
   g = b.graph;
   assert.equal(g.nodes[1]!.x, g.nodes[0]!.x + 340);
   assert.notEqual(a.nodeId, b.nodeId);
@@ -248,7 +248,7 @@ test('graph editing keeps the server rules: no loops, no duplicate, no auto → 
   g = updateNode(g, b.nodeId, { assigneeMode: 'choose' });
   assert.equal(g.edges[0]!.mode, 'manual', 'auto edge into a chosen step becomes a hand-off');
   assert.equal(setEdgeMode(g, g.edges[0]!.id, 'auto'), null);
-  const c = addNode(g, 'Yayınla');
+  const c = addNode(g, 'Publish');
   g = c.graph;
   assert.equal(connect(g, b.nodeId, c.nodeId, 'auto')!.edges.length, 2);
   g = removeNode(g, a.nodeId);
@@ -273,12 +273,12 @@ test('actions, progress, hand-off candidates and minimal bodies', () => {
   assert.deepEqual(handoffCandidates({ ...step(2).node!, assignees: [members[1]!] }, members), [members[1]]);
   assert.deepEqual(handoffCandidates({ ...step(2).node!, assigneeMode: 'fixed' }, members), []);
   const s = step(2);
-  assert.deepEqual(buildHandoffInput(s, { assigneeUid: 'bob', title: 'Run – B', description: 'Önceki: X', dueDate: '2026-11-09' }), { assigneeUid: 'bob' });
-  assert.deepEqual(buildHandoffInput(s, { assigneeUid: null, title: 'Yeni', description: '', dueDate: '' }), { title: 'Yeni', description: '', dueDate: null });
-  assert.deepEqual(buildHandoffInput({ ...s, node: { ...s.node!, assigneeMode: 'fixed' } }, { assigneeUid: 'bob', title: 'Run – B', description: 'Önceki: X', dueDate: '2026-11-09' }), {});
+  assert.deepEqual(buildHandoffInput(s, { assigneeUid: 'bob', title: 'Run – B', description: 'Previous: X', dueDate: '2026-11-09' }), { assigneeUid: 'bob' });
+  assert.deepEqual(buildHandoffInput(s, { assigneeUid: null, title: 'New', description: '', dueDate: '' }), { title: 'New', description: '', dueDate: null });
+  assert.deepEqual(buildHandoffInput({ ...s, node: { ...s.node!, assigneeMode: 'fixed' } }, { assigneeUid: 'bob', title: 'Run – B', description: 'Previous: X', dueDate: '2026-11-09' }), {});
   const d = wf();
-  assert.equal(buildWorkflowPatch(d, { title: ' Akış ', description: '', category: 'custom', enabled: true }), null);
-  assert.deepEqual(buildWorkflowPatch(d, { title: 'Yeni', description: 'x', category: 'marketing', enabled: false }), { version: 4, title: 'Yeni', description: 'x', category: 'marketing', enabled: false });
+  assert.equal(buildWorkflowPatch(d, { title: ' Flow ', description: '', category: 'custom', enabled: true }), null);
+  assert.deepEqual(buildWorkflowPatch(d, { title: 'New', description: 'x', category: 'marketing', enabled: false }), { version: 4, title: 'New', description: 'x', category: 'marketing', enabled: false });
   assert.ok(sameGraph(graph(), graph({ nodes: graph().nodes.map((n) => ({ ...n, boardId: null })) })), 'boardId is server-derived');
   assert.ok(!sameGraph(graph(), graph({ edges: [] })));
 });

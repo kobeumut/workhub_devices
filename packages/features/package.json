@@ -5,7 +5,8 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/run-tests.mjs"
   },
   "peerDependencies": {
     "react": ">=19",
@@ -19,6 +20,8 @@
     "lucide-react-native": "^1.67.0",
     "react": "^19.3.0",
     "react-native": "^0.88.1",
-    "react-native-svg": "^15.16.0"
+    "react-native-svg": "^15.16.0",
+    "@types/node": "^22.20.5",
+    "typescript": "5.9"
   }
 }

@@ -139,7 +139,7 @@ async function main() {
     assert.equal(item.canReview, true);
     assert.equal(item.entries.length, 2);
     assert.equal(await code(timeApi.decide(B, subId, 'request_changes', item.period.version, null, key())), 'client:FIELD_REQUIRED');
-    const rc = await timeApi.decide(B, subId, 'request_changes', item.period.version, 'Lütfen açıklamaları netleştir', key());
+    const rc = await timeApi.decide(B, subId, 'request_changes', item.period.version, 'Please clarify the descriptions', key());
     assert.equal(rc!.period.state, 'changes_requested');
     await reload();
     assert.equal(week.period.open, true, 'changes_requested is open for edits');
@@ -159,7 +159,7 @@ async function main() {
   await step('reopen: reason required; approved → reopened (open again)', async () => {
     await reload();
     assert.equal(await code(timeApi.decide(B, subId, 'reopen', week.period.version, null, key())), 'client:FIELD_REQUIRED');
-    const r = await timeApi.decide(B, subId, 'reopen', week.period.version, 'Düzeltme gerekiyor', key());
+    const r = await timeApi.decide(B, subId, 'reopen', week.period.version, 'Correction needed', key());
     assert.equal(r!.period.state, 'reopened');
     await reload();
     assert.equal(week.period.open, true);

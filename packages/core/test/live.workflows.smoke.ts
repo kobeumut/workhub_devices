@@ -102,8 +102,8 @@ async function main() {
     graph = {
       start: { mode: 'manual', nodeId: 'prepare', stackId: null, boardId: null, x: 40, y: 120 },
       nodes: [
-        { id: 'prepare', type: 'task', label: 'Hazırla', title: '{{run.title}} – {{step.label}}', description: '', stackId: todoP, boardId: null, assigneeMode: 'fixed', assignees: [UA], dueDays: 2, x: 270, y: 120 },
-        { id: 'review', type: 'task', label: 'İncele', title: '{{run.title}} – {{step.label}}', description: 'Önceki: {{previous.title}}', stackId: todoP, boardId: null, assigneeMode: 'choose', assignees: [UB], dueDays: null, x: 610, y: 120 },
+        { id: 'prepare', type: 'task', label: 'Prepare', title: '{{run.title}} – {{step.label}}', description: '', stackId: todoP, boardId: null, assigneeMode: 'fixed', assignees: [UA], dueDays: 2, x: 270, y: 120 },
+        { id: 'review', type: 'task', label: 'Review', title: '{{run.title}} – {{step.label}}', description: 'Previous: {{previous.title}}', stackId: todoP, boardId: null, assigneeMode: 'choose', assignees: [UB], dueDays: null, x: 610, y: 120 },
         { id: 'notify', type: 'task', label: 'Bildir', title: '{{run.title}} – bildir', description: '', stackId: todoQ, boardId: null, assigneeMode: 'fixed', assignees: [], dueDays: null, x: 610, y: 300 },
       ],
       edges: [
@@ -113,14 +113,14 @@ async function main() {
     };
     assert.deepEqual(graphIssues(graph), []);
     const k = key();
-    const d = await workflowsApi.create(A, { title: `Smoke akış ${stamp}`, category: 'production', graph }, k);
+    const d = await workflowsApi.create(A, { title: `Smoke flow ${stamp}`, category: 'production', graph }, k);
     wfId = d!.id;
     version = d!.version;
-    const again = await workflowsApi.create(A, { title: `Smoke akış ${stamp}`, category: 'production', graph }, k);
+    const again = await workflowsApi.create(A, { title: `Smoke flow ${stamp}`, category: 'production', graph }, k);
     assert.equal(again!.id, wfId);
     assert.equal(d!.role, 'manage');
     assert.equal(d!.stepCount, 3);
-    assert.equal(d!.entryLabel, 'Hazırla');
+    assert.equal(d!.entryLabel, 'Prepare');
     assert.deepEqual(d!.graph.nodes.map((x) => x.boardId), [boardP, boardP, boardQ], 'boardId derived by the server');
     assert.deepEqual(d!.boards.map((b) => b.id).sort((a, b) => a - b), [boardP, boardQ].sort((a, b) => a - b));
     const list = await workflowsApi.list(A);
@@ -129,7 +129,7 @@ async function main() {
   });
 
   await step('update: title → version +1; stale version → 409 VERSION_CONFLICT; empty patch → 422; disabled → start 403 WORKFLOW_DISABLED', async () => {
-    const d = await workflowsApi.update(A, wfId, { version, title: `Smoke akış ${stamp} ✓` });
+    const d = await workflowsApi.update(A, wfId, { version, title: `Smoke flow ${stamp} ✓` });
     assert.equal(d!.version, version + 1);
     assert.equal(await code(workflowsApi.update(A, wfId, { version, title: 'eski' })), 'conflict:VERSION_CONFLICT');
     assert.equal(await code(workflowsApi.update(A, wfId, { version: d!.version })), 'client:EMPTY_PATCH');
@@ -151,14 +151,14 @@ async function main() {
 
   await step('run 1: start → entry card (assignee A, due +2 days); same Idempotency-Key → same run', async () => {
     const k = key();
-    const r = await workflowsApi.start(A, wfId, { title: `Koşu 1 ${stamp}` }, k);
+    const r = await workflowsApi.start(A, wfId, { title: `Run 1 ${stamp}` }, k);
     run1 = r!;
-    const again = await workflowsApi.start(A, wfId, { title: `Koşu 1 ${stamp}` }, k);
+    const again = await workflowsApi.start(A, wfId, { title: `Run 1 ${stamp}` }, k);
     assert.equal(again!.id, run1.id);
     const prep = stepOf(run1, 'prepare');
     assert.equal(prep.state, 'open');
     assert.ok(prep.cardId);
-    assert.equal(prep.card?.title, `Koşu 1 ${stamp} – Hazırla`);
+    assert.equal(prep.card?.title, `Run 1 ${stamp} – Prepare`);
     assert.equal(prep.assignee?.uid, UA);
     assert.ok(prep.card?.due, 'due date from dueDays');
     assert.equal(run1.canManage, true);
@@ -174,8 +174,8 @@ async function main() {
     const notify = stepOf(r, 'notify');
     assert.ok(notify.error, 'failure code stored');
     const review = stepOf(r, 'review');
-    assert.equal(review.preview?.title, `Koşu 1 ${stamp} – İncele`);
-    assert.equal(review.preview?.description, `Önceki: Koşu 1 ${stamp} – Hazırla`);
+    assert.equal(review.preview?.title, `Run 1 ${stamp} – Review`);
+    assert.equal(review.preview?.description, `Previous: Run 1 ${stamp} – Prepare`);
     const mine = await workflowsApi.handoffs(A);
     assert.ok(mine.some((h) => h.step.id === review.id) && mine.some((h) => h.step.id === notify.id));
     const forCard = await workflowsApi.cardHandoffs(A, cardId);
@@ -188,11 +188,11 @@ async function main() {
   await step('hand-off: assignee outside the allow-list → 422; to B → card for B; second hand-off → 409 WORKFLOW_STEP_HANDLED', async () => {
     const review = stepOf(run1!, 'review');
     assert.equal(await code(workflowsApi.handoff(A, review.id, { assigneeUid: UA }, key())), 'client:WORKFLOW_ASSIGNEE_NOT_ALLOWED');
-    const r = await workflowsApi.handoff(A, review.id, { assigneeUid: UB, title: `İncele ${stamp}` }, key());
+    const r = await workflowsApi.handoff(A, review.id, { assigneeUid: UB, title: `Review ${stamp}` }, key());
     const s = stepOf(r!, 'review');
     assert.equal(s.state, 'open');
     assert.equal(s.assignee?.uid, UB);
-    assert.equal(s.card?.title, `İncele ${stamp}`);
+    assert.equal(s.card?.title, `Review ${stamp}`);
     assert.equal(await code(workflowsApi.handoff(A, review.id, {}, key())), 'conflict:WORKFLOW_STEP_HANDLED');
     assert.equal(await code(workflowsApi.skip(A, review.id, '')), 'conflict:WORKFLOW_STEP_HANDLED');
     run1 = r!;
@@ -229,10 +229,10 @@ async function main() {
   });
 
   await step('run 2: skip the hand-off (reason) and the failed branch → run completed', async () => {
-    const r0 = await workflowsApi.start(A, wfId, { title: `Koşu 2 ${stamp}` }, key());
+    const r0 = await workflowsApi.start(A, wfId, { title: `Run 2 ${stamp}` }, key());
     await workhubApi.updateTask(A, stepOf(r0!, 'prepare').cardId!, { done: true });
     let r = await workflowsApi.run(A, r0!.id);
-    r = (await workflowsApi.skip(A, stepOf(r, 'review').id, 'Gerek kalmadı'))!;
+    r = (await workflowsApi.skip(A, stepOf(r, 'review').id, 'No longer needed'))!;
     assert.equal(r.state, 'running');
     r = (await workflowsApi.skip(A, stepOf(r, 'notify').id, ''))!;
     assert.equal(states(r), 'notify:skipped,prepare:done,review:skipped');
@@ -240,7 +240,7 @@ async function main() {
   });
 
   await step('run 3: cancel with stale version → 409; cancel → open step skipped, card kept; cancel again → 409', async () => {
-    const r0 = (await workflowsApi.start(A, wfId, { title: `Koşu 3 ${stamp}` }, key()))!;
+    const r0 = (await workflowsApi.start(A, wfId, { title: `Run 3 ${stamp}` }, key()))!;
     assert.equal(await code(workflowsApi.cancel(A, r0.id, r0.version + 5)), 'conflict:VERSION_CONFLICT');
     const r = (await workflowsApi.cancel(A, r0.id, r0.version))!;
     assert.equal(r.state, 'cancelled');
@@ -252,10 +252,10 @@ async function main() {
 
   await step('bind an existing card: entry = that card (no new card); bound again → 409 WORKFLOW_CARD_BOUND; done card → 409 WORKFLOW_CARD_DONE', async () => {
     const mk = async (title: string) => (await A.request<{ id: number }>(`/ocs/v2.php/apps/workhub/api/v1/projects/${boardP}/tasks`, { method: 'POST', body: { stackId: todoP, title }, headers: { 'Idempotency-Key': key() } })).data!.id;
-    const cardId = await mk(`Bağlı kart ${stamp}`);
+    const cardId = await mk(`Linked card ${stamp}`);
     const r = (await workflowsApi.start(A, wfId, { cardId }, key()))!;
     assert.equal(stepOf(r, 'prepare').cardId, cardId);
-    assert.equal(r.title, `Bağlı kart ${stamp}`, 'run title = card title');
+    assert.equal(r.title, `Linked card ${stamp}`, 'run title = card title');
     assert.equal(await code(workflowsApi.start(A, wfId, { cardId }, key())), 'conflict:WORKFLOW_CARD_BOUND');
     const done = await mk(`Biten kart ${stamp}`);
     await workhubApi.updateTask(A, done, { done: true });

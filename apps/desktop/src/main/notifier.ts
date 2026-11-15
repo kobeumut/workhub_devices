@@ -1,4 +1,5 @@
 import { Notification } from 'electron';
+import { mainTexts } from './i18n';
 import {
   presentNotification, routeForObject, parseServerLink, shouldRaiseOsAlert,
   type AccountSummary, type Backend, type InboxNotification, type RoutedTarget,
@@ -7,13 +8,13 @@ import {
 /**
  * Desktop notifications while the app runs (window open OR hidden in the tray).
  * Native mobile-style push does not exist for desktop processes; when the app is fully quit
- * nothing is received — documented in README ("Masaüstü bildirim davranışı").
+ * nothing is received — documented in the README ("Desktop notification behavior").
  *
  * - Polls each account's Notifications inbox (ETag-less list; 60 s; backs off on errors).
  * - `shouldNotify=false` → no OS alert (server decided another client shows it).
  * - Chat open on screen (same account + room) → no banner.
  * - macOS: inline reply (`hasReply`) sends a Talk message from the MAIN process.
- *   Windows/Linux: no inline reply in Electron → click/"Yanıtla" focuses the composer.
+ *   Windows/Linux: no inline reply in Electron → click/"Reply" focuses the composer.
  */
 export class DesktopNotifier {
   private seen = new Map<string, Set<number>>();
@@ -81,14 +82,15 @@ export class DesktopNotifier {
 
   private show(a: AccountSummary, n: InboxNotification, target: RoutedTarget) {
     if (!Notification.isSupported()) return;
-    const p = presentNotification(n, this.showPreview);
+    const x = mainTexts();
+    const p = presentNotification(n, this.showPreview, x.hiddenTitles);
     const canReply = process.platform === 'darwin' && target.route.name === 'room';
     const note = new Notification({
       title: p.title,
       body: p.body,
       silent: false,
-      ...(canReply ? { hasReply: true, replyPlaceholder: 'Yanıt yazın' } : {}),
-      ...(process.platform !== 'darwin' && target.route.name === 'room' ? { actions: [{ type: 'button' as const, text: 'Yanıtla' }] } : {}),
+      ...(canReply ? { hasReply: true, replyPlaceholder: x.replyPlaceholder } : {}),
+      ...(process.platform !== 'darwin' && target.route.name === 'room' ? { actions: [{ type: 'button' as const, text: x.replyAction }] } : {}),
     });
     note.on('click', () => this.onOpen(target));
     note.on('action', () => this.onOpen(target)); // Windows/Linux fallback: focused composer
@@ -97,7 +99,7 @@ export class DesktopNotifier {
       if (r.name !== 'room' || !reply.trim()) return;
       const ref = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
       this.backend.send(a.id, r.token, reply, ref).catch(() => {
-        new Notification({ title: 'Yanıt gönderilemedi', body: 'Sohbeti açıp tekrar deneyin.' }).show();
+        new Notification({ title: x.replyFailedTitle, body: x.replyFailedBody }).show();
       });
     });
     note.show();

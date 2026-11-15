@@ -96,14 +96,23 @@ export function matchesFilters(task: Task, f: TaskFilters, labelTitles: Readonly
   }
   if (f.priorities.length && !f.priorities.includes(task.priority ?? NO_PRIORITY)) return false;
   if (f.labels.length && !task.labels.some((id) => f.labels.includes(id))) return false;
-  const q = f.q.trim().toLocaleLowerCase('tr-TR');
+  const q = foldForSearch(f.q.trim());
   if (q) {
-    const haystack = [task.title, `#${task.id}`, ...task.assignees.map((a) => a.displayName), ...task.labels.map((id) => labelTitles.get(id) ?? '')]
-      .join(' ')
-      .toLocaleLowerCase('tr-TR');
+    const haystack = foldForSearch(
+      [task.title, `#${task.id}`, ...task.assignees.map((a) => a.displayName), ...task.labels.map((id) => labelTitles.get(id) ?? '')].join(' '),
+    );
     if (!haystack.includes(q)) return false;
   }
   return true;
+}
+
+/**
+ * Case- and accent-insensitive form used for free-text search, independent of the UI language:
+ * "İ", "I", "ı" and "i" all fold to "i", and "Ş" → "s", "é" → "e", so "isik" finds "Işık" and
+ * "idea" finds "Idea" (a fixed Turkish or English locale would break one of the two).
+ */
+function foldForSearch(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i').toLowerCase();
 }
 
 // ---- Columns ---------------------------------------------------------------------------------
@@ -166,9 +175,12 @@ export function dueState(due: string | null, done: string | null, now: number, t
   return toLocalDay(due) === todayDay ? 'today' : 'future';
 }
 
-/** Initials for the avatar fallback ("Ayşe Yılmaz" → "AY"). */
-export function initials(name: string): string {
+/**
+ * Initials for the avatar fallback ("Jane Doe" → "JD"). Upper-casing is locale-independent unless
+ * a BCP 47 tag is given (e.g. `'tr-TR'` maps "i" to "İ" instead of "I").
+ */
+export function initials(name: string, locale?: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   const s = parts.length > 1 ? `${parts[0]![0]}${parts[parts.length - 1]![0]}` : (parts[0] ?? '?').slice(0, 2);
-  return s.toLocaleUpperCase('tr-TR');
+  return locale ? s.toLocaleUpperCase(locale) : s.toUpperCase();
 }

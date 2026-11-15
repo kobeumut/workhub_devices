@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Linking, Platform, StatusBar, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { createDirectBackend, type AccountSummary, type RoutedTarget } from '@workhub-devices/core';
-import { WorkhubApp, type PlatformServices } from '@workhub-devices/features';
+import { WorkhubApp, isLocale, type LocalePreference, type PlatformServices } from '@workhub-devices/features';
 import { native, nativeEvents, parseNativeRoute, plainStore, secretStore } from './native';
 import { accountTag, ensurePush, removePush } from './push';
 import { filesSupported, mobileFileHost, mobileFileServices } from './files';
@@ -23,6 +23,29 @@ const backend = createDirectBackend({
   ...(filesSupported ? { files: mobileFileHost } : {}),
 });
 
+/**
+ * Language preference (`system` | `en` | `tr`) in the app's existing plain key-value store
+ * (Android SharedPreferences / iOS UserDefaults): non-secret, so it never touches the secret store.
+ */
+const LOCALE_KEY = 'workhub.locale';
+const localePreference: NonNullable<PlatformServices['localePreference']> = {
+  load: async () => {
+    try {
+      const v = await plainStore.get(LOCALE_KEY);
+      return v === 'system' || isLocale(v) ? (v as LocalePreference) : null;
+    } catch {
+      return null;
+    }
+  },
+  save: async (pref) => {
+    try {
+      await plainStore.set(LOCALE_KEY, pref);
+    } catch {
+      /* the choice then only lasts for this session */
+    }
+  },
+};
+
 async function tagToAccount(tag: string): Promise<AccountSummary | undefined> {
   for (const a of await backend.listAccounts()) if ((await accountTag(a)) === tag) return a;
   return undefined;
@@ -41,6 +64,7 @@ export default function App() {
         await Linking.openURL(url);
       },
       appVersion: identity.version,
+      localePreference,
       saveFile: (filename, content, mime) => native.shareFile(filename, content, mime),
       ...mobileFileServices(),
       onAccountsChanged: (accounts) => {

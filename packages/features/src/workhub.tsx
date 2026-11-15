@@ -6,12 +6,14 @@ import { Button, Empty, ErrorBanner, Header, Loading, Row, card, styles as ui } 
 import { colors, font, hexColor, radius, space } from './theme';
 import { Icon, type IconName } from './icons';
 import { AvatarStack, BoardToolbar, Chip, DueBadge, IconButton, KanbanBoard, LabelChips, PriorityBadge, stackColor } from './kanban';
-import { describeError, formatDate, t } from './i18n';
+import { describeError, formatDate, messages, t } from './i18n';
 import { DependencySection, SubtaskSection, TaskEditor } from './taskEdit';
 import { TaskGoalsSection } from './goals';
 import { TaskWorkflowSection } from './workflows';
 import { CreateProjectForm, ProjectAdminPanel } from './projectAdmin';
 import { ActivityView, GanttView, WorkloadScreen } from './views';
+
+const m = messages.tasks;
 
 const uuid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -42,7 +44,7 @@ export function ProjectsScreen({ accountId, selected, onOpen, version = 0 }: { a
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ selected: item.id === selected }}
-              accessibilityLabel={`${item.title}: ${item.openCount} açık, ${item.doneCount} tamamlandı${item.overdueCount ? `, ${item.overdueCount} gecikmiş` : ''}`}
+              accessibilityLabel={m.projectRowLabel(item.title, item.openCount, item.doneCount, item.overdueCount)}
               onPress={() => onOpen(item)}
               style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space(3), paddingHorizontal: space(4), paddingVertical: space(3), minHeight: 64, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: item.id === selected ? colors.primarySoft : pressed ? colors.hover : colors.bg })}
             >
@@ -52,9 +54,9 @@ export function ProjectsScreen({ accountId, selected, onOpen, version = 0 }: { a
               <View style={{ flex: 1, gap: 4 }}>
                 <Text numberOfLines={1} style={{ fontSize: font.body, fontWeight: '600', color: colors.textStrong }}>{item.title}</Text>
                 <View style={{ flexDirection: 'row', gap: space(3) }}>
-                  <Text style={{ fontSize: 12.5, color: colors.muted }}>{item.openCount} açık</Text>
-                  <Text style={{ fontSize: 12.5, color: colors.ok }}>{item.doneCount} tamamlandı</Text>
-                  {item.overdueCount ? <Text style={{ fontSize: 12.5, color: colors.danger, fontWeight: '600' }}>{item.overdueCount} gecikmiş</Text> : null}
+                  <Text style={{ fontSize: 12.5, color: colors.muted }}>{m.openCount(item.openCount)}</Text>
+                  <Text style={{ fontSize: 12.5, color: colors.ok }}>{m.doneCount(item.doneCount)}</Text>
+                  {item.overdueCount ? <Text style={{ fontSize: 12.5, color: colors.danger, fontWeight: '600' }}>{m.overdueCount(item.overdueCount)}</Text> : null}
                 </View>
               </View>
               <Icon name="chevronRight" size={18} color={colors.faint} />
@@ -69,19 +71,22 @@ export function ProjectsScreen({ accountId, selected, onOpen, version = 0 }: { a
 
 type BoardView = 'kanban' | 'board' | 'gantt' | 'activity' | 'workload';
 
-/** View tabs of the project workspace (web `ProjectWorkspace.vue`: Board, List, Gantt, Activity, Workload). */
-const VIEWS: readonly (readonly [BoardView, string, IconName])[] = [
-  ['kanban', 'Kanban', 'kanban'],
-  ['board', 'Pano', 'list'],
-  ['gantt', 'Gantt', 'gantt'],
-  ['activity', 'Etkinlik', 'activity'],
-  ['workload', 'İş yükü', 'users'],
+const VIEWS: readonly (readonly [BoardView, IconName])[] = [
+  ['kanban', 'kanban'],
+  ['board', 'list'],
+  ['gantt', 'gantt'],
+  ['activity', 'activity'],
+  ['workload', 'users'],
 ];
 
+/** View tabs of the project workspace (web `ProjectWorkspace.vue`: Board, List, Gantt, Activity, Workload); read per render. */
+const viewLabel = (view: BoardView): string =>
+  ({ kanban: m.viewKanban, board: m.viewList, gantt: m.viewGantt, activity: m.viewActivity, workload: m.viewWorkload })[view];
+
 /**
- * Project workspace with the web app's layout: colour-dot title bar with "Proje ayarları" and
- * "+ Görev ekle", view tabs, and the search/filter toolbar shared by Kanban and Pano.
- * Kanban = horizontal columns with cards; Pano = the same tasks as an accessible sectioned list.
+ * Project workspace with the web app's layout: colour-dot title bar with "Project settings" and
+ * "+ Add task", view tabs, and the search/filter toolbar shared by Kanban and the list view.
+ * Kanban = horizontal columns with cards; the `board` view (shown as "List") = the same tasks as an accessible sectioned list.
  */
 export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged, me = '', version = 0 }: { accountId: AccountId; project: { id: number; title: string }; onOpenTask: (cardId: number) => void; onBack?: () => void; onChanged?: () => void; me?: string; version?: number }) {
   const { backend } = useServices();
@@ -191,7 +196,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged,
         {canEdit && view !== 'activity' && view !== 'workload' ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Görev ekle"
+            accessibilityLabel={m.addTask}
             onPress={() => {
               setView((v) => (v === 'gantt' ? 'kanban' : v));
               setAddIn(sections[0]?.stack.id ?? null);
@@ -199,15 +204,15 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged,
             style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, paddingHorizontal: space(3), borderRadius: radius.sm, backgroundColor: pressed ? colors.primaryStrong : colors.primary })}
           >
             <Icon name="plus" size={16} color={colors.primaryText} />
-            {narrow ? null : <Text style={{ color: colors.primaryText, fontWeight: '600' }}>Görev ekle</Text>}
+            {narrow ? null : <Text style={{ color: colors.primaryText, fontWeight: '600' }}>{m.addTask}</Text>}
           </Pressable>
         ) : null}
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} accessibilityRole="tablist" style={{ flexGrow: 0, backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border }} contentContainerStyle={{ paddingHorizontal: space(2) }}>
-        {VIEWS.map(([key, label, icon]) => (
+        {VIEWS.map(([key, icon]) => (
           <Pressable key={key} accessibilityRole="tab" accessibilityState={{ selected: view === key }} onPress={() => setView(key)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space(3), paddingVertical: space(3), borderBottomWidth: 2, borderColor: view === key ? colors.primary : 'transparent' }}>
             <Icon name={icon} size={16} color={view === key ? colors.primary : colors.muted} />
-            <Text style={{ color: view === key ? colors.primary : colors.muted, fontWeight: view === key ? '700' : '500' }}>{label}</Text>
+            <Text style={{ color: view === key ? colors.primary : colors.muted, fontWeight: view === key ? '700' : '500' }}>{viewLabel(key)}</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -250,7 +255,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged,
       ) : null}
       {moving ? (
         <View style={[card, { margin: space(2) }]}>
-          <Text style={{ fontWeight: '700', marginBottom: space(2) }}>“{moving.title}” → hangi listeye?</Text>
+          <Text style={{ fontWeight: '700', marginBottom: space(2) }}>{m.moveWhichList(moving.title)}</Text>
           {sections.map((sec) => {
             const target = moveToColumn(columns, moving.id, sec.stack.id);
             return <Button key={sec.stack.id} kind="secondary" title={sec.title} disabled={!target || sec.stack.id === moving.stackId} onPress={() => target && void moveTo(moving, target)} />;
@@ -276,7 +281,7 @@ export function BoardScreen({ accountId, project, onOpenTask, onBack, onChanged,
               {section.stack.isDone ? <Icon name="checkCircle" size={15} color={colors.ok} /> : null}
             </View>
           )}
-          renderSectionFooter={({ section }) => (section.data.length === 0 ? <Text style={{ paddingHorizontal: space(4), paddingBottom: space(2), color: colors.muted }}>{section.total ? 'Eşleşen görev yok' : t.noTasks}</Text> : null)}
+          renderSectionFooter={({ section }) => (section.data.length === 0 ? <Text style={{ paddingHorizontal: space(4), paddingBottom: space(2), color: colors.muted }}>{section.total ? m.noMatchingTasks : t.noTasks}</Text> : null)}
           renderItem={({ item }) => (
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bg, borderBottomWidth: 1, borderColor: colors.border }}>
               <Pressable accessibilityRole="button" onPress={() => onOpenTask(item.id)} style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', gap: space(3), paddingHorizontal: space(4), paddingVertical: space(3), backgroundColor: pressed ? colors.hover : colors.bg })}>
@@ -370,7 +375,7 @@ export function TaskScreen({ accountId, cardId, onBack, onClose, timeEnabled, go
     setErr(undefined);
     try {
       await backend.timerStart(accountId, cardId, '', uuid());
-      setTimerNote('Zamanlayıcı bu görev için başladı (İşler → Zaman).');
+      setTimerNote(m.timerStarted);
     } catch (e) {
       setErr(e);
     } finally {
@@ -406,7 +411,7 @@ export function TaskScreen({ accountId, cardId, onBack, onClose, timeEnabled, go
             {task.done ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, height: 20, borderRadius: radius.sm, backgroundColor: colors.okSoft }}>
                 <Icon name="checkCircle" size={13} color={colors.ok} />
-                <Text style={{ color: colors.ok, fontSize: 11.5, fontWeight: '600' }}>Tamamlandı · {formatDate(task.done)}</Text>
+                <Text style={{ color: colors.ok, fontSize: 11.5, fontWeight: '600' }}>{m.completedOn(formatDate(task.done))}</Text>
               </View>
             ) : null}
           </View>
@@ -415,11 +420,11 @@ export function TaskScreen({ accountId, cardId, onBack, onClose, timeEnabled, go
           <View style={{ marginTop: space(3), gap: space(2) }}>
             {(
               [
-                ['Atananlar', task.assignees.length ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2) }}><AvatarStack people={task.assignees} size={24} /><Text style={{ color: colors.text, flexShrink: 1 }}>{task.assignees.map((a) => a.displayName).join(', ')}</Text></View> : <Text style={{ color: colors.muted }}>—</Text>],
-                ['Başlangıç', <Text style={{ color: task.startDate ? colors.text : colors.muted }}>{task.startDate ? formatDate(task.startDate) : '—'}</Text>],
-                ['Bitiş', task.dueDate ? <DueBadge due={task.dueDate} done={task.done} /> : <Text style={{ color: colors.muted }}>—</Text>],
-                ['Puan', <Text style={{ color: task.storyPoints != null ? colors.text : colors.muted }}>{task.storyPoints != null ? String(task.storyPoints) : '—'}</Text>],
-                ['Tahmini', <Text style={{ color: task.estimateSec != null ? colors.text : colors.muted }}>{task.estimateSec != null ? `${Math.round((task.estimateSec / 3600) * 100) / 100} sa` : '—'}</Text>],
+                [t.assignees, task.assignees.length ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2) }}><AvatarStack people={task.assignees} size={24} /><Text style={{ color: colors.text, flexShrink: 1 }}>{task.assignees.map((a) => a.displayName).join(', ')}</Text></View> : <Text style={{ color: colors.muted }}>—</Text>],
+                [m.detailStart, <Text style={{ color: task.startDate ? colors.text : colors.muted }}>{task.startDate ? formatDate(task.startDate) : '—'}</Text>],
+                [t.due, task.dueDate ? <DueBadge due={task.dueDate} done={task.done} /> : <Text style={{ color: colors.muted }}>—</Text>],
+                [m.detailPoints, <Text style={{ color: task.storyPoints != null ? colors.text : colors.muted }}>{task.storyPoints != null ? String(task.storyPoints) : '—'}</Text>],
+                [m.detailEstimate, <Text style={{ color: task.estimateSec != null ? colors.text : colors.muted }}>{task.estimateSec != null ? m.hoursAbbr(Math.round((task.estimateSec / 3600) * 100) / 100) : '—'}</Text>],
               ] as const
             ).map(([k, v]) => (
               <View key={k} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 24 }}>
@@ -432,7 +437,7 @@ export function TaskScreen({ accountId, cardId, onBack, onClose, timeEnabled, go
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(3) }}>
             {canEdit && !editing ? <Chip label={t.edit} icon="settings" selected={false} onPress={() => setEditing(true)} /> : null}
             <Chip label={task.done ? t.markUndone : t.markDone} icon="checkCircle" selected={!!task.done} onPress={() => (busy ? undefined : void toggleDone())} />
-            {timeEnabled ? <Chip label="Zamanlayıcı başlat" icon="timer" selected={false} onPress={() => (busy ? undefined : void startTimer())} /> : null}
+            {timeEnabled ? <Chip label={m.startTimer} icon="timer" selected={false} onPress={() => (busy ? undefined : void startTimer())} /> : null}
           </View>
           {timerNote ? <Text style={{ color: colors.ok, marginTop: space(2) }}>{timerNote}</Text> : null}
         </View>

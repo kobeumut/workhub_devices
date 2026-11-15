@@ -1643,15 +1643,23 @@ export const canDrilldown = (w: Pick<DashboardWidget, 'module' | 'kind' | 'avail
 /** Every kind has a CSV form on the server. */
 export const canExportCsv = (w: Pick<DashboardWidget, 'available' | 'kind'>) => w.available && w.kind !== null;
 
-/** Formats a value in its unit (Turkish): count `12`, basis points `%45,5`, seconds `3,5 sa`. */
-export function formatWidgetValue(value: number | null | undefined, unit: WidgetUnit | undefined = 'count'): string {
+/** Abbreviation for hours in the widget value, by primary language subtag (English `h` elsewhere). */
+const HOUR_SUFFIX: Record<string, string> = { tr: 'sa' };
+
+/**
+ * Formats a value in its unit for the given BCP 47 locale (default `en-US`): count `12`, basis
+ * points `45.5%` (Turkish `%45,5`), seconds as hours `3.5 h` (Turkish `3,5 sa`).
+ */
+export function formatWidgetValue(value: number | null | undefined, unit: WidgetUnit | undefined = 'count', locale = 'en-US'): string {
   if (value === null || value === undefined) return '—';
-  if (unit === 'bp') return `%${(value / 100).toLocaleString('tr-TR', { maximumFractionDigits: 1 })}`;
+  if (unit === 'bp') return (value / 10_000).toLocaleString(locale, { style: 'percent', maximumFractionDigits: 1 });
   if (unit === 'seconds') {
+    const suffix = HOUR_SUFFIX[locale.toLowerCase().split(/[-_]/)[0] ?? ''] ?? 'h';
     const h = Math.round((value / 3600) * 10) / 10;
-    return `${value > 0 && h === 0 ? '<0,1' : h.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} sa`;
+    const text = value > 0 && h === 0 ? `<${(0.1).toLocaleString(locale)}` : h.toLocaleString(locale, { maximumFractionDigits: 1 });
+    return `${text} ${suffix}`;
   }
-  return value.toLocaleString('tr-TR');
+  return value.toLocaleString(locale);
 }
 
 export interface BarDatum {

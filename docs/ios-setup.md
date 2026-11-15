@@ -1,8 +1,8 @@
-# iOS kurulumu (macOS + Xcode gerekir)
+# iOS setup (requires macOS + Xcode)
 
-Kod hazır ama bu ortamda **derlenmedi ve doğrulanmadı**: Linux sunucuda iOS derlenemiyor. Aşağıdaki adımlar bir Mac'te bir kez yapılır.
+The code is ready but was **not built or verified** in this environment: iOS cannot be built on a Linux server. The steps below are done once on a Mac.
 
-## 1. Bağımlılıklar
+## 1. Dependencies
 
 ```bash
 cd apps/mobile
@@ -11,35 +11,35 @@ cd ios && bundle install && bundle exec pod install
 open Workhub.xcworkspace
 ```
 
-## 2. Uygulama hedefi (Workhub)
+## 2. App target (Workhub)
 
-1. **Signing & Capabilities:** Team seçin, bundle ID `com.next.workhub`. Şunları ekleyin:
+1. **Signing & Capabilities:** select a Team, bundle ID `com.next.workhub`. Add:
    - **Push Notifications**
    - **App Groups** → `group.com.next.workhub`
    - **Keychain Sharing** → `com.next.workhub.shared`
 
-   `Workhub/Workhub.entitlements` dosyası bu değerlerle hazır; *Code Signing Entitlements* ayarına bu dosyayı gösterin.
-2. Projeye ekleyin (Add Files → Workhub target): `Workhub/Shared/WorkhubShared.swift`, `Workhub/WorkhubNative.swift`, `Workhub/WorkhubNative.m`. Xcode bridging header sorarsa kabul edin.
+   The `Workhub/Workhub.entitlements` file is ready with these values; point the *Code Signing Entitlements* setting to this file.
+2. Add to the project (Add Files → Workhub target): `Workhub/Shared/WorkhubShared.swift`, `Workhub/WorkhubNative.swift`, `Workhub/WorkhubNative.m`. If Xcode asks about a bridging header, accept.
 
-## 3. Notification Service Extension hedefi
+## 3. Notification Service Extension target
 
-1. File → New → Target → **Notification Service Extension**, ad: `NotificationService`. Bundle ID: `com.next.workhub.NotificationService`.
-2. Xcode'un oluşturduğu `NotificationService.swift` ve `Info.plist` dosyalarını silin. Repodaki `NotificationService/NotificationService.swift` ve `NotificationService/Info.plist` dosyalarını hedefe ekleyin.
-3. `Workhub/Shared/WorkhubShared.swift` dosyasını **bu hedefe de** ekleyin (Target Membership: Workhub + NotificationService).
-4. Capabilities: **App Groups** (`group.com.next.workhub`) ve **Keychain Sharing** (`com.next.workhub.shared`). Entitlements dosyası: `NotificationService/NotificationService.entitlements`.
-5. Deployment target uygulamayla aynı olmalı.
+1. File → New → Target → **Notification Service Extension**, name: `NotificationService`. Bundle ID: `com.next.workhub.NotificationService`.
+2. Delete the `NotificationService.swift` and `Info.plist` files that Xcode created. Add the repository's `NotificationService/NotificationService.swift` and `NotificationService/Info.plist` files to the target.
+3. Add the `Workhub/Shared/WorkhubShared.swift` file to **this target too** (Target Membership: Workhub + NotificationService).
+4. Capabilities: **App Groups** (`group.com.next.workhub`) and **Keychain Sharing** (`com.next.workhub.shared`). Entitlements file: `NotificationService/NotificationService.entitlements`.
+5. The deployment target must be the same as the app's.
 
-## 4. Firebase / APNs (sonra eklenecek)
+## 4. Firebase / APNs (added later)
 
-- `GoogleService-Info.plist` dosyasını `Workhub/` altına ve uygulama hedefine ekleyin. Dosya yoksa uygulama çalışır ama push kapalı kalır.
-- APNs anahtarı Firebase'e yüklenir (README → "Push bildirimleri").
-- `config/app-identity.json` → `push.relayBase` alanına relay URL'si yazılır.
-- Önerilen: `com.apple.developer.usernotifications.filtering` yetkisini Apple'dan isteyin. Bu yetkiyle silme/aktivasyon push'ları görünmeden işlenir; yetki yokken kısa bir genel uyarı görünebilir.
+- Add the `GoogleService-Info.plist` file under `Workhub/` and to the app target. Without the file the app runs, but push stays off.
+- The APNs key is uploaded to Firebase ([README → Push notifications](../README.md#push-notifications-firebase-setup-apns--fcm-added-later)).
+- The relay URL is written to `config/app-identity.json` → `push.relayBase`.
+- Recommended: request the `com.apple.developer.usernotifications.filtering` entitlement from Apple. With this entitlement, delete/activation pushes are processed without becoming visible; without it, a short generic alert may appear.
 
-## 5. Doğrulama (fiziksel iPhone)
+## 5. Verification (physical iPhone)
 
-1. Giriş yapın. Hesap ekranında "Web Push hazır" görünmeli.
-2. Uygulamayı tamamen kapatın.
-3. Başka bir kullanıcıdan Talk mesajı gönderin → bildirim gelir; "Yanıtla" ile cevap verin → mesaj karşı tarafta **bir kez** görünür.
-4. Normal Workhub ataması yapın → bildirim gelir ve doğru görevi açar.
-5. Atamayı kaldırın → bildirim merkezden kalkar.
+1. Log in. "Web Push ready" should appear on the Account screen.
+2. Close the app completely.
+3. Send a Talk message from another user → a notification arrives; reply with "Reply" → the message appears on the other side **once**.
+4. Make a normal Workhub assignment → a notification arrives and opens the correct task.
+5. Remove the assignment → the notification disappears from the notification center.

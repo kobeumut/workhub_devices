@@ -142,7 +142,7 @@ dependencies {
     }
 }
 
-// Firebase/FCM config is added later by the owner (README "Push bildirimleri"). Without
+// Firebase/FCM config is added later by the owner (README → "Push notifications"). Without
 // google-services.json the app builds and runs; push simply stays disabled.
 if (file("google-services.json").exists()) {
     apply plugin: "com.google.gms.google-services"

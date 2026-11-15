@@ -10,14 +10,14 @@ const client = (f: ReturnType<typeof scriptedFetch>) =>
 
 test('opening a task from a notification always re-fetches with current ACL', async () => {
   const f = scriptedFetch(
-    json(200, ocs({ id: 5, title: 'Güncel başlık' })),
+    json(200, ocs({ id: 5, title: 'Current title' })),
     json(403, ocs({ error: 'ACTION_FORBIDDEN' }, 403, 'failure')),
     json(403, ocs({ error: 'PROJECTS_DISABLED' }, 403, 'failure')),
     json(404, ocs({ error: 'RESOURCE_NOT_FOUND' }, 404, 'failure')),
   );
   const c = client(f);
   const ok = await openTaskFromNotification(c, 5, true);
-  assert.equal(ok.state === 'ok' && ok.task.title, 'Güncel başlık');
+  assert.equal(ok.state === 'ok' && ok.task.title, 'Current title');
   assert.equal(f.calls[0]!.url, 'https://example.com/nc/ocs/v2.php/apps/workhub/api/v1/tasks/5?format=json');
   assert.deepEqual(await openTaskFromNotification(c, 5, true), { state: 'forbidden' });
   assert.deepEqual(await openTaskFromNotification(c, 5, true), { state: 'feature_off' });
@@ -61,21 +61,21 @@ test('subtask writes carry expectedText; dependency direction is predecessor →
 test('task form → minimal PATCH; labels keep the priority label; validation', async () => {
   const { buildTaskPatch, taskFormOf } = await import('../src/workhub');
   const labels = [
-    { id: 1, title: 'Acil', color: 'f00', priority: 'urgent' as const },
+    { id: 1, title: 'Urgent', color: 'f00', priority: 'urgent' as const },
     { id: 2, title: 'UI', color: '00f', priority: null },
     { id: 3, title: 'API', color: '0f0', priority: null },
   ];
   const task = {
-    id: 5, boardId: 1, stackId: 1, order: 0, title: 'Eski', labels: [1, 2], priority: 'urgent' as const,
+    id: 5, boardId: 1, stackId: 1, order: 0, title: 'Old', labels: [1, 2], priority: 'urgent' as const,
     assignees: [{ type: 'user' as const, id: 'bob', displayName: 'Bob' }, { type: 'group' as const, id: 'staff', displayName: 'Staff' }],
     startDate: null, dueDate: '2026-11-10T00:00:00Z', done: null, archived: false, lastModified: '', url: '', subtasks: { done: 0, total: 0 },
-    description: 'açıklama', estimateSec: 5400, subtaskItems: [], predecessors: [], successors: [],
+    description: 'description text', estimateSec: 5400, subtaskItems: [], predecessors: [], successors: [],
   };
   const form = taskFormOf(task, labels);
-  assert.deepEqual(form, { title: 'Eski', description: 'açıklama', priority: 'urgent', startDate: '', dueDate: '2026-11-10', estimateHours: '1.5', storyPoints: '', labels: [2], assignees: ['bob'] });
+  assert.deepEqual(form, { title: 'Old', description: 'description text', priority: 'urgent', startDate: '', dueDate: '2026-11-10', estimateHours: '1.5', storyPoints: '', labels: [2], assignees: ['bob'] });
   assert.deepEqual(buildTaskPatch(task, labels, form), { patch: {} });
-  assert.deepEqual(buildTaskPatch(task, labels, { ...form, title: ' Yeni ', labels: [3], assignees: ['alice'], dueDate: '', estimateHours: '2,25', priority: null }), {
-    patch: { title: 'Yeni', priority: null, dueDate: null, estimateSec: 8100, labels: [3, 1], assignees: ['alice'] },
+  assert.deepEqual(buildTaskPatch(task, labels, { ...form, title: ' New ', labels: [3], assignees: ['alice'], dueDate: '', estimateHours: '2,25', priority: null }), {
+    patch: { title: 'New', priority: null, dueDate: null, estimateSec: 8100, labels: [3, 1], assignees: ['alice'] },
   });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, title: '  ' }), { error: 'title_empty' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, startDate: '2026-02-30' }), { error: 'date_invalid' });
@@ -92,7 +92,7 @@ test('task form → minimal PATCH; labels keep the priority label; validation', 
 test('project management: bodies, idempotency and client-side guards', async () => {
   const f = scriptedFetch(
     json(201, ocs({ id: 8, title: 'P', color: 'ff0000', openCount: 0, doneCount: 0, overdueCount: 0 })),
-    json(200, ocs({ id: 8, title: 'Yeni' })),
+    json(200, ocs({ id: 8, title: 'New' })),
     json(201, ocs({ id: 7 })),
     json(201, ocs({ id: 25, title: 'Review', order: 3, isDone: false })),
     json(200, ocs({ id: 25, title: 'QA' })),
@@ -104,7 +104,7 @@ test('project management: bodies, idempotency and client-side guards', async () 
   assert.equal(f.calls[0]!.init.method, 'POST');
   assert.deepEqual(JSON.parse(String(f.calls[0]!.init.body)), { title: 'P', color: '#ff0000' });
   assert.equal(headerOf(f.calls[0], 'Idempotency-Key'), 'k-1');
-  await workhubApi.renameProject(c, 8, 'Yeni');
+  await workhubApi.renameProject(c, 8, 'New');
   assert.equal(f.calls[1]!.init.method, 'PATCH');
   assert.ok(f.calls[1]!.url.includes('/api/v1/projects/8?'));
   await workhubApi.addProjectMember(c, 8, { type: 'user', participant: 'bob', edit: true, share: false, manage: false }, 'k-2');

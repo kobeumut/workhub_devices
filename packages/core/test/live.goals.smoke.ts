@@ -57,15 +57,15 @@ async function main() {
   });
 
   await step('targets: number/currency/boolean CRUD; empty range and wrong-type fields → 422', async () => {
-    ids.num = (await goalsApi.addTarget(A, goalId, { type: 'number', title: 'Müşteri', start: '0', target: '20' }))!.id;
-    const cur = await goalsApi.addTarget(A, goalId, { type: 'currency', title: 'Ciro', start: '0', target: '1000.5', currencyCode: 'TRY' });
+    ids.num = (await goalsApi.addTarget(A, goalId, { type: 'number', title: 'Customers', start: '0', target: '20' }))!.id;
+    const cur = await goalsApi.addTarget(A, goalId, { type: 'currency', title: 'Revenue', start: '0', target: '1000.5', currencyCode: 'TRY' });
     ids.cur = cur!.id;
     assert.equal(cur!.scale, 2);
     assert.equal(cur!.target, '1000.50');
-    ids.bool = (await goalsApi.addTarget(A, goalId, { type: 'boolean', title: 'Lansman' }))!.id;
+    ids.bool = (await goalsApi.addTarget(A, goalId, { type: 'boolean', title: 'Launch' }))!.id;
     assert.equal(await code(goalsApi.addTarget(A, goalId, { type: 'number', title: 'x', start: '5', target: '5' })), 'client:INVALID_TARGET_RANGE');
     assert.equal(await code(goalsApi.addTarget(A, goalId, { type: 'number', title: 'x', start: '0', target: '1', currencyCode: 'TRY' })), 'client:INVALID_FIELD');
-    const u = await goalsApi.updateTarget(A, goalId, ids.cur, { version: cur!.version, title: 'Ciro (TL)', target: '2000' });
+    const u = await goalsApi.updateTarget(A, goalId, ids.cur, { version: cur!.version, title: 'Revenue (TRY)', target: '2000' });
     assert.equal(u!.target, '2000.00');
     assert.equal(u!.version, cur!.version + 1);
     assert.equal(await code(goalsApi.updateTarget(A, goalId, ids.bool, { version: 1, target: '3' })), 'client:INVALID_FIELD');
@@ -99,7 +99,7 @@ async function main() {
   await step('card link from the task side: task target is created; card lists the goal; outsider → 404', async () => {
     const p = await workhubApi.createProject(A, `GENE-52 smoke ${stamp}`, undefined, key());
     const board = await workhubApi.board(A, p!.id);
-    const r = await A.request<Task>(`/ocs/v2.php/apps/workhub/api/v1/projects/${p!.id}/tasks`, { method: 'POST', body: { stackId: board.project.stacks[0]!.id, title: 'GENE-52 bağlı kart' }, headers: { 'Idempotency-Key': key() } });
+    const r = await A.request<Task>(`/ocs/v2.php/apps/workhub/api/v1/projects/${p!.id}/tasks`, { method: 'POST', body: { stackId: board.project.stacks[0]!.id, title: 'GENE-52 linked card' }, headers: { 'Idempotency-Key': key() } });
     cardId = r.data!.id;
     const g = await goalsApi.linkCard(A, cardId, goalId);
     const t = g!.targets.find((x) => x.type === 'task')!;

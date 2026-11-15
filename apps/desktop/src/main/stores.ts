@@ -41,11 +41,13 @@ export class SecureStoreUnavailableError extends Error {
  * App passwords encrypted with the OS credential store via Electron safeStorage
  * (macOS Keychain, Windows DPAPI, Linux libsecret/KWallet). If only Chromium's hard-coded
  * "basic_text" key is available on Linux, storing is REFUSED (no silent plain-text fallback),
- * unless the explicit test flag WORKHUB_TEST_INSECURE_STORE=1 is set by an automated test.
+ * unless the explicit test flag WORKHUB_TEST_INSECURE_STORE=1 is set by an automated test. The
+ * flag only counts together with the smoke-test mode (WORKHUB_SMOKE_OUT), so a stray exported
+ * variable can never silently downgrade a normal run to plain-text credentials.
  */
 export function createSecretStore(dir: string): SecretStore & { available(): boolean } {
   const file = new JsonFile(join(dir, 'secrets.json'));
-  const insecureTest = process.env.WORKHUB_TEST_INSECURE_STORE === '1';
+  const insecureTest = process.env.WORKHUB_TEST_INSECURE_STORE === '1' && !!process.env.WORKHUB_SMOKE_OUT;
   const available = () => {
     if (insecureTest) return true;
     if (!safeStorage.isEncryptionAvailable()) return false;

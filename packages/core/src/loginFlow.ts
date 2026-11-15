@@ -37,7 +37,7 @@ const defaultSleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const onAbort = () => {
       clearTimeout(t);
-      reject(new LoginFlowError('cancelled', 'Giriş iptal edildi.'));
+      reject(new LoginFlowError('cancelled', 'Login was cancelled.'));
     };
     const t = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
@@ -57,19 +57,19 @@ export async function startLoginFlow(serverBase: ServerBase, deps: LoginFlowDeps
       credentials: 'omit',
     });
   } catch {
-    throw new LoginFlowError('network', 'Sunucuya ulaşılamadı.');
+    throw new LoginFlowError('network', 'Could not reach the server.');
   }
-  if (!res.ok) throw new LoginFlowError('start_failed', `Giriş başlatılamadı (${res.status}).`);
+  if (!res.ok) throw new LoginFlowError('start_failed', `Could not start login (HTTP ${res.status}).`);
   const json = (await res.json().catch(() => null)) as { login?: unknown; poll?: { token?: unknown; endpoint?: unknown } } | null;
   const loginUrl = json?.login;
   const token = json?.poll?.token;
   const endpoint = json?.poll?.endpoint;
   if (typeof loginUrl !== 'string' || typeof token !== 'string' || typeof endpoint !== 'string' || !token) {
-    throw new LoginFlowError('start_failed', 'Sunucu Login Flow v2 yanıtı geçersiz.');
+    throw new LoginFlowError('start_failed', 'The server returned an invalid Login Flow v2 response.');
   }
   // The poll token is a secret and the login page receives the password: both must stay on this server.
   if (!isWithinServer(serverBase, loginUrl) || !isWithinServer(serverBase, endpoint)) {
-    throw new LoginFlowError('untrusted_endpoint', 'Giriş adresi sunucu dışına yönlendiriyor.');
+    throw new LoginFlowError('untrusted_endpoint', 'The login URL points outside the server.');
   }
   return { loginUrl, pollEndpoint: endpoint, pollToken: token };
 }
@@ -85,11 +85,11 @@ export async function pollLoginFlow(
   const deadline = now() + (opts.maxDurationMs ?? 20 * 60_000); // server-side token lifetime is 20 min
   const interval = opts.intervalMs ?? 2_000;
   if (!isWithinServer(serverBase, start.pollEndpoint)) {
-    throw new LoginFlowError('untrusted_endpoint', 'Giriş adresi sunucu dışına yönlendiriyor.');
+    throw new LoginFlowError('untrusted_endpoint', 'The login URL points outside the server.');
   }
 
   while (now() < deadline) {
-    if (opts.signal?.aborted) throw new LoginFlowError('cancelled', 'Giriş iptal edildi.');
+    if (opts.signal?.aborted) throw new LoginFlowError('cancelled', 'Login was cancelled.');
     let res: Response | undefined;
     try {
       res = await fetchFn(start.pollEndpoint, {
@@ -101,30 +101,30 @@ export async function pollLoginFlow(
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
     } catch {
-      if (opts.signal?.aborted) throw new LoginFlowError('cancelled', 'Giriş iptal edildi.');
+      if (opts.signal?.aborted) throw new LoginFlowError('cancelled', 'Login was cancelled.');
       res = undefined; // transient network error: keep polling until the deadline
     }
     if (res?.status === 200) {
       const json = (await res.json().catch(() => null)) as { server?: unknown; loginName?: unknown; appPassword?: unknown } | null;
       if (typeof json?.server !== 'string' || typeof json.loginName !== 'string' || typeof json.appPassword !== 'string' || !json.appPassword) {
-        throw new LoginFlowError('invalid_result', 'Sunucu giriş sonucu geçersiz.');
+        throw new LoginFlowError('invalid_result', 'The server returned an invalid login result.');
       }
       let returned: ServerBase;
       try {
         returned = normalizeServerUrl(json.server, opts.urlOptions);
       } catch {
-        throw new LoginFlowError('invalid_result', 'Sunucu giriş sonucu geçersiz.');
+        throw new LoginFlowError('invalid_result', 'The server returned an invalid login result.');
       }
       // Never accept credentials bound to another origin than the one the user chose.
       if (!sameOrigin(returned, serverBase)) {
-        throw new LoginFlowError('untrusted_endpoint', 'Sunucu farklı bir adres bildirdi.');
+        throw new LoginFlowError('untrusted_endpoint', 'The server reported a different address.');
       }
       return { serverBase: returned, loginName: json.loginName, appPassword: json.appPassword };
     }
     // 404 = not yet authorised. Anything else is treated as transient until the deadline.
     await sleep(interval, opts.signal);
   }
-  throw new LoginFlowError('expired', 'Giriş süresi doldu, tekrar deneyin.');
+  throw new LoginFlowError('expired', 'Login timed out; please try again.');
 }
 
 /** Revoke the app password on logout (best effort; caller wipes local state regardless). */

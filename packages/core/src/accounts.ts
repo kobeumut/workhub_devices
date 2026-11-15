@@ -43,7 +43,7 @@ export async function addAccount(store: SecretStore, login: LoginResult): Promis
 
 export class MissingCredentialError extends Error {
   constructor() {
-    super('Hesap için kayıtlı kimlik bilgisi yok; tekrar giriş gerekli.');
+    super('No stored credential for this account; sign in again.');
     this.name = 'MissingCredentialError';
   }
 }

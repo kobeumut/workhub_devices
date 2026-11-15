@@ -12,7 +12,9 @@ import { Chip } from './taskEdit';
 import { Tabs } from './time';
 import { SharesEditor } from './projectAdmin';
 import { colors, font, space } from './theme';
-import { describeError, formatDate } from './i18n';
+import { describeError, formatDate, messages, t } from './i18n';
+
+const m = messages.workflows;
 
 /** Hex UUID v4 (Idempotency-Key must pass the IPC key check even without crypto.randomUUID). */
 const uuid = () => {
@@ -23,65 +25,75 @@ const uuid = () => {
 const isDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d);
 const dateTime = (iso: string) => `${formatDate(iso)} ${iso.slice(11, 16)}`;
 
-export const CATEGORY_LABEL: Record<WorkflowCategory, string> = { production: 'Üretim', marketing: 'Pazarlama', custom: 'Özel' };
-const ROLE_LABEL = { view: 'görüntüleme', edit: 'düzenleme', manage: 'yönetme' } as const;
-export const STEP_STATE: Record<WorkflowStepState, string> = {
-  pending_handoff: 'Devir bekliyor',
-  open: 'Açık',
-  done: 'Tamamlandı',
-  failed: 'Başarısız',
-  skipped: 'Atlandı',
+// Label tables are exported by name; their properties are getters so the text is resolved in the
+// active language each time it is read (never frozen at import time).
+export const CATEGORY_LABEL: Record<WorkflowCategory, string> = {
+  get production() { return m.categoryProduction; },
+  get marketing() { return m.categoryMarketing; },
+  get custom() { return m.categoryCustom; },
 };
-export const RUN_STATE: Record<WorkflowRunState, string> = { running: 'Çalışıyor', completed: 'Tamamlandı', cancelled: 'İptal edildi' };
-const STEP_ERROR: Record<string, string> = {
-  ACTION_FORBIDDEN: 'adımı tamamlayan kişinin hedef projede düzenleme yetkisi yok',
-  NO_SESSION: 'tamamlama oturum dışında yapıldı',
-  WORKFLOW_STEP_NO_LIST: 'adımın hedef listesi yok',
-  RESOURCE_NOT_FOUND: 'hedef liste bulunamadı',
+export const STEP_STATE: Record<WorkflowStepState, string> = {
+  get pending_handoff() { return m.stepStatePendingHandoff; },
+  get open() { return m.stepStateOpen; },
+  get done() { return m.stepStateDone; },
+  get failed() { return m.stepStateFailed; },
+  get skipped() { return m.stepStateSkipped; },
+};
+export const RUN_STATE: Record<WorkflowRunState, string> = {
+  get running() { return m.runStateRunning; },
+  get completed() { return m.runStateCompleted; },
+  get cancelled() { return m.runStateCancelled; },
+};
+/** Server step error code → text, resolved when read. */
+const STEP_ERROR: Record<string, () => string> = {
+  ACTION_FORBIDDEN: () => m.stepErrActionForbidden,
+  NO_SESSION: () => m.stepErrNoSession,
+  WORKFLOW_STEP_NO_LIST: () => m.stepErrNoList,
+  RESOURCE_NOT_FOUND: () => m.stepErrListNotFound,
 };
 
 export function workflowError(e: unknown): string {
   if (e instanceof OcsError) {
     switch (e.errorCode) {
       case 'VERSION_CONFLICT':
-        return 'İş akışı bu arada değişti; güncel hali yüklendi. Tekrar deneyin.';
+        return m.errVersionConflict;
       case 'WORKFLOW_EDIT_REQUIRED':
-        return 'Bu iş akışında düzenleme yetkiniz yok.';
+        return m.errEditRequired;
       case 'WORKFLOW_MANAGE_REQUIRED':
-        return 'Bu işlem yalnız iş akışı sahibi veya yönetme yetkisi olanlar içindir.';
+        return m.errManageRequired;
       case 'WORKFLOW_DISABLED':
-        return 'İş akışı devre dışı; çalıştırmadan önce etkinleştirin.';
+        return m.errDisabled;
       case 'WORKFLOW_NO_ENTRY':
-        return 'İş akışının ilk adımı yok; Adımlar bölümünde başlangıcı bir adıma bağlayın.';
+        return m.errNoEntry;
       case 'WORKFLOW_STEP_NO_LIST':
-        return 'Adımın hedef listesi yok; Adımlar bölümünde bir liste seçin.';
+        return m.errStepNoList;
       case 'WORKFLOW_STEP_HANDLED':
-        return 'Bu adım zaten işlendi; liste yenilendi.';
+        return m.errStepHandled;
       case 'WORKFLOW_RUN_FINISHED':
-        return 'Çalıştırma zaten bitti.';
+        return m.errRunFinished;
       case 'WORKFLOW_CARD_BOUND':
-        return 'Bu kart zaten bir iş akışı çalıştırmasına bağlı.';
+        return m.errCardBound;
       case 'WORKFLOW_CARD_DONE':
-        return 'Tamamlanmış bir kartla çalıştırma başlatılamaz.';
+        return m.errCardDone;
       case 'WORKFLOW_ASSIGNEE_NOT_ALLOWED':
-        return 'Bu adım yalnız iş akışında tanımlı kişilerden birine devredilebilir.';
+        return m.errAssigneeNotAllowed;
       case 'WORKFLOW_ASSIGNEE_FIXED':
-        return 'Bu adımın sorumluları sabit; kişi seçilemez.';
+        return m.errAssigneeFixed;
       case 'INVALID_GRAPH':
-        return `Adımlar kaydedilemedi: ${e.ocsMessage ?? 'grafik geçersiz'}`;
+        return e.ocsMessage == null ? m.errInvalidGraphNoDetail : m.errInvalidGraph(e.ocsMessage);
       case 'INVALID_ASSIGNEE':
-        return `Sorumlu hedef projenin üyesi değil: ${e.ocsMessage ?? ''}`.trim();
+        return m.errInvalidAssignee(e.ocsMessage ?? '').trim();
       case 'EMPTY_PATCH':
-        return 'Değişiklik yok.';
+        return m.errEmptyPatch;
       case 'FIELD_REQUIRED':
-        return 'Başlık gerekli.';
+        return m.errFieldRequired;
       case 'ACTION_FORBIDDEN':
-        return 'Bu işlem için yetkiniz yok (önceki adımı bitiren, çalıştırmayı başlatan veya iş akışı düzenleyicisi olmalısınız; kart oluşturmak için hedef projede düzenleme yetkisi gerekir).';
+        return m.errActionForbidden;
       case 'PROJECTS_DISABLED':
-        return 'Projeler modülü sizin için kapalı.';
+        return m.errProjectsDisabled;
     }
-    if (e.kind === 'not_found') return 'İş akışı bulunamadı ya da artık erişiminiz yok.';
-    if (e.kind === 'forbidden') return 'Bu işlem için yetkiniz yok.';
+    if (e.kind === 'not_found') return m.errWorkflowNotFound;
+    if (e.kind === 'forbidden') return t.errForbidden;
     if (e.kind === 'client' && e.ocsMessage) return e.ocsMessage;
   }
   return describeError(e);
@@ -99,7 +111,7 @@ const reloadWorthy = (e: unknown) => e instanceof OcsError && (e.kind === 'confl
 type Tab = 'pending' | 'templates';
 
 /**
- * Native workflows (İşler → İş akışları): steps waiting for the user (hand-off / retry / skip),
+ * Native workflows (Tasks → Workflows): steps waiting for the user (hand-off / retry / skip),
  * templates (create from a blank canvas or a sample, header edit, step editor, enable, share,
  * delete) and runs (start, history, step actions, cancel). Every action is offered only when the
  * server's role/step flags allow it; the server re-checks.
@@ -119,21 +131,21 @@ export function WorkflowsScreen({ accountId, onOpenTask }: { accountId: AccountI
   const pending = list.data?.pendingHandoffs ?? 0;
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }}>
-      <Tabs value={tab} items={[['pending', `Sizi bekleyenler${pending ? ` (${pending})` : ''}`], ['templates', 'Şablonlar']]} onChange={setTab} />
+      <Tabs value={tab} items={[['pending', m.tabPending(pending)], ['templates', m.tabTemplates]]} onChange={setTab} />
       {tab === 'pending' ? <HandoffList accountId={accountId} onChanged={list.reload} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
       {tab === 'templates' ? (
         <>
           {list.error ? <Alert text={workflowError(list.error)} /> : null}
           {list.loading && !list.data ? <Loading /> : null}
-          {list.data && list.data.workflows.length === 0 ? <Text style={{ color: colors.muted, marginBottom: space(3) }}>İş akışı yok.</Text> : null}
+          {list.data && list.data.workflows.length === 0 ? <Text style={{ color: colors.muted, marginBottom: space(3) }}>{m.noWorkflows}</Text> : null}
           {(list.data?.workflows ?? []).map((w) => (
             <View key={w.id} style={card}>
-              <Text style={{ fontWeight: '700', color: colors.text }}>{w.title}{w.enabled ? '' : ' (devre dışı)'}</Text>
+              <Text style={{ fontWeight: '700', color: colors.text }}>{w.enabled ? w.title : m.titleDisabled(w.title)}</Text>
               <Muted>
-                {`${CATEGORY_LABEL[w.category] ?? w.category} · ${w.stepCount} adım · ${w.startMode === 'auto' ? 'otomatik başlar' : 'elle başlar'} · ${w.runs.running} çalışıyor, ${w.runs.completed} tamamlandı`}
+                {m.listMeta(CATEGORY_LABEL[w.category] ?? w.category, w.stepCount, w.startMode === 'auto', w.runs.running, w.runs.completed)}
               </Muted>
-              <Muted>{`${w.owner.displayName} · ${ROLE_LABEL[w.role]} yetkisi`}</Muted>
-              <Button title="Aç" accessibilityLabel={`İş akışı: ${w.title}`} kind="secondary" onPress={() => setOpen(w.id)} />
+              <Muted>{m.listOwner(w.owner.displayName, w.role)}</Muted>
+              <Button title={m.open} accessibilityLabel={m.workflowA11y(w.title)} kind="secondary" onPress={() => setOpen(w.id)} />
             </View>
           ))}
           <CreateWorkflow accountId={accountId} onCreated={(id) => { list.reload(); setOpen(id); }} />
@@ -168,19 +180,19 @@ function CreateWorkflow({ accountId, onCreated }: { accountId: AccountId; onCrea
   };
   return (
     <View style={card}>
-      <H>Yeni iş akışı</H>
-      <TextInput accessibilityLabel="İş akışı başlığı" placeholder="Başlık" placeholderTextColor={colors.muted} value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.title} style={[ui.input, { marginBottom: space(2) }]} />
-      <Text style={ui.label}>Başlangıç noktası</Text>
+      <H>{m.newWorkflow}</H>
+      <TextInput accessibilityLabel={m.workflowTitleA11y} placeholder={m.titlePlaceholder} placeholderTextColor={colors.muted} value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.title} style={[ui.input, { marginBottom: space(2) }]} />
+      <Text style={ui.label}>{m.startingPoint}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
-        <Chip label="Boş tuval" selected={from === 'blank'} onPress={() => setFrom('blank')} />
+        <Chip label={m.blankCanvas} selected={from === 'blank'} onPress={() => setFrom('blank')} />
         {(samples.data?.items ?? []).map((s) => (
-          <Chip key={s.id} label={`Örnek: ${s.title}`} selected={from === s.id} onPress={() => setFrom(s.id)} />
+          <Chip key={s.id} label={m.sampleChip(s.title)} selected={from === s.id} onPress={() => setFrom(s.id)} />
         ))}
       </View>
-      {sample ? <Muted>{`${sample.description} Adımların listesini ve sorumlularını oluşturduktan sonra Adımlar bölümünde seçin.`}</Muted> : null}
+      {sample ? <Muted>{m.sampleHint(sample.description)}</Muted> : null}
       {samples.error ? <Alert text={workflowError(samples.error)} /> : null}
       <Alert text={err} />
-      <Button title="İş akışı oluştur" busy={busy} disabled={!title.trim()} onPress={() => void create()} />
+      <Button title={m.createWorkflow} busy={busy} disabled={!title.trim()} onPress={() => void create()} />
     </View>
   );
 }
@@ -193,11 +205,11 @@ function HandoffList({ accountId, onChanged, onOpenTask }: { accountId: AccountI
   const [msg, setMsg] = useState<{ ok: boolean; text: string }>();
   return (
     <View>
-      <Muted>Tamamladığınız kartlardan doğan devirler, başlattığınız çalıştırmalar ve düzenlediğiniz iş akışlarındaki başarısız adımlar.</Muted>
+      <Muted>{m.handoffIntro}</Muted>
       {msg ? <Alert text={msg.text} ok={msg.ok} /> : null}
       {items.error ? <Alert text={workflowError(items.error)} /> : null}
       {items.loading && !items.data ? <Loading /> : null}
-      {items.data && items.data.length === 0 ? <Text style={{ color: colors.muted, marginVertical: space(3) }}>Sizi bekleyen adım yok.</Text> : null}
+      {items.data && items.data.length === 0 ? <Text style={{ color: colors.muted, marginVertical: space(3) }}>{m.noPending}</Text> : null}
       {(items.data ?? []).map((h) => (
         <HandoffItem
           key={h.step.id}
@@ -222,8 +234,8 @@ function HandoffItem({ accountId, item, onDone, onOpenTask }: { accountId: Accou
       <Text style={{ fontWeight: '700', color: colors.text }}>{`${step.label} · ${run.title}`}</Text>
       <Muted>{`${run.workflowTitle} · ${STEP_STATE[step.state]}`}</Muted>
       {sourceCard ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={`Önceki kart: ${sourceCard.title}`} onPress={onOpenTask ? () => onOpenTask(sourceCard.id) : undefined}>
-          <Text style={{ color: onOpenTask ? colors.primary : colors.muted, marginTop: space(1) }}>{`Önceki kart: ${sourceCard.title}${sourceCard.done ? ' ✓' : ''}`}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={m.previousCard(sourceCard.title)} onPress={onOpenTask ? () => onOpenTask(sourceCard.id) : undefined}>
+          <Text style={{ color: onOpenTask ? colors.primary : colors.muted, marginTop: space(1) }}>{`${m.previousCard(sourceCard.title)}${sourceCard.done ? ' ✓' : ''}`}</Text>
         </Pressable>
       ) : null}
       <StepActions accountId={accountId} runId={run.id} runState="running" step={step} onDone={onDone} />
@@ -254,16 +266,16 @@ function StepActions({ accountId, runId, runState, step, onDone }: { accountId: 
   if (!actions.skip) return null;
   const candidates: WorkflowPerson[] = handoffCandidates(step.node, members.data ?? []);
   const submit = async () => {
-    if (due.trim() && !isDay(due.trim())) return setErr('Bitiş tarihini YYYY-AA-GG biçiminde girin.');
+    if (due.trim() && !isDay(due.trim())) return setErr(m.errDueFormat);
     setBusy(true);
     setErr(undefined);
     try {
       if (mode === 'skip') {
         await backend.workflowSkip(accountId, runId, step.id, reason.trim());
-        onDone(`"${step.label}" atlandı.`, true);
+        onDone(m.skippedDone(step.label), true);
       } else {
         await backend.workflowHandoff(accountId, runId, step.id, buildHandoffInput(step, { assigneeUid: assignee, title, description, dueDate: due }), key);
-        onDone(actions.retry ? `"${step.label}" yeniden denendi; kart oluşturuldu.` : `"${step.label}" devredildi; kart oluşturuldu.`, true);
+        onDone(actions.retry ? m.retriedDone(step.label) : m.handedOverDone(step.label), true);
       }
       setMode('none');
     } catch (e) {
@@ -276,13 +288,13 @@ function StepActions({ accountId, runId, runState, step, onDone }: { accountId: 
   if (mode === 'none') {
     return (
       <View style={{ marginTop: space(1) }}>
-        {step.state === 'failed' ? <Text style={{ color: colors.danger }}>{`Otomatik kart oluşturulamadı: ${STEP_ERROR[step.error ?? ''] ?? step.error ?? 'bilinmeyen hata'}`}</Text> : null}
+        {step.state === 'failed' ? <Text style={{ color: colors.danger }}>{m.autoCardFailed(STEP_ERROR[step.error ?? '']?.() ?? step.error ?? m.stepErrUnknown)}</Text> : null}
         <View style={{ flexDirection: 'row', gap: space(2) }}>
           <View style={{ flex: 1 }}>
-            <Button title={actions.retry ? 'Yeniden dene' : 'Devret'} accessibilityLabel={`${step.label}: ${actions.retry ? 'yeniden dene' : 'devret'}`} onPress={() => setMode('handoff')} />
+            <Button title={actions.retry ? m.retry : m.handOver} accessibilityLabel={actions.retry ? m.retryA11y(step.label) : m.handOverA11y(step.label)} onPress={() => setMode('handoff')} />
           </View>
           <View style={{ flex: 1 }}>
-            <Button title="Atla" accessibilityLabel={`${step.label}: atla`} kind="secondary" onPress={() => setMode('skip')} />
+            <Button title={m.skip} accessibilityLabel={m.skipA11y(step.label)} kind="secondary" onPress={() => setMode('skip')} />
           </View>
         </View>
       </View>
@@ -292,14 +304,14 @@ function StepActions({ accountId, runId, runState, step, onDone }: { accountId: 
     <View style={{ marginTop: space(2) }}>
       {mode === 'skip' ? (
         <>
-          <Field label="Atlama nedeni (isteğe bağlı)" value={reason} onChangeText={setReason} maxLength={WORKFLOW_LIMITS.skipReason} />
-          <Muted>Adım için kart oluşturulmaz; diğer adımlar bittiğinde çalıştırma tamamlanır.</Muted>
+          <Field label={m.skipReason} value={reason} onChangeText={setReason} maxLength={WORKFLOW_LIMITS.skipReason} />
+          <Muted>{m.skipNote}</Muted>
         </>
       ) : (
         <>
           {choose ? (
             <>
-              <Text style={ui.label}>Sorumlu</Text>
+              <Text style={ui.label}>{m.assignee}</Text>
               {members.loading && needMembers ? <Loading /> : null}
               {members.error ? <Alert text={workflowError(members.error)} /> : null}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
@@ -307,28 +319,28 @@ function StepActions({ accountId, runId, runState, step, onDone }: { accountId: 
                   <Chip key={p.uid} label={p.displayName} selected={assignee === p.uid} onPress={() => setAssignee(assignee === p.uid ? null : p.uid)} />
                 ))}
               </View>
-              {!assignee ? <Muted>Kişi seçmezseniz kart atanmadan oluşturulur.</Muted> : null}
+              {!assignee ? <Muted>{m.noAssigneeHint}</Muted> : null}
             </>
           ) : (
-            <Muted>{`Sorumlular sabit: ${step.node?.assignees.map((p) => p.displayName).join(', ') || 'atanmamış'}`}</Muted>
+            <Muted>{m.fixedAssignees(step.node?.assignees.map((p) => p.displayName).join(', ') ?? '')}</Muted>
           )}
-          <Field label="Kart başlığı" value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.stepTitle} />
-          <Field label="Açıklama" value={description} onChangeText={setDescription} maxLength={WORKFLOW_LIMITS.stepDescription} multiline style={{ minHeight: 60, paddingTop: 10 }} />
-          <Field label="Bitiş tarihi (YYYY-AA-GG, boş = yok)" value={due} onChangeText={setDue} maxLength={10} />
+          <Field label={m.cardTitle} value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.stepTitle} />
+          <Field label={m.description} value={description} onChangeText={setDescription} maxLength={WORKFLOW_LIMITS.stepDescription} multiline style={{ minHeight: 60, paddingTop: 10 }} />
+          <Field label={m.dueDateOptional} value={due} onChangeText={setDue} maxLength={10} />
         </>
       )}
       <Alert text={err} />
       <View style={{ flexDirection: 'row', gap: space(2) }}>
         <View style={{ flex: 1 }}>
           <Button
-            title={mode === 'skip' ? 'Evet, atla' : actions.retry ? 'Yeniden dene ve kartı oluştur' : 'Devret ve kartı oluştur'}
+            title={mode === 'skip' ? m.yesSkip : actions.retry ? m.retryAndCreate : m.handOverAndCreate}
             kind={mode === 'skip' ? 'danger' : 'primary'}
             busy={busy}
             onPress={() => void submit()}
           />
         </View>
         <View style={{ flex: 1 }}>
-          <Button title="Vazgeç" kind="secondary" disabled={busy} onPress={() => setMode('none')} />
+          <Button title={m.cancelAction} kind="secondary" disabled={busy} onPress={() => setMode('none')} />
         </View>
       </View>
     </View>
@@ -366,7 +378,7 @@ export function WorkflowDetailView({ accountId, id, onChanged, onClose, onOpenTa
     return (
       <View style={card}>
         <Alert text={workflowError(detail.error)} />
-        <Button title="‹ İş akışları" kind="secondary" onPress={onClose} />
+        <Button title={m.backToWorkflows} kind="secondary" onPress={onClose} />
       </View>
     );
   }
@@ -376,7 +388,7 @@ export function WorkflowDetailView({ accountId, id, onChanged, onClose, onOpenTa
     setBusy(true);
     try {
       await backend.workflowUpdate(accountId, w.id, { version: w.version, enabled: !w.enabled });
-      done(w.enabled ? 'İş akışı devre dışı bırakıldı.' : 'İş akışı etkinleştirildi.');
+      done(w.enabled ? m.workflowDisabledDone : m.workflowEnabledDone);
     } catch (e) {
       failed(e);
     } finally {
@@ -398,27 +410,27 @@ export function WorkflowDetailView({ accountId, id, onChanged, onClose, onOpenTa
   return (
     <View>
       <View style={card}>
-        <Button title="‹ İş akışları" kind="secondary" onPress={onClose} />
+        <Button title={m.backToWorkflows} kind="secondary" onPress={onClose} />
         <Text accessibilityRole="header" style={{ fontSize: font.title, fontWeight: '700', color: colors.text, marginTop: space(2) }}>{w.title}</Text>
-        <Muted>{`${CATEGORY_LABEL[w.category] ?? w.category} · ${w.enabled ? 'etkin' : 'devre dışı'} · ${w.startMode === 'auto' ? 'listeye eklenen yeni kartla otomatik başlar' : 'elle başlar'}`}</Muted>
-        <Muted>{`Sahip: ${w.owner.displayName} · yetkiniz: ${ROLE_LABEL[w.role]} · ${w.stepCount} adım · ${w.runs.running} çalışıyor, ${w.runs.completed} tamamlandı`}</Muted>
+        <Muted>{m.detailMeta(CATEGORY_LABEL[w.category] ?? w.category, w.enabled, w.startMode === 'auto')}</Muted>
+        <Muted>{m.detailOwner(w.owner.displayName, w.role, w.stepCount, w.runs.running, w.runs.completed)}</Muted>
         {w.description ? <Text style={{ color: colors.text, marginTop: space(2) }}>{w.description}</Text> : null}
         <IssueList issues={issues} graph={w.graph} />
         {msg ? <Alert text={msg.text} ok={msg.ok} /> : null}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(2) }}>
-          {actions.start ? <Button title="Çalıştırmayı başlat" onPress={() => toggle('start')} /> : null}
-          <Button title={actions.edit ? 'Adımlar' : 'Adımları göster'} kind="secondary" onPress={() => toggle('steps')} />
-          {actions.edit ? <Button title="Düzenle" kind="secondary" onPress={() => toggle('edit')} /> : null}
-          {actions.edit ? <Button title={w.enabled ? 'Devre dışı bırak' : 'Etkinleştir'} kind="secondary" busy={busy} onPress={() => void toggleEnabled()} /> : null}
-          {actions.share ? <Button title="Paylaş" kind="secondary" onPress={() => toggle('share')} /> : null}
-          {actions.remove ? <Button title="Sil" kind="danger" onPress={() => toggle('delete')} /> : null}
+          {actions.start ? <Button title={m.startRun} onPress={() => toggle('start')} /> : null}
+          <Button title={actions.edit ? m.steps : m.showSteps} kind="secondary" onPress={() => toggle('steps')} />
+          {actions.edit ? <Button title={t.edit} kind="secondary" onPress={() => toggle('edit')} /> : null}
+          {actions.edit ? <Button title={w.enabled ? m.disable : m.enable} kind="secondary" busy={busy} onPress={() => void toggleEnabled()} /> : null}
+          {actions.share ? <Button title={m.share} kind="secondary" onPress={() => toggle('share')} /> : null}
+          {actions.remove ? <Button title={m.deleteAction} kind="danger" onPress={() => toggle('delete')} /> : null}
         </View>
-        {!w.enabled ? <Muted>Devre dışı iş akışı başlatılamaz; çalışanlar devam eder.</Muted> : null}
+        {!w.enabled ? <Muted>{m.disabledNote}</Muted> : null}
       </View>
-      {panel === 'edit' ? <HeaderEditor accountId={accountId} w={w} onSaved={() => done('İş akışı kaydedildi.')} onFailed={failed} onCancel={() => setPanel('none')} /> : null}
+      {panel === 'edit' ? <HeaderEditor accountId={accountId} w={w} onSaved={() => done(m.workflowSaved)} onFailed={failed} onCancel={() => setPanel('none')} /> : null}
       {panel === 'steps' ? (
         actions.edit ? (
-          <GraphEditor key={w.version} accountId={accountId} w={w} onSaved={() => done('Adımlar kaydedildi.', false)} onFailed={failed} onClose={() => setPanel('none')} />
+          <GraphEditor key={w.version} accountId={accountId} w={w} onSaved={() => done(m.stepsSaved, false)} onFailed={failed} onClose={() => setPanel('none')} />
         ) : (
           <GraphView w={w} />
         )
@@ -429,7 +441,7 @@ export function WorkflowDetailView({ accountId, id, onChanged, onClose, onOpenTa
           w={w}
           onCancel={() => setPanel('none')}
           onStarted={(run) => {
-            done(`Çalıştırma başlatıldı: ${run.title}`);
+            done(m.runStarted(run.title));
             setRunsTick((x) => x + 1);
             setOpenRun(run.id);
           }}
@@ -439,13 +451,13 @@ export function WorkflowDetailView({ accountId, id, onChanged, onClose, onOpenTa
       {panel === 'share' ? <SharesEditor accountId={accountId} type="workflow" objectId={w.id} onClose={() => setPanel('none')} /> : null}
       {panel === 'delete' ? (
         <View style={card}>
-          <Text style={{ color: colors.text }}>İş akışı silinsin mi? Çalışan çalıştırmalar iptal edilir; oluşturulan kartlar projelerde kalır.</Text>
+          <Text style={{ color: colors.text }}>{m.deleteConfirm}</Text>
           <View style={{ flexDirection: 'row', gap: space(2) }}>
             <View style={{ flex: 1 }}>
-              <Button title="Evet, sil" kind="danger" busy={busy} onPress={() => void remove()} />
+              <Button title={m.yesDelete} kind="danger" busy={busy} onPress={() => void remove()} />
             </View>
             <View style={{ flex: 1 }}>
-              <Button title="Vazgeç" kind="secondary" onPress={() => setPanel('none')} />
+              <Button title={m.cancelAction} kind="secondary" onPress={() => setPanel('none')} />
             </View>
           </View>
         </View>
@@ -469,25 +481,25 @@ export function WorkflowDetailView({ accountId, id, onChanged, onClose, onOpenTa
 const ISSUE_TEXT = (i: GraphIssue, label: (id: string) => string, edgeLabel: (id: string) => string): string => {
   switch (i.code) {
     case 'no_entry':
-      return 'İlk adım yok: başlangıcı bir adıma bağlayın.';
+      return m.issueNoEntry;
     case 'no_list':
-      return `"${label(i.nodeId)}" adımının hedef listesi yok.`;
+      return m.issueNoList(label(i.nodeId));
     case 'unreachable':
-      return `"${label(i.nodeId)}" adımına başlangıçtan ulaşılamıyor.`;
+      return m.issueUnreachable(label(i.nodeId));
     case 'cycle':
-      return 'Adımlar döngü oluşturuyor; bir çalıştırma bitebilmeli.';
+      return m.issueCycle;
     case 'auto_to_choose':
-      return `${edgeLabel(i.edgeId)}: sorumlusu seçilen adıma yalnız devirle (✋) gidilebilir.`;
+      return m.issueAutoToChoose(edgeLabel(i.edgeId));
     case 'auto_start_no_list':
-      return 'Otomatik başlangıç için yeni kartların ekleneceği listeyi seçin.';
+      return m.issueAutoStartNoList;
     case 'unknown_placeholder':
-      return `"${label(i.nodeId)}": bilinmeyen yer tutucu ${i.names.map((n) => `{{${n}}}`).join(', ')} (kartta olduğu gibi kalır).`;
+      return m.issueUnknownPlaceholder(label(i.nodeId), i.names.map((n) => `{{${n}}}`).join(', '));
     case 'too_many_nodes':
-      return `En fazla ${WORKFLOW_LIMITS.nodes} adım olabilir.`;
+      return m.issueTooManyNodes(WORKFLOW_LIMITS.nodes);
     case 'too_many_edges':
-      return `En fazla ${WORKFLOW_LIMITS.edges} bağlantı olabilir.`;
+      return m.issueTooManyEdges(WORKFLOW_LIMITS.edges);
     case 'empty_label':
-      return 'Her adımın bir adı olmalı.';
+      return m.issueEmptyLabel;
   }
 };
 
@@ -500,7 +512,7 @@ function IssueList({ issues, graph }: { issues: GraphIssue[]; graph: WorkflowGra
   };
   return (
     <View accessibilityRole="summary" style={{ marginTop: space(2), padding: space(2), backgroundColor: '#fff8e1', borderRadius: 8 }}>
-      <Text style={{ fontWeight: '600', color: colors.text }}>{`Sorunlar (${issues.length})`}</Text>
+      <Text style={{ fontWeight: '600', color: colors.text }}>{m.issuesTitle(issues.length)}</Text>
       {issues.map((i, n) => (
         <Text key={n} style={{ color: colors.text, fontSize: font.small }}>{`• ${ISSUE_TEXT(i, label, edgeLabel)}`}</Text>
       ))}
@@ -529,10 +541,10 @@ function HeaderEditor({ accountId, w, onSaved, onFailed, onCancel }: { accountId
   };
   return (
     <View style={card}>
-      <H>İş akışını düzenle</H>
-      <Field label="Başlık" value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.title} />
-      <Field label="Açıklama" value={description} onChangeText={setDescription} maxLength={WORKFLOW_LIMITS.description} multiline style={{ minHeight: 60, paddingTop: 10 }} />
-      <Text style={ui.label}>Kategori</Text>
+      <H>{m.editWorkflow}</H>
+      <Field label={m.titlePlaceholder} value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.title} />
+      <Field label={m.description} value={description} onChangeText={setDescription} maxLength={WORKFLOW_LIMITS.description} multiline style={{ minHeight: 60, paddingTop: 10 }} />
+      <Text style={ui.label}>{m.category}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
         {WORKFLOW_CATEGORIES.map((c) => (
           <Chip key={c} label={CATEGORY_LABEL[c]} selected={category === c} onPress={() => setCategory(c)} />
@@ -540,10 +552,10 @@ function HeaderEditor({ accountId, w, onSaved, onFailed, onCancel }: { accountId
       </View>
       <View style={{ flexDirection: 'row', gap: space(2) }}>
         <View style={{ flex: 1 }}>
-          <Button title="Kaydet" busy={busy} disabled={!title.trim()} onPress={() => void save()} />
+          <Button title={t.save} busy={busy} disabled={!title.trim()} onPress={() => void save()} />
         </View>
         <View style={{ flex: 1 }}>
-          <Button title="Vazgeç" kind="secondary" disabled={busy} onPress={onCancel} />
+          <Button title={m.cancelAction} kind="secondary" disabled={busy} onPress={onCancel} />
         </View>
       </View>
     </View>
@@ -565,7 +577,7 @@ const boardOfStack = (boards: Map<number, BoardInfo>, stackId: number | null) =>
 };
 const listLabel = (boards: Map<number, BoardInfo>, stackId: number | null) => {
   const id = boardOfStack(boards, stackId);
-  if (id === null) return stackId === null ? 'Liste seçilmedi' : `Liste #${stackId} (erişilemiyor)`;
+  if (id === null) return stackId === null ? m.listNone : m.listInaccessible(stackId);
   const b = boards.get(id)!;
   return `${b.title} / ${b.stacks.find((s) => s.id === stackId)!.title}`;
 };
@@ -576,14 +588,14 @@ function GraphView({ w }: { w: WorkflowDetail }) {
   const label = (id: string) => w.graph.nodes.find((n) => n.id === id)?.label ?? id;
   return (
     <View style={card}>
-      <H>Adımlar</H>
-      <Muted>{`Başlangıç: ${w.graph.start.mode === 'auto' ? `otomatik (${listLabel(boards, w.graph.start.stackId)})` : 'elle'} → ${w.graph.start.nodeId ? label(w.graph.start.nodeId) : 'ilk adım yok'}`}</Muted>
+      <H>{m.steps}</H>
+      <Muted>{m.viewStart(w.graph.start.mode === 'auto', listLabel(boards, w.graph.start.stackId), w.graph.start.nodeId ? label(w.graph.start.nodeId) : null)}</Muted>
       {w.graph.nodes.map((n) => (
         <View key={n.id} style={{ marginTop: space(2) }}>
           <Text style={{ fontWeight: '600', color: colors.text }}>{n.label}</Text>
-          <Muted>{`${listLabel(boards, n.stackId)} · ${n.assigneeMode === 'choose' ? 'sorumluyu önceki kişi seçer' : `sabit: ${n.assignees.join(', ') || 'atanmamış'}`}${n.dueDays !== null ? ` · ${n.dueDays} gün` : ''}`}</Muted>
+          <Muted>{m.viewNode(listLabel(boards, n.stackId), n.assigneeMode === 'choose', n.assignees.join(', '), n.dueDays)}</Muted>
           {w.graph.edges.filter((e) => e.from === n.id).map((e) => (
-            <Muted key={e.id}>{`  → ${label(e.to)} (${e.mode === 'auto' ? '⚡ otomatik' : '✋ devir'})`}</Muted>
+            <Muted key={e.id}>{`  ${m.viewEdge(label(e.to), e.mode === 'auto')}`}</Muted>
           ))}
         </View>
       ))}
@@ -608,7 +620,7 @@ function GraphEditor({ accountId, w, onSaved, onFailed, onClose }: { accountId: 
   const loadBoard = async (boardId: number) => {
     if (boards.has(boardId)) return;
     const b = await backend.board(accountId, boardId);
-    setBoards((m) => new Map(m).set(boardId, { title: b.project.board.title, stacks: b.project.stacks.map((s) => ({ id: s.id, title: s.title })), members: b.project.members }));
+    setBoards((prev) => new Map(prev).set(boardId, { title: b.project.board.title, stacks: b.project.stacks.map((s) => ({ id: s.id, title: s.title })), members: b.project.members }));
   };
   const save = async () => {
     setBusy(true);
@@ -625,33 +637,33 @@ function GraphEditor({ accountId, w, onSaved, onFailed, onClose }: { accountId: 
   const node = g.nodes.find((n) => n.id === selected) ?? null;
   return (
     <View style={card}>
-      <H>Adımlar</H>
+      <H>{m.steps}</H>
       <IssueList issues={issues} graph={g} />
-      <Text style={[ui.label, { marginTop: space(2) }]}>Başlangıç</Text>
+      <Text style={[ui.label, { marginTop: space(2) }]}>{m.start}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
-        <Chip label="Elle başlar" selected={g.start.mode === 'manual'} onPress={() => setG({ ...g, start: { ...g.start, mode: 'manual' } })} />
-        <Chip label="Listeye eklenen yeni kartla" selected={g.start.mode === 'auto'} onPress={() => setG({ ...g, start: { ...g.start, mode: 'auto' } })} />
+        <Chip label={m.startManual} selected={g.start.mode === 'manual'} onPress={() => setG({ ...g, start: { ...g.start, mode: 'manual' } })} />
+        <Chip label={m.startAuto} selected={g.start.mode === 'auto'} onPress={() => setG({ ...g, start: { ...g.start, mode: 'auto' } })} />
       </View>
       {g.start.mode === 'auto' ? (
-        <ListPicker accountId={accountId} label="Tetikleyen liste" boards={boards} stackId={g.start.stackId} loadBoard={loadBoard} onChange={(stackId) => setG({ ...g, start: { ...g.start, stackId } })} />
+        <ListPicker accountId={accountId} label={m.triggerList} boards={boards} stackId={g.start.stackId} loadBoard={loadBoard} onChange={(stackId) => setG({ ...g, start: { ...g.start, stackId } })} />
       ) : null}
-      <Text style={[ui.label, { marginTop: space(2) }]}>İlk adım</Text>
+      <Text style={[ui.label, { marginTop: space(2) }]}>{m.firstStep}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
         {g.nodes.map((n) => (
-          <Chip key={n.id} label={`İlk adım: ${n.label}`} selected={g.start.nodeId === n.id} onPress={() => setG({ ...g, start: { ...g.start, nodeId: n.id } })} />
+          <Chip key={n.id} label={m.firstStepChip(n.label)} selected={g.start.nodeId === n.id} onPress={() => setG({ ...g, start: { ...g.start, nodeId: n.id } })} />
         ))}
       </View>
-      <Text style={[ui.label, { marginTop: space(3) }]}>Adım seç</Text>
+      <Text style={[ui.label, { marginTop: space(3) }]}>{m.pickStep}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
         {g.nodes.map((n) => (
-          <Chip key={n.id} label={`Adım: ${n.label || n.id}`} selected={selected === n.id} onPress={() => setSelected(n.id)} />
+          <Chip key={n.id} label={m.stepChip(n.label || n.id)} selected={selected === n.id} onPress={() => setSelected(n.id)} />
         ))}
         {g.nodes.length < WORKFLOW_LIMITS.nodes ? (
           <Chip
-            label="+ Adım ekle"
+            label={m.addStep}
             selected={false}
             onPress={() => {
-              const r = addNode(g, `Adım ${g.nodes.length + 1}`);
+              const r = addNode(g, m.newStepName(g.nodes.length + 1));
               setG(r.graph);
               setSelected(r.nodeId);
             }}
@@ -675,10 +687,10 @@ function GraphEditor({ accountId, w, onSaved, onFailed, onClose }: { accountId: 
       <Alert text={note} />
       <View style={{ flexDirection: 'row', gap: space(2), marginTop: space(2) }}>
         <View style={{ flex: 1 }}>
-          <Button title="Adımları kaydet" busy={busy} disabled={!dirty || hasBlockingIssue(issues)} onPress={() => void save()} />
+          <Button title={m.saveSteps} busy={busy} disabled={!dirty || hasBlockingIssue(issues)} onPress={() => void save()} />
         </View>
         <View style={{ flex: 1 }}>
-          <Button title={dirty ? 'Değişiklikleri at' : 'Kapat'} kind="secondary" disabled={busy} onPress={dirty ? () => setG(w.graph) : onClose} />
+          <Button title={dirty ? m.discardChanges : t.close} kind="secondary" disabled={busy} onPress={dirty ? () => setG(w.graph) : onClose} />
         </View>
       </View>
     </View>
@@ -712,21 +724,21 @@ function ListPicker({ accountId, label, boards, stackId, loadBoard, onChange }: 
     <View style={{ marginTop: space(2) }}>
       <Text style={ui.label}>{label}</Text>
       <Text style={{ color: stackId === null ? colors.danger : colors.text }}>{listLabel(boards, stackId)}</Text>
-      <Button title={open ? 'Liste seçimini kapat' : 'Liste seç'} accessibilityLabel={`${label}: liste seç`} kind="secondary" onPress={() => setOpen(!open)} />
+      <Button title={open ? m.closeListPicker : m.pickList} accessibilityLabel={m.pickListA11y(label)} kind="secondary" onPress={() => setOpen(!open)} />
       {open ? (
         <View>
           {projects.loading && !projects.data ? <Loading /> : null}
           {projects.error ? <Alert text={workflowError(projects.error)} /> : null}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
             {(projects.data ?? []).map((p) => (
-              <Chip key={p.id} label={`Proje: ${p.title}`} selected={boardId === p.id} onPress={() => void pickBoard(p.id)} />
+              <Chip key={p.id} label={m.projectChip(p.title)} selected={boardId === p.id} onPress={() => void pickBoard(p.id)} />
             ))}
           </View>
           <Alert text={err} />
           {b ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
               {b.stacks.map((s) => (
-                <Chip key={s.id} label={`Liste: ${s.title}`} selected={stackId === s.id} onPress={() => { onChange(s.id); setOpen(false); }} />
+                <Chip key={s.id} label={m.listChip(s.title)} selected={stackId === s.id} onPress={() => { onChange(s.id); setOpen(false); }} />
               ))}
             </View>
           ) : null}
@@ -744,7 +756,7 @@ function NodeEditor({ accountId, g, node, boards, loadBoard, placeholders, onGra
   loadBoard: (boardId: number) => Promise<void>;
   placeholders: string[];
   onGraph: (g: WorkflowGraph) => void;
-  onNote: (t: string | undefined) => void;
+  onNote: (text: string | undefined) => void;
   onRemoved: () => void;
 }) {
   const set = (patch: Partial<Omit<WorkflowNode, 'id' | 'type'>>) => onGraph(updateNode(g, node.id, patch));
@@ -757,37 +769,37 @@ function NodeEditor({ accountId, g, node, boards, loadBoard, placeholders, onGra
   const link = (to: string) => {
     const target = g.nodes.find((n) => n.id === to)!;
     const next = connect(g, node.id, to, target.assigneeMode === 'choose' ? 'manual' : 'auto');
-    if (!next) return onNote(`"${node.label}" → "${target.label}" bağlanamaz: döngü oluşur ya da bağlantı sınırı doldu.`);
+    if (!next) return onNote(m.linkBlocked(node.label, target.label));
     onNote(undefined);
     onGraph(next);
   };
   return (
     <View style={{ marginTop: space(3), paddingTop: space(2), borderTopWidth: 1, borderColor: colors.border }}>
-      <Field label="Adım adı" value={node.label} onChangeText={(v) => set({ label: v })} maxLength={WORKFLOW_LIMITS.label} />
-      <ListPicker accountId={accountId} label="Kartın oluşturulacağı liste" boards={boards} stackId={node.stackId} loadBoard={loadBoard} onChange={(stackId) => set({ stackId, assignees: [] })} />
-      <Text style={[ui.label, { marginTop: space(2) }]}>Sorumlu</Text>
+      <Field label={m.stepName} value={node.label} onChangeText={(v) => set({ label: v })} maxLength={WORKFLOW_LIMITS.label} />
+      <ListPicker accountId={accountId} label={m.cardList} boards={boards} stackId={node.stackId} loadBoard={loadBoard} onChange={(stackId) => set({ stackId, assignees: [] })} />
+      <Text style={[ui.label, { marginTop: space(2) }]}>{m.assignee}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
-        <Chip label="Sabit kişiler" selected={node.assigneeMode === 'fixed'} onPress={() => set({ assigneeMode: 'fixed' })} />
-        <Chip label="Önceki kişi seçer" selected={node.assigneeMode === 'choose'} onPress={() => set({ assigneeMode: 'choose' })} />
+        <Chip label={m.assigneeFixed} selected={node.assigneeMode === 'fixed'} onPress={() => set({ assigneeMode: 'fixed' })} />
+        <Chip label={m.assigneeChoose} selected={node.assigneeMode === 'choose'} onPress={() => set({ assigneeMode: 'choose' })} />
       </View>
-      <Muted>{node.assigneeMode === 'choose' ? 'İşaretlediğiniz kişilerle sınırlanır; hiçbiri işaretli değilse proje üyelerinden biri seçilir.' : 'Kart her zaman işaretli kişilere atanır.'}</Muted>
-      {boardId === null ? <Muted>Kişileri seçmek için önce listeyi seçin.</Muted> : null}
+      <Muted>{node.assigneeMode === 'choose' ? m.assigneeChooseHint : m.assigneeFixedHint}</Muted>
+      {boardId === null ? <Muted>{m.pickListFirst}</Muted> : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(1) }}>
-        {members.map((m) => (
+        {members.map((person) => (
           <Chip
-            key={m.uid}
-            label={m.displayName}
-            selected={node.assignees.includes(m.uid)}
-            disabled={!node.assignees.includes(m.uid) && node.assignees.length >= WORKFLOW_LIMITS.assignees}
-            onPress={() => set({ assignees: node.assignees.includes(m.uid) ? node.assignees.filter((u) => u !== m.uid) : [...node.assignees, m.uid] })}
+            key={person.uid}
+            label={person.displayName}
+            selected={node.assignees.includes(person.uid)}
+            disabled={!node.assignees.includes(person.uid) && node.assignees.length >= WORKFLOW_LIMITS.assignees}
+            onPress={() => set({ assignees: node.assignees.includes(person.uid) ? node.assignees.filter((u) => u !== person.uid) : [...node.assignees, person.uid] })}
           />
         ))}
-        {node.assignees.filter((u) => !members.some((m) => m.uid === u)).map((u) => (
-          <Chip key={u} label={`${u} (proje üyesi değil)`} selected onPress={() => set({ assignees: node.assignees.filter((x) => x !== u) })} />
+        {node.assignees.filter((u) => !members.some((person) => person.uid === u)).map((u) => (
+          <Chip key={u} label={m.notMember(u)} selected onPress={() => set({ assignees: node.assignees.filter((x) => x !== u) })} />
         ))}
       </View>
       <Field
-        label={`Kaç gün sonra bitsin (0–${WORKFLOW_LIMITS.dueDays}, boş = bitiş yok)`}
+        label={m.dueDaysField(WORKFLOW_LIMITS.dueDays)}
         value={dueText}
         keyboardType="number-pad"
         maxLength={3}
@@ -798,24 +810,24 @@ function NodeEditor({ accountId, g, node, boards, loadBoard, placeholders, onGra
           else if (Number.isInteger(n) && n >= 0 && n <= WORKFLOW_LIMITS.dueDays) set({ dueDays: n });
         }}
       />
-      <Field label="Kart başlığı şablonu" value={node.title} onChangeText={(v) => set({ title: v })} maxLength={WORKFLOW_LIMITS.stepTitle} />
+      <Field label={m.cardTitleTemplate} value={node.title} onChangeText={(v) => set({ title: v })} maxLength={WORKFLOW_LIMITS.stepTitle} />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(1), marginBottom: space(2) }}>
         {placeholders.map((p) => (
           <Chip key={p} label={`{{${p}}}`} selected={false} onPress={() => set({ title: `${node.title}${node.title && !node.title.endsWith(' ') ? ' ' : ''}{{${p}}}`.slice(0, WORKFLOW_LIMITS.stepTitle) })} />
         ))}
       </View>
-      <Field label="Kart açıklaması şablonu" value={node.description} onChangeText={(v) => set({ description: v })} maxLength={WORKFLOW_LIMITS.stepDescription} multiline style={{ minHeight: 60, paddingTop: 10 }} />
-      <Text style={ui.label}>Sonraki adımlar</Text>
-      {outgoing.length === 0 ? <Muted>Bağlantı yok: bu adım bitince çalıştırma (başka açık adım yoksa) tamamlanır.</Muted> : null}
+      <Field label={m.cardDescriptionTemplate} value={node.description} onChangeText={(v) => set({ description: v })} maxLength={WORKFLOW_LIMITS.stepDescription} multiline style={{ minHeight: 60, paddingTop: 10 }} />
+      <Text style={ui.label}>{m.nextSteps}</Text>
+      {outgoing.length === 0 ? <Muted>{m.noConnections}</Muted> : null}
       {outgoing.map((e) => {
         const choose = g.nodes.find((n) => n.id === e.to)?.assigneeMode === 'choose';
         return (
           <View key={e.id} style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(2), marginBottom: space(1) }}>
             <Text style={{ color: colors.text }}>{`→ ${label(e.to)}`}</Text>
-            <Chip label="⚡ Otomatik" selected={e.mode === 'auto'} disabled={choose} onPress={() => { const n = setEdgeMode(g, e.id, 'auto'); if (n) onGraph(n); }} />
-            <Chip label="✋ Devir" selected={e.mode === 'manual'} onPress={() => { const n = setEdgeMode(g, e.id, 'manual'); if (n) onGraph(n); }} />
-            <Pressable accessibilityRole="button" accessibilityLabel={`Bağlantıyı kaldır: ${node.label} → ${label(e.to)}`} onPress={() => onGraph(disconnect(g, e.id))} style={{ padding: space(1) }}>
-              <Text style={{ color: colors.danger }}>Kaldır</Text>
+            <Chip label={m.edgeAuto} selected={e.mode === 'auto'} disabled={choose} onPress={() => { const n = setEdgeMode(g, e.id, 'auto'); if (n) onGraph(n); }} />
+            <Chip label={m.edgeManual} selected={e.mode === 'manual'} onPress={() => { const n = setEdgeMode(g, e.id, 'manual'); if (n) onGraph(n); }} />
+            <Pressable accessibilityRole="button" accessibilityLabel={m.removeLinkA11y(node.label, label(e.to))} onPress={() => onGraph(disconnect(g, e.id))} style={{ padding: space(1) }}>
+              <Text style={{ color: colors.danger }}>{m.removeLink}</Text>
             </Pressable>
           </View>
         );
@@ -823,12 +835,12 @@ function NodeEditor({ accountId, g, node, boards, loadBoard, placeholders, onGra
       {targets.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(1) }}>
           {targets.map((n) => (
-            <Chip key={n.id} label={`Şuna bağla: ${n.label}`} selected={false} onPress={() => link(n.id)} />
+            <Chip key={n.id} label={m.connectTo(n.label)} selected={false} onPress={() => link(n.id)} />
           ))}
         </View>
       ) : null}
-      <Muted>⚡ otomatik: önceki kart tamamlanınca kart hemen, tamamlayan kişi adına açılır. ✋ devir: tamamlayan kişi sorumluyu seçer ve kartı açar.</Muted>
-      <Button title="Adımı sil" accessibilityLabel={`Adımı sil: ${node.label}`} kind="danger" onPress={() => { onGraph(removeNode(g, node.id)); onRemoved(); }} />
+      <Muted>{m.edgeHelp}</Muted>
+      <Button title={m.deleteStep} accessibilityLabel={m.deleteStepA11y(node.label)} kind="danger" onPress={() => { onGraph(removeNode(g, node.id)); onRemoved(); }} />
     </View>
   );
 }
@@ -850,8 +862,8 @@ function StartRunForm({ accountId, w, onStarted, onFailed, onCancel }: { account
   const [err, setErr] = useState<string>();
   const start = async () => {
     const cardId = cardText.trim() ? Number(cardText.trim().replace(/^#/, '')) : undefined;
-    if (cardId !== undefined && !(Number.isInteger(cardId) && cardId > 0)) return setErr('Kart numarası pozitif bir tam sayı olmalı.');
-    if (due.trim() && !isDay(due.trim())) return setErr('Bitiş tarihini YYYY-AA-GG biçiminde girin.');
+    if (cardId !== undefined && !(Number.isInteger(cardId) && cardId > 0)) return setErr(m.errCardNumber);
+    if (due.trim() && !isDay(due.trim())) return setErr(m.errDueFormat);
     setBusy(true);
     setErr(undefined);
     try {
@@ -878,15 +890,15 @@ function StartRunForm({ accountId, w, onStarted, onFailed, onCancel }: { account
   const binding = cardText.trim() !== '';
   return (
     <View style={card}>
-      <H>Çalıştırmayı başlat</H>
-      <Muted>{`İlk adım: ${entry?.label ?? '—'}${entry ? ` (${entry.assigneeMode === 'choose' ? 'sorumluyu siz seçin' : `sabit: ${entry.assignees.join(', ') || 'atanmamış'}`})` : ''}`}</Muted>
-      <Field label="Çalıştırma başlığı (boş = iş akışı başlığı)" value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.title} />
-      <Field label="Mevcut kartı bağla (kart no, isteğe bağlı)" value={cardText} onChangeText={setCardText} keyboardType="number-pad" maxLength={12} />
-      {binding ? <Muted>Yeni kart açılmaz; açık ve başka çalıştırmaya bağlı olmayan kart ilk adım olur.</Muted> : (
+      <H>{m.startRun}</H>
+      <Muted>{entry ? m.startFirstStep(entry.label, entry.assigneeMode === 'choose', entry.assignees.join(', ')) : m.startFirstStepNone}</Muted>
+      <Field label={m.runTitleField} value={title} onChangeText={setTitle} maxLength={WORKFLOW_LIMITS.title} />
+      <Field label={m.bindCardField} value={cardText} onChangeText={setCardText} keyboardType="number-pad" maxLength={12} />
+      {binding ? <Muted>{m.bindNote}</Muted> : (
         <>
           {candidates.length ? (
             <>
-              <Text style={ui.label}>Sorumlu</Text>
+              <Text style={ui.label}>{m.assignee}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(2) }}>
                 {candidates.map((p) => (
                   <Chip key={p.uid} label={p.displayName} selected={assignee === p.uid} onPress={() => setAssignee(assignee === p.uid ? null : p.uid)} />
@@ -894,17 +906,17 @@ function StartRunForm({ accountId, w, onStarted, onFailed, onCancel }: { account
               </View>
             </>
           ) : null}
-          <Field label="Açıklama (boş = şablon)" value={description} onChangeText={setDescription} maxLength={WORKFLOW_LIMITS.description} multiline style={{ minHeight: 60, paddingTop: 10 }} />
-          <Field label="Bitiş tarihi (YYYY-AA-GG, boş = şablon)" value={due} onChangeText={setDue} maxLength={10} />
+          <Field label={m.descriptionTemplateField} value={description} onChangeText={setDescription} maxLength={WORKFLOW_LIMITS.description} multiline style={{ minHeight: 60, paddingTop: 10 }} />
+          <Field label={m.dueTemplateField} value={due} onChangeText={setDue} maxLength={10} />
         </>
       )}
       <Alert text={err} />
       <View style={{ flexDirection: 'row', gap: space(2) }}>
         <View style={{ flex: 1 }}>
-          <Button title="Başlat" busy={busy} onPress={() => void start()} />
+          <Button title={m.startButton} busy={busy} onPress={() => void start()} />
         </View>
         <View style={{ flex: 1 }}>
-          <Button title="Vazgeç" kind="secondary" disabled={busy} onPress={onCancel} />
+          <Button title={m.cancelAction} kind="secondary" disabled={busy} onPress={onCancel} />
         </View>
       </View>
     </View>
@@ -925,18 +937,18 @@ function RunList({ accountId, workflowId, open, onOpen, onChanged, onOpenTask }:
   const runs = useAsync(() => backend.workflowRuns(accountId, workflowId), [accountId, workflowId]);
   return (
     <View style={card}>
-      <H>Çalıştırmalar</H>
-      <Muted>Son 50 çalıştırma, en yenisi üstte.</Muted>
+      <H>{m.runs}</H>
+      <Muted>{m.runsHint}</Muted>
       {runs.error ? <Alert text={workflowError(runs.error)} /> : null}
       {runs.loading && !runs.data ? <Loading /> : null}
-      {runs.data && runs.data.length === 0 ? <Text style={{ color: colors.muted, marginTop: space(2) }}>Henüz çalıştırma yok.</Text> : null}
+      {runs.data && runs.data.length === 0 ? <Text style={{ color: colors.muted, marginTop: space(2) }}>{m.noRuns}</Text> : null}
       {(runs.data ?? []).map((r) => {
         const p = runProgress(r);
         return (
           <View key={r.id} style={{ borderTopWidth: 1, borderColor: colors.border, paddingTop: space(2), marginTop: space(2) }}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Çalıştırma: ${r.title}, ${RUN_STATE[r.state]}`} accessibilityState={{ expanded: open === r.id }} onPress={() => onOpen(open === r.id ? null : r.id)}>
+            <Pressable accessibilityRole="button" accessibilityLabel={m.runA11y(r.title, RUN_STATE[r.state])} accessibilityState={{ expanded: open === r.id }} onPress={() => onOpen(open === r.id ? null : r.id)}>
               <Text style={{ fontWeight: '600', color: colors.text }}>{`${open === r.id ? '▾' : '▸'} ${r.title}`}</Text>
-              <Muted>{`${RUN_STATE[r.state]} · ${r.startedBy.displayName} · ${dateTime(r.createdAt)} · ${p.done}/${p.total} tamamlandı${p.pending_handoff ? ` · ${p.pending_handoff} devir bekliyor` : ''}${p.failed ? ` · ${p.failed} başarısız` : ''}`}</Muted>
+              <Muted>{m.runLine(RUN_STATE[r.state], r.startedBy.displayName, dateTime(r.createdAt), p.done, p.total, p.pending_handoff, p.failed)}</Muted>
             </Pressable>
             {open === r.id ? (
               <RunDetail
@@ -975,7 +987,7 @@ function RunDetail({ accountId, runId, onChanged, onOpenTask }: { accountId: Acc
     try {
       await backend.workflowCancel(accountId, run.id, run.version);
       setConfirm(false);
-      changed('Çalıştırma iptal edildi; açık adımlar atlandı, kartlar projelerde kaldı.', true);
+      changed(m.runCancelled, true);
     } catch (e) {
       changed(workflowError(e), false);
     } finally {
@@ -984,25 +996,25 @@ function RunDetail({ accountId, runId, onChanged, onOpenTask }: { accountId: Acc
   };
   return (
     <View style={{ marginTop: space(2) }}>
-      {run.finishedAt ? <Muted>{`Bitiş: ${dateTime(run.finishedAt)}`}</Muted> : null}
+      {run.finishedAt ? <Muted>{m.finishedAt(dateTime(run.finishedAt))}</Muted> : null}
       {msg ? <Alert text={msg.text} ok={msg.ok} /> : null}
       {run.steps.map((s) => (
         <View key={s.id} style={{ paddingVertical: space(2), borderBottomWidth: 1, borderColor: colors.border }}>
           <Text style={{ color: colors.text, fontWeight: '600' }}>{`${s.label} — ${STEP_STATE[s.state]}`}</Text>
           <Muted>
             {[
-              s.assignee ? `Sorumlu: ${s.assignee.displayName}` : null,
-              s.doneBy ? `Tamamlayan: ${s.doneBy.displayName}` : null,
+              s.assignee ? m.stepAssignee(s.assignee.displayName) : null,
+              s.doneBy ? m.stepDoneBy(s.doneBy.displayName) : null,
               s.doneAt ? dateTime(s.doneAt) : null,
             ].filter(Boolean).join(' · ') || ' '}
           </Muted>
           {s.cardId !== null ? (
             s.card ? (
-              <Pressable accessibilityRole="button" accessibilityLabel={`Kart: ${s.card.title}. Görevi aç`} onPress={onOpenTask ? () => onOpenTask(s.card!.id) : undefined}>
+              <Pressable accessibilityRole="button" accessibilityLabel={m.cardA11y(s.card.title)} onPress={onOpenTask ? () => onOpenTask(s.card!.id) : undefined}>
                 <Text style={{ color: onOpenTask ? colors.primary : colors.text }}>{`${s.card.title} · ${s.card.boardTitle} / ${s.card.stackTitle}${s.card.done ? ' ✓' : ''}`}</Text>
               </Pressable>
             ) : (
-              <Muted>{`Kart #${s.cardId} (erişiminiz yok)`}</Muted>
+              <Muted>{m.cardNoAccess(s.cardId)}</Muted>
             )
           ) : null}
           <StepActions accountId={accountId} runId={run.id} runState={run.state} step={s} onDone={changed} />
@@ -1011,18 +1023,18 @@ function RunDetail({ accountId, runId, onChanged, onOpenTask }: { accountId: Acc
       {run.canManage && run.state === 'running' ? (
         confirm ? (
           <View style={{ marginTop: space(2) }}>
-            <Text style={{ color: colors.text }}>Çalıştırma iptal edilsin mi? Açık ve bekleyen adımlar atlanır; kartlar projelerde kalır.</Text>
+            <Text style={{ color: colors.text }}>{m.cancelRunConfirm}</Text>
             <View style={{ flexDirection: 'row', gap: space(2) }}>
               <View style={{ flex: 1 }}>
-                <Button title="Evet, iptal et" kind="danger" busy={busy} onPress={() => void cancel()} />
+                <Button title={m.yesCancel} kind="danger" busy={busy} onPress={() => void cancel()} />
               </View>
               <View style={{ flex: 1 }}>
-                <Button title="Vazgeç" kind="secondary" disabled={busy} onPress={() => setConfirm(false)} />
+                <Button title={m.cancelAction} kind="secondary" disabled={busy} onPress={() => setConfirm(false)} />
               </View>
             </View>
           </View>
         ) : (
-          <Button title="Çalıştırmayı iptal et" kind="danger" onPress={() => setConfirm(true)} />
+          <Button title={m.cancelRun} kind="danger" onPress={() => setConfirm(true)} />
         )
       ) : null}
     </View>
@@ -1040,7 +1052,7 @@ export function TaskWorkflowSection({ accountId, cardId }: { accountId: AccountI
   if (!items.data?.length && !msg) return null;
   return (
     <View style={card}>
-      <H>İş akışı: sizi bekleyen devirler</H>
+      <H>{m.taskSectionTitle}</H>
       {msg ? <Alert text={msg.text} ok={msg.ok} /> : null}
       {(items.data ?? []).map((h) => (
         <View key={h.step.id} style={{ marginBottom: space(2) }}>

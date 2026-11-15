@@ -26,7 +26,7 @@ class ReplyReceiver : BroadcastReceiver() {
         val account = PushAccounts.get(ctx, tag)
         val pw = account?.appPassword(ctx)
         if (account == null || pw == null) {
-          WorkhubNotifications.status(ctx, notifId, channel, "Yanıt gönderilemedi: oturum yok")
+          WorkhubNotifications.status(ctx, notifId, channel, ctx.getString(R.string.reply_failed_no_session))
           return@thread
         }
         val ref = ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
@@ -36,11 +36,11 @@ class ReplyReceiver : BroadcastReceiver() {
           null
         }
         when (r?.status) {
-          201, 200 -> WorkhubNotifications.status(ctx, notifId, channel, "Yanıt gönderildi")
-          401 -> WorkhubNotifications.status(ctx, notifId, channel, "Yanıt gönderilemedi: tekrar giriş gerekli")
-          403, 404 -> WorkhubNotifications.status(ctx, notifId, channel, "Yanıt gönderilemedi: sohbete erişim yok")
-          null -> WorkhubNotifications.status(ctx, notifId, channel, "Yanıt gönderilemedi: bağlantı yok — sohbeti açıp kontrol edin")
-          else -> WorkhubNotifications.status(ctx, notifId, channel, "Yanıt gönderilemedi (${r.status})")
+          201, 200 -> WorkhubNotifications.status(ctx, notifId, channel, ctx.getString(R.string.reply_sent))
+          401 -> WorkhubNotifications.status(ctx, notifId, channel, ctx.getString(R.string.reply_failed_reauth))
+          403, 404 -> WorkhubNotifications.status(ctx, notifId, channel, ctx.getString(R.string.reply_failed_no_access))
+          null -> WorkhubNotifications.status(ctx, notifId, channel, ctx.getString(R.string.reply_failed_offline))
+          else -> WorkhubNotifications.status(ctx, notifId, channel, ctx.getString(R.string.reply_failed_status, r.status))
         }
       } finally {
         pending.finish()

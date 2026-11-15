@@ -1,2 +1,28 @@
 <resources>
+    <!-- Notification channels (names shown in the system notification settings). -->
+    <string name="channel_chat">Chat messages</string>
+    <string name="channel_workhub">Workhub tasks</string>
+    <string name="channel_other">Other notifications</string>
+    <string name="channel_unread_count">Unread message count</string>
+
+    <!-- Generic titles shown on the lock screen / when the notification has no subject. -->
+    <string name="notification_title_chat">New message</string>
+    <string name="notification_title_workhub">Workhub notification</string>
+    <string name="notification_title_other">New notification</string>
+
+    <!-- Badge notification text: "3 unread messages". -->
+    <plurals name="unread_messages">
+        <item quantity="one">%d unread message</item>
+        <item quantity="other">%d unread messages</item>
+    </plurals>
+
+    <!-- Quick reply. -->
+    <string name="reply_input_label">Type a reply</string>
+    <string name="reply_action">Reply</string>
+    <string name="reply_sent">Reply sent</string>
+    <string name="reply_failed_no_session">Reply could not be sent: not signed in</string>
+    <string name="reply_failed_reauth">Reply could not be sent: sign in again</string>
+    <string name="reply_failed_no_access">Reply could not be sent: no access to the chat</string>
+    <string name="reply_failed_offline">Reply could not be sent: no connection — open the chat and check</string>
+    <string name="reply_failed_status">Reply could not be sent (%1$d)</string>
 </resources>

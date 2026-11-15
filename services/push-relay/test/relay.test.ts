@@ -73,6 +73,7 @@ test('request shape validation', async () => {
   const d = { origin: ORIGIN, send: sender().send, now: () => NOW };
   assert.equal((await handleWebPush(req({ method: 'GET' }), d)).status, 405);
   assert.equal((await handleWebPush(req({ path: '/wp/a b' }), d)).status, 404);
+  assert.equal((await handleWebPush(req({ path: '/wp/%E0%A4%A' }), d)).status, 404); // malformed %-escape must not throw
   assert.equal((await handleWebPush(req({ path: '/other' }), d)).status, 404);
   assert.equal((await handleWebPush(req({ query: {} }), d)).status, 404);
   assert.equal((await handleWebPush(req({}, { 'content-encoding': 'aesgcm' }), d)).status, 415);

@@ -15,6 +15,7 @@ class Mem implements SecretStore, PlainStore {
 }
 
 const KEY = '0f8b6c1e-3a52-4c9e-9a51-2b1c0d7e8f90';
+// A zone with a fixed UTC+3 offset and no DST keeps the expected UTC values below stable.
 const IST = 'Europe/Istanbul';
 const BAD = { ok: false, error: { kind: 'client', message: 'invalid arguments' } };
 const bootstrap = (time: boolean, reviewer: boolean) => json(200, ocs({ apiVersion: '1', modules: { time }, permissions: { canViewTeamReport: reviewer } }));
@@ -33,7 +34,7 @@ async function loggedIn(...rest: Array<Response | ((c: Call) => Response)>) {
 
 const entry = (over: Partial<TimeEntry> = {}): TimeEntry => ({
   id: 7, kind: 'range', cardId: null, card: null, startUtc: '2026-11-02T06:00:00Z', endUtc: '2026-11-02T07:30:00Z', localDate: '2026-11-02',
-  durationSec: 5400, zone: IST, description: 'Analiz', billable: false, origin: 'manual', periodId: 2, version: 3, locked: false, slices: [], ...over,
+  durationSec: 5400, zone: IST, description: 'Analysis', billable: false, origin: 'manual', periodId: 2, version: 3, locked: false, slices: [], ...over,
 });
 const opts = { maxEntrySeconds: 86400, allowTaskless: true };
 
@@ -46,14 +47,14 @@ test('zone conversion: Istanbul wall clock ↔ UTC, DST zone round-trips', () =>
 });
 
 test('entry form → create body: range, overnight, duration, validation', () => {
-  const base = { kind: 'range' as const, date: '2026-11-02', start: '09:00', end: '10:30', hours: '', description: ' Analiz ', billable: true };
+  const base = { kind: 'range' as const, date: '2026-11-02', start: '09:00', end: '10:30', hours: '', description: ' Analysis ', billable: true };
   assert.deepEqual(buildTimeEntry(base, IST, opts), {
-    create: { kind: 'range', startUtc: '2026-11-02T06:00:00Z', endUtc: '2026-11-02T07:30:00Z', timezone: IST, description: 'Analiz', billable: true },
+    create: { kind: 'range', startUtc: '2026-11-02T06:00:00Z', endUtc: '2026-11-02T07:30:00Z', timezone: IST, description: 'Analysis', billable: true },
   });
   const night = buildTimeEntry({ ...base, start: '23:00', end: '01:00' }, IST, opts);
   assert.ok('create' in night && night.create.kind === 'range' && night.create.endUtc === '2026-11-02T22:00:00Z');
   assert.deepEqual(buildTimeEntry({ ...base, kind: 'duration', hours: '1:30' }, IST, opts), {
-    create: { kind: 'duration', localDate: '2026-11-02', durationSeconds: 5400, timezone: IST, description: 'Analiz', billable: true },
+    create: { kind: 'duration', localDate: '2026-11-02', durationSeconds: 5400, timezone: IST, description: 'Analysis', billable: true },
   });
   const dur = buildTimeEntry({ ...base, kind: 'duration', hours: '2,5' }, IST, opts);
   assert.ok('create' in dur && dur.create.kind === 'duration' && dur.create.durationSeconds === 9000);
@@ -68,7 +69,7 @@ test('entry form → create body: range, overnight, duration, validation', () =>
 test('entry form → minimal PATCH with version; unchanged form is version-only', () => {
   const e = entry();
   const form = timeEntryFormOf(e, IST, '2026-11-02');
-  assert.deepEqual(form, { kind: 'range', date: '2026-11-02', start: '09:00', end: '10:30', hours: '', description: 'Analiz', billable: false });
+  assert.deepEqual(form, { kind: 'range', date: '2026-11-02', start: '09:00', end: '10:30', hours: '', description: 'Analysis', billable: false });
   assert.deepEqual(buildTimeEntry(form, IST, opts, e), { patch: { version: 3 } });
   assert.deepEqual(buildTimeEntry({ ...form, end: '11:00', billable: true }, IST, opts, e), { patch: { version: 3, endUtc: '2026-11-02T08:00:00Z', billable: true } });
   const d = entry({ kind: 'duration', startUtc: null, endUtc: null, durationSec: 3600 });
@@ -106,7 +107,7 @@ test('time API: paths, bodies, Idempotency-Key, DELETE carries version', async (
   await timeApi.deleteEntry(c, 7, 3);
   await timeApi.submit(c, 2, 1, KEY);
   await timeApi.withdraw(c, 9, 2, KEY);
-  await timeApi.decide(c, 9, 'request_changes', 2, 'Eksik', KEY);
+  await timeApi.decide(c, 9, 'request_changes', 2, 'Incomplete', KEY);
   await timeApi.decide(c, 9, 'approve', 2, null, KEY);
   const W = 'https://ex.com/ocs/v2.php/apps/workhub/api/v1/time';
   assert.deepEqual(f.calls.map((x) => `${x.init.method} ${x.url.replace(W, '').replace('?format=json', '')}`), [
@@ -115,7 +116,7 @@ test('time API: paths, bodies, Idempotency-Key, DELETE carries version', async (
   assert.deepEqual(JSON.parse(String(f.calls[0]!.init.body)), { entryKind: 'duration', localDate: '2026-11-02', durationSeconds: 60, timezone: IST, description: 'x' });
   assert.equal(headerOf(f.calls[0], 'Idempotency-Key'), KEY);
   assert.deepEqual(JSON.parse(String(f.calls[2]!.init.body)), { version: 3 });
-  assert.deepEqual(JSON.parse(String(f.calls[5]!.init.body)), { version: 2, reason: 'Eksik' });
+  assert.deepEqual(JSON.parse(String(f.calls[5]!.init.body)), { version: 2, reason: 'Incomplete' });
   assert.deepEqual(JSON.parse(String(f.calls[6]!.init.body)), { version: 2 });
   await assert.rejects(timeApi.deleteEntry(c, -1, 0), (e: unknown) => e instanceof OcsError && e.kind === 'client');
 });

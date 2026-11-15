@@ -42,8 +42,8 @@ const goal = (over: Partial<GoalDetail> = {}): GoalDetail => ({
   id: 11, title: 'Q4', dueDate: null, state: 'active', owner: { uid: 'ali', displayName: 'Ali' }, role: 'manage', canEdit: true, canManage: true, version: 2,
   updatedAt: '2026-11-02T18:00:00Z', progressBp: 4167, progressState: 'ok', stateNote: null, calculatedAt: null, description: '', zone: 'UTC', createdAt: '2026-11-02T18:00:00Z',
   targets: [
-    { id: 1, goalId: 11, type: 'currency', title: 'Ciro', version: 2, weight: 1, progressBp: 2501, state: 'ok', scale: 2, currencyCode: 'TRY', start: '0.00', target: '1000.50', current: '250.25' },
-    { id: 2, goalId: 11, type: 'boolean', title: 'Lansman', version: 1, weight: 1, progressBp: 0, state: 'ok', booleanValue: false },
+    { id: 1, goalId: 11, type: 'currency', title: 'Revenue', version: 2, weight: 1, progressBp: 2501, state: 'ok', scale: 2, currencyCode: 'TRY', start: '0.00', target: '1000.50', current: '250.25' },
+    { id: 2, goalId: 11, type: 'boolean', title: 'Launch', version: 1, weight: 1, progressBp: 0, state: 'ok', booleanValue: false },
     taskTarget(),
   ],
   ...over,
@@ -89,7 +89,7 @@ test('goals API: paths, bodies, Idempotency-Key on check-in', async () => {
   await goalsApi.update(c, 11, { version: 2, state: 'archived' });
   await goalsApi.remove(c, 11, 3);
   await goalsApi.transfer(c, 11, 2, 'bob');
-  await goalsApi.addTarget(c, 11, { type: 'currency', title: 'Ciro', start: '0', target: '1000.5', currencyCode: 'TRY' });
+  await goalsApi.addTarget(c, 11, { type: 'currency', title: 'Revenue', start: '0', target: '1000.5', currencyCode: 'TRY' });
   await goalsApi.updateTarget(c, 11, 1, { version: 2, target: '2000' });
   await goalsApi.removeTarget(c, 11, 1, 3);
   await goalsApi.checkin(c, 11, 1, { version: 2, mode: 'delta', value: '10', note: 'n' }, KEY);
@@ -155,8 +155,8 @@ test('unlink a card: uses the task target\'s current version and removes only th
 
 test('IPC validation: goal inputs are exact, typed and server-shaped', async () => {
   const b = createDirectBackend({ secrets: new Mem(), plain: new Mem(), fetch: scriptedFetch() });
-  assert.equal(isValidTargetInput({ type: 'currency', title: 'Ciro', start: '0', target: '10.5', currencyCode: 'TRY' }), true);
-  assert.equal(isValidTargetInput({ type: 'currency', title: 'Ciro', start: '0', target: '10.5' }), false, 'currency needs a code');
+  assert.equal(isValidTargetInput({ type: 'currency', title: 'Revenue', start: '0', target: '10.5', currencyCode: 'TRY' }), true);
+  assert.equal(isValidTargetInput({ type: 'currency', title: 'Revenue', start: '0', target: '10.5' }), false, 'currency needs a code');
   assert.equal(isValidTargetInput({ type: 'number', title: 'N', start: '0', target: '5', currencyCode: 'TRY' }), false, 'code only on currency');
   assert.equal(isValidTargetInput({ type: 'number', title: 'N', start: '5', target: '5' }), false, 'empty range');
   assert.equal(isValidTargetInput({ type: 'number', title: 'N', start: '0', target: '1e3' }), false);

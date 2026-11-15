@@ -1,0 +1,361 @@
+import { defineCatalog } from '../core';
+
+/** Goals screen and the "Goals" section of the task screen (`messages.goals`). */
+export default defineCatalog(
+  {
+    // Shared words.
+    title: 'Title',
+    description: 'Description',
+    cancel: 'Cancel',
+    open: 'Open',
+    add: 'Add',
+    checkin: 'Check-in',
+    history: 'History',
+    start: 'Start',
+    target: 'Target',
+    currencyField: 'Currency',
+    completed: 'Completed',
+    notCompleted: 'Not completed',
+    /** Decimal separator used when showing target values. */
+    decimalSeparator: '.',
+
+    // Progress.
+    progressNotCalculable: 'Cannot be calculated: the goal has no targets, or a target has no data.',
+    progressRestricted: 'Restricted: linked to cards you cannot access; the total progress is not shown to you.',
+    progressStale: 'Not published: the goal owner can no longer access some of the linked cards.',
+    progressSourceMissing: 'Some of the linked cards have been deleted or are inaccessible.',
+    progressLabel: (label: string, pct: number | null) => `${label}: ${pct === null ? 'not calculable' : `${pct} percent`}`,
+    percent: (pct: number) => `${pct}%`,
+
+    // Target types.
+    typeNumber: 'Number',
+    typeCurrency: 'Currency',
+    typeBoolean: 'Yes/No',
+    typeTask: 'Tasks',
+
+    // Roles.
+    roleManage: 'manager',
+    roleEdit: 'editor',
+    roleView: 'viewer',
+
+    // Server error codes with a specific explanation.
+    errVersionConflict: 'The goal changed in the meantime; the latest version has been loaded. Try again.',
+    errGoalArchived: 'An archived goal cannot be changed; reactivate it first.',
+    errEditRequired: 'You are not allowed to edit this goal.',
+    errManageRequired: 'This action is only for the goal owner or people with manage permission.',
+    errGoalsDisabled: 'The Goals module is turned off for you.',
+    errInvalidOwner: 'The new owner must be an active user with access to the Goals module, and different from the current owner.',
+    errTargetRange: 'The start and target values cannot be the same.',
+    errInvalidDecimal: 'Enter the number as a decimal (e.g. 1250.50); do not exceed the allowed number of decimal places.',
+    errCurrency: 'The currency code must be three capital letters (e.g. USD).',
+    errInvalidDate: 'Enter the date in YYYY-MM-DD format.',
+    errTargetNotManual: 'You cannot check in on a task target; its progress is calculated from the cards.',
+    errCardsNotReadable: 'You do not have access to some of the cards; cards you cannot see cannot be linked or removed.',
+    errCardsNotReadableByOwner: 'The goal owner cannot access this card; it cannot be linked to this goal.',
+    errTooManyTargets: 'A goal can have at most 50 targets.',
+    errCheckinReused: 'This check-in was already saved.',
+    errGoalNotFound: 'Goal not found, or you no longer have access.',
+    errNotAllowed: 'You are not allowed to do this.',
+
+    // Form validation.
+    errDateFormat: 'Enter the due date in YYYY-MM-DD format.',
+    errTitleEmpty: 'The title cannot be empty.',
+    errEnterTitle: 'Enter a title.',
+    errWholeNumber: 'Enter a whole number.',
+    errDecimalScaleExample: (scale: number) => `Enter a number with at most ${scale} decimal ${scale === 1 ? 'place' : 'places'} (e.g. 12.5).`,
+    errDecimalScale: (scale: number) => `Enter a number with at most ${scale} decimal ${scale === 1 ? 'place' : 'places'}.`,
+    errStartTargetNumbers: 'Enter numbers for the start and target values (at most 4 decimal places).',
+
+    // Goal list.
+    tabAll: 'All',
+    tabMine: 'Mine',
+    tabShared: 'Shared',
+    filterActive: 'Active',
+    filterArchived: 'Archived',
+    noGoals: 'No goals.',
+    goalMeta: (owner: string, due: string | null, targetCount: number | undefined, archived: boolean) =>
+      `${owner}${due !== null ? ` · Due ${due}` : ''}${targetCount !== undefined ? ` · ${targetCount === 1 ? '1 target' : `${targetCount} targets`}` : ''}${archived ? ' · archived' : ''}`,
+    openGoalLabel: (title: string) => `Goal: ${title}`,
+
+    // Create goal.
+    newGoal: 'New goal',
+    goalTitleLabel: 'Goal title',
+    goalDescriptionLabel: 'Goal description',
+    dueOptionalLabel: 'Due date (optional, YYYY-MM-DD)',
+    dueEmptyLabel: 'Due date (empty = none)',
+    createGoal: 'Create goal',
+
+    // Goal detail.
+    goalHeading: (title: string, archived: boolean) => `${title}${archived ? ' (archived)' : ''}`,
+    goalDetailMeta: (owner: string, role: string, due: string | null) => `Owner: ${owner} · Your role: ${role}${due !== null ? ` · Due ${due}` : ''}`,
+    editLabel: (title: string) => `Edit: ${title}`,
+    archive: 'Archive',
+    archiveLabel: (title: string) => `Archive: ${title}`,
+    reactivate: 'Reactivate',
+    reactivateLabel: (title: string) => `Reactivate: ${title}`,
+    share: 'Share',
+    shareLabel: (title: string) => `Share: ${title}`,
+    transferOwnership: 'Transfer ownership',
+    transferOwnershipLabel: (title: string) => `Transfer ownership: ${title}`,
+    deleteAction: 'Delete',
+    deleteLabel: (title: string) => `Delete: ${title}`,
+    deleteGoalWarning: 'The goal, its targets, check-in history and card links will be deleted. This cannot be undone.',
+    confirmDelete: 'Yes, delete',
+    confirmDeleteLabel: (title: string) => `Confirm deletion: ${title}`,
+    targetsHeading: 'Targets',
+    noTargets: 'No targets yet.',
+    archivedNotice: 'Targets, check-ins and card links cannot be changed on an archived goal.',
+    backToList: 'Back to the list',
+
+    // Results of a write.
+    doneArchived: 'Goal archived.',
+    doneReactivated: 'Goal reactivated.',
+    doneSaved: 'Goal saved.',
+    doneTransferred: 'Ownership transferred; you keep manage permission.',
+    doneDeleted: 'Goal deleted.',
+    doneTargetAdded: 'Target added.',
+    doneTargetSaved: 'Target saved.',
+    doneTargetRemoved: 'Target removed.',
+    doneCheckin: 'Check-in saved.',
+    doneCardRemoved: 'Card removed from the target.',
+    doneTaskUnlinked: 'Task removed from the goal.',
+    doneTaskLinked: (title: string) => `Task linked to the goal “${title}”.`,
+
+    // Transfer ownership.
+    transferHint: 'Select the new owner. You keep manage permission; progress is recalculated with the new owner’s card access.',
+    newOwner: (name: string) => `New owner: ${name}`,
+    transfer: 'Transfer',
+    transferLabel: (name: string) => `Transfer to: ${name}`,
+    anotherPerson: 'Someone else',
+    searchPerson: 'Search for a person',
+
+    // Target card.
+    targetValues: (current: string, target: string, start: string) => `Now ${current} · target ${target} (start ${start})`,
+    cardsProgress: (done: number | string, total: number | string, missing: number | null | undefined) =>
+      `${done} / ${total} cards completed${missing ? ` · ${missing} ${missing === 1 ? 'card' : 'cards'} inaccessible` : ''}`,
+    removeCard: 'Remove',
+    removeCardLabel: (title: string) => `Remove card: ${title}`,
+    hiddenCardsNote: 'Cards you cannot access are not listed.',
+    addCardsHint: 'To add cards, open the task → Goals → Link to goal.',
+    checkinLabel: (title: string) => `Check-in: ${title}`,
+    historyLabel: (title: string) => `History: ${title}`,
+    editTargetLabel: (title: string) => `Edit target: ${title}`,
+    removeTarget: 'Remove',
+    removeTargetLabel: (title: string) => `Remove target: ${title}`,
+    deleteTargetWarning: 'The target will be deleted together with its check-in history and card links.',
+    confirmRemove: 'Yes, remove',
+    confirmRemoveLabel: (title: string) => `Confirm removal: ${title}`,
+    saveCheckinLabel: (title: string) => `Save check-in: ${title}`,
+    saveTargetLabel: (title: string) => `Save target: ${title}`,
+
+    // Check-in form and history.
+    noteLabel: (title: string) => `Note: ${title}`,
+    notePlaceholder: 'Note (optional)',
+    completedLabel: (title: string) => `Completed: ${title}`,
+    notCompletedLabel: (title: string) => `Not completed: ${title}`,
+    checkinTypeLabel: 'Check-in type',
+    newValue: 'New value',
+    changeMode: 'Change (+/−)',
+    changePlaceholder: 'Change (e.g. 5 or -2)',
+    valueLabel: (title: string) => `Value: ${title}`,
+    noCheckins: 'No check-ins yet.',
+    checkinChange: (from: string, to: string, isChange: boolean) => `${from} → ${to}${isChange ? ' (change)' : ''}`,
+    checkinEntry: (when: string, actor: string, change: string, note: string | null) => `${when} · ${actor} · ${change}${note ? ` · “${note}”` : ''}`,
+    lastCheckins: 'Showing the last 100 check-ins.',
+
+    // Add / edit target forms.
+    addTargetHeading: 'Add target',
+    targetTypeLabel: 'Target type',
+    targetTitleLabel: 'Target title',
+    taskTargetHint: 'Progress is calculated from the completion of the linked cards. Link cards from the task screen.',
+    targetEditNote: 'The type and decimal places cannot be changed later; update the current value with a check-in.',
+
+    // Goals on a task.
+    goalsHeading: 'Goals',
+    notLinked: 'This task is not linked to a goal.',
+    unlinkGoal: 'Remove link',
+    unlinkLabel: (goal: string, target: string | null) => `Remove from goal: ${goal}${target !== null ? ` / ${target}` : ''}`,
+    linkToGoal: 'Link to goal',
+    searchGoal: 'Search goals',
+    noLinkableGoals: 'There are no active goals you can link to (that you are allowed to edit).',
+    linkLabel: (title: string) => `Link: ${title}`,
+  },
+  {
+    // Shared words.
+    title: 'Başlık',
+    description: 'Açıklama',
+    cancel: 'Vazgeç',
+    open: 'Aç',
+    add: 'Ekle',
+    checkin: 'Check-in',
+    history: 'Geçmiş',
+    start: 'Başlangıç',
+    target: 'Hedef',
+    currencyField: 'Para birimi',
+    completed: 'Tamamlandı',
+    notCompleted: 'Tamamlanmadı',
+    /** Decimal separator used when showing target values. */
+    decimalSeparator: ',',
+
+    // Progress.
+    progressNotCalculable: 'Hesaplanamıyor: hedefte hedef değer yok ya da bir hedef değerin verisi yok.',
+    progressRestricted: 'Kısıtlı: erişemediğiniz kartlara bağlı; toplam ilerleme size gösterilmez.',
+    progressStale: 'Yayınlanmadı: hedef sahibi bağlı kartların bazılarına artık erişemiyor.',
+    progressSourceMissing: 'Bağlı kartların bazıları silinmiş veya erişilemez.',
+    progressLabel: (label: string, pct: number | null) => `${label}: ${pct === null ? 'hesaplanamıyor' : `yüzde ${pct}`}`,
+    percent: (pct: number) => `%${pct}`,
+
+    // Target types.
+    typeNumber: 'Sayı',
+    typeCurrency: 'Para',
+    typeBoolean: 'Evet/Hayır',
+    typeTask: 'Görevler',
+
+    // Roles.
+    roleManage: 'yönetir',
+    roleEdit: 'düzenler',
+    roleView: 'görüntüler',
+
+    // Server error codes with a specific explanation.
+    errVersionConflict: 'Hedef bu arada değişti; güncel hali yüklendi. Tekrar deneyin.',
+    errGoalArchived: 'Arşivdeki hedef değiştirilemez; önce yeniden etkinleştirin.',
+    errEditRequired: 'Bu hedefte düzenleme yetkiniz yok.',
+    errManageRequired: 'Bu işlem yalnız hedef sahibi veya yönetme yetkisi olanlar içindir.',
+    errGoalsDisabled: 'Hedefler modülü sizin için kapalı.',
+    errInvalidOwner: 'Yeni sahip etkin bir kullanıcı olmalı, Hedefler modülüne erişebilmeli ve mevcut sahipten farklı olmalı.',
+    errTargetRange: 'Başlangıç ve hedef değeri aynı olamaz.',
+    errInvalidDecimal: 'Sayıyı ondalık olarak girin (ör. 1250,50); izin verilen ondalık basamağı aşmayın.',
+    errCurrency: 'Para birimi üç büyük harf olmalı (ör. TRY).',
+    errInvalidDate: 'Tarihi YYYY-AA-GG biçiminde girin.',
+    errTargetNotManual: 'Görev hedef değerine check-in yapılamaz; ilerleme kartlardan hesaplanır.',
+    errCardsNotReadable: 'Bazı kartlara erişiminiz yok; göremediğiniz kartlar bağlanamaz veya kaldırılamaz.',
+    errCardsNotReadableByOwner: 'Hedef sahibi bu karta erişemiyor; kart bu hedefe bağlanamaz.',
+    errTooManyTargets: 'Bir hedefte en fazla 50 hedef değer olabilir.',
+    errCheckinReused: 'Bu check-in zaten kaydedildi.',
+    errGoalNotFound: 'Hedef bulunamadı ya da artık erişiminiz yok.',
+    errNotAllowed: 'Bu işlem için yetkiniz yok.',
+
+    // Form validation.
+    errDateFormat: 'Bitiş tarihini YYYY-AA-GG biçiminde girin.',
+    errTitleEmpty: 'Başlık boş olamaz.',
+    errEnterTitle: 'Başlık yazın.',
+    errWholeNumber: 'Tam sayı girin.',
+    errDecimalScaleExample: (scale: number) => `Sayı girin; en fazla ${scale} ondalık basamak (ör. 12,5).`,
+    errDecimalScale: (scale: number) => `Sayı girin; en fazla ${scale} ondalık basamak.`,
+    errStartTargetNumbers: 'Başlangıç ve hedef için sayı girin (en fazla 4 ondalık).',
+
+    // Goal list.
+    tabAll: 'Tümü',
+    tabMine: 'Benim',
+    tabShared: 'Paylaşılan',
+    filterActive: 'Etkin',
+    filterArchived: 'Arşiv',
+    noGoals: 'Hedef yok.',
+    goalMeta: (owner: string, due: string | null, targetCount: number | undefined, archived: boolean) =>
+      `${owner}${due !== null ? ` · Bitiş ${due}` : ''}${targetCount !== undefined ? ` · ${targetCount} hedef değer` : ''}${archived ? ' · arşivde' : ''}`,
+    openGoalLabel: (title: string) => `Hedef: ${title}`,
+
+    // Create goal.
+    newGoal: 'Yeni hedef',
+    goalTitleLabel: 'Hedef başlığı',
+    goalDescriptionLabel: 'Hedef açıklaması',
+    dueOptionalLabel: 'Bitiş tarihi (isteğe bağlı, YYYY-AA-GG)',
+    dueEmptyLabel: 'Bitiş tarihi (boş = yok)',
+    createGoal: 'Hedef oluştur',
+
+    // Goal detail.
+    goalHeading: (title: string, archived: boolean) => `${title}${archived ? ' (arşivde)' : ''}`,
+    goalDetailMeta: (owner: string, role: string, due: string | null) => `Sahip: ${owner} · Rolünüz: ${role}${due !== null ? ` · Bitiş ${due}` : ''}`,
+    editLabel: (title: string) => `Düzenle: ${title}`,
+    archive: 'Arşivle',
+    archiveLabel: (title: string) => `Arşivle: ${title}`,
+    reactivate: 'Yeniden etkinleştir',
+    reactivateLabel: (title: string) => `Yeniden etkinleştir: ${title}`,
+    share: 'Paylaş',
+    shareLabel: (title: string) => `Paylaş: ${title}`,
+    transferOwnership: 'Sahipliği devret',
+    transferOwnershipLabel: (title: string) => `Sahipliği devret: ${title}`,
+    deleteAction: 'Sil',
+    deleteLabel: (title: string) => `Sil: ${title}`,
+    deleteGoalWarning: 'Hedef, hedef değerleri, check-in geçmişi ve kart bağlantıları silinir. Geri alınamaz.',
+    confirmDelete: 'Evet, sil',
+    confirmDeleteLabel: (title: string) => `Silmeyi onayla: ${title}`,
+    targetsHeading: 'Hedef değerler',
+    noTargets: 'Henüz hedef değer yok.',
+    archivedNotice: 'Arşivdeki hedefte hedef değer, check-in ve kart değişikliği yapılamaz.',
+    backToList: 'Listeye dön',
+
+    // Results of a write.
+    doneArchived: 'Hedef arşivlendi.',
+    doneReactivated: 'Hedef yeniden etkin.',
+    doneSaved: 'Hedef kaydedildi.',
+    doneTransferred: 'Sahiplik devredildi; yönetme yetkiniz sürüyor.',
+    doneDeleted: 'Hedef silindi.',
+    doneTargetAdded: 'Hedef değer eklendi.',
+    doneTargetSaved: 'Hedef değer kaydedildi.',
+    doneTargetRemoved: 'Hedef değer kaldırıldı.',
+    doneCheckin: 'Check-in kaydedildi.',
+    doneCardRemoved: 'Kart hedeften çıkarıldı.',
+    doneTaskUnlinked: 'Görev hedeften çıkarıldı.',
+    doneTaskLinked: (title: string) => `Görev “${title}” hedefine bağlandı.`,
+
+    // Transfer ownership.
+    transferHint: 'Yeni sahibi seçin. Siz yönetme yetkisini korursunuz; ilerleme yeni sahibin kart erişimiyle yeniden hesaplanır.',
+    newOwner: (name: string) => `Yeni sahip: ${name}`,
+    transfer: 'Devret',
+    transferLabel: (name: string) => `Devret: ${name}`,
+    anotherPerson: 'Başka kişi',
+    searchPerson: 'Kişi ara',
+
+    // Target card.
+    targetValues: (current: string, target: string, start: string) => `Şu an ${current} · hedef ${target} (başlangıç ${start})`,
+    cardsProgress: (done: number | string, total: number | string, missing: number | null | undefined) =>
+      `${done} / ${total} kart tamamlandı${missing ? ` · ${missing} kart erişilemez` : ''}`,
+    removeCard: 'Çıkar',
+    removeCardLabel: (title: string) => `Kartı çıkar: ${title}`,
+    hiddenCardsNote: 'Erişemediğiniz kartlar listelenmez.',
+    addCardsHint: 'Kart eklemek için görevi açın → Hedefler → Bağla.',
+    checkinLabel: (title: string) => `Check-in: ${title}`,
+    historyLabel: (title: string) => `Geçmiş: ${title}`,
+    editTargetLabel: (title: string) => `Hedef değeri düzenle: ${title}`,
+    removeTarget: 'Kaldır',
+    removeTargetLabel: (title: string) => `Hedef değeri kaldır: ${title}`,
+    deleteTargetWarning: 'Hedef değer, check-in geçmişi ve kart bağlantılarıyla birlikte silinir.',
+    confirmRemove: 'Evet, kaldır',
+    confirmRemoveLabel: (title: string) => `Kaldırmayı onayla: ${title}`,
+    saveCheckinLabel: (title: string) => `Check-in kaydet: ${title}`,
+    saveTargetLabel: (title: string) => `Hedef değeri kaydet: ${title}`,
+
+    // Check-in form and history.
+    noteLabel: (title: string) => `Not: ${title}`,
+    notePlaceholder: 'Not (isteğe bağlı)',
+    completedLabel: (title: string) => `Tamamlandı: ${title}`,
+    notCompletedLabel: (title: string) => `Tamamlanmadı: ${title}`,
+    checkinTypeLabel: 'Check-in türü',
+    newValue: 'Yeni değer',
+    changeMode: 'Artış (+/−)',
+    changePlaceholder: 'Artış (ör. 5 veya -2)',
+    valueLabel: (title: string) => `Değer: ${title}`,
+    noCheckins: 'Henüz check-in yok.',
+    checkinChange: (from: string, to: string, isChange: boolean) => `${from} → ${to}${isChange ? ' (artış)' : ''}`,
+    checkinEntry: (when: string, actor: string, change: string, note: string | null) => `${when} · ${actor} · ${change}${note ? ` · “${note}”` : ''}`,
+    lastCheckins: 'Son 100 check-in gösteriliyor.',
+
+    // Add / edit target forms.
+    addTargetHeading: 'Hedef değer ekle',
+    targetTypeLabel: 'Hedef değer türü',
+    targetTitleLabel: 'Hedef değer başlığı',
+    taskTargetHint: 'İlerleme bağlanan kartların tamamlanmasından hesaplanır. Kartları görev ekranından bağlayın.',
+    targetEditNote: 'Tür ve ondalık basamak sonradan değişmez; mevcut değer check-in ile güncellenir.',
+
+    // Goals on a task.
+    goalsHeading: 'Hedefler',
+    notLinked: 'Bu görev bir hedefe bağlı değil.',
+    unlinkGoal: 'Bağlantıyı kaldır',
+    unlinkLabel: (goal: string, target: string | null) => `Hedeften çıkar: ${goal}${target !== null ? ` / ${target}` : ''}`,
+    linkToGoal: 'Hedefe bağla',
+    searchGoal: 'Hedef ara',
+    noLinkableGoals: 'Bağlanabilecek (düzenleme yetkiniz olan, etkin) hedef yok.',
+    linkLabel: (title: string) => `Bağla: ${title}`,
+  },
+);

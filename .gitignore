@@ -3,3 +3,18 @@ node_modules/
 *.log
 .env*
 .e2e-dist/
+.DS_Store
+smoke-out/
+# Credentials and signing material never belong in the repository (env files for smoke/e2e runs,
+# Android upload keystore, APNs key, certificates, Firebase client configs / service accounts).
+*.env
+!.xcode.env
+*.jks
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+service-account*.json
+serviceAccount*.json

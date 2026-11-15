@@ -77,7 +77,7 @@ async function main() {
     otherBoard = (await workhubApi.createProject(A, `GENE-56 AI other ${stamp}`, undefined, key()))!.id;
     const board = await workhubApi.board(A, boardId);
     stackId = board.project.stacks[0]!.id;
-    const t = await A.request<{ id: number }>(`${API}/projects/${boardId}/tasks`, { method: 'POST', body: { stackId, title: 'AI smoke görevi' }, headers: { 'Idempotency-Key': key() } });
+    const t = await A.request<{ id: number }>(`${API}/projects/${boardId}/tasks`, { method: 'POST', body: { stackId, title: 'AI smoke task' }, headers: { 'Idempotency-Key': key() } });
     cardId = t.data!.id;
     return `board ${boardId}, card ${cardId}`;
   });

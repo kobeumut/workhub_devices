@@ -7,7 +7,9 @@ import {
 import { useServices, type AudioPlayback } from './services';
 import { Button } from './ui';
 import { colors, font, space } from './theme';
-import { describeError } from './i18n';
+import { describeError, messages, t } from './i18n';
+
+const tk = messages.talk;
 
 let txSeq = 0;
 const newTransferId = () => `tx-${Date.now().toString(36)}-${(txSeq++).toString(36)}`;
@@ -33,7 +35,7 @@ function useProgress(id: string | null) {
 
 function ProgressBar({ label, p }: { label: string; p: TransferProgress | null }) {
   const pct = percent(p);
-  const phase = p?.phase === 'preparing' ? 'hazırlanıyor' : p?.phase === 'sharing' ? 'paylaşılıyor' : `%${pct}`;
+  const phase = p?.phase === 'preparing' ? tk.phasePreparing : p?.phase === 'sharing' ? tk.phaseSharing : tk.percentValue(pct);
   return (
     <View
       accessibilityRole="progressbar"
@@ -106,24 +108,24 @@ export function useUploads(accountId: AccountId, token: string) {
 
 function UploadRow({ it, onCancel, onRetry, onDismiss }: { it: UploadItem; onCancel: () => void; onRetry: () => void; onDismiss: () => void }) {
   const p = useProgress(it.state === 'uploading' ? it.id : null);
-  const label = `${it.voice ? 'Sesli not' : it.file.name} yükleniyor`;
+  const label = tk.uploadingLabel(it.voice ? tk.voiceNote : it.file.name);
   return (
     <View style={{ paddingHorizontal: space(3), paddingVertical: space(1), borderTopWidth: 1, borderColor: colors.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2) }}>
         <Text numberOfLines={1} style={{ flex: 1, color: colors.text }}>
           {it.voice ? '🎤' : '📎'} {it.file.name} <Text style={{ color: colors.muted, fontSize: font.small }}>{formatBytes(it.file.size)}</Text>
         </Text>
-        {it.state === 'uploading' ? <Button kind="secondary" title="İptal" accessibilityLabel={`Yüklemeyi iptal et: ${it.file.name}`} onPress={onCancel} /> : null}
-        {it.state !== 'uploading' ? <Button kind="secondary" title="Tekrar dene" accessibilityLabel={`Yeniden yükle: ${it.file.name}`} onPress={onRetry} /> : null}
-        {it.state !== 'uploading' ? <Button kind="secondary" title="Kaldır" accessibilityLabel={`Listeden kaldır: ${it.file.name}`} onPress={onDismiss} /> : null}
+        {it.state === 'uploading' ? <Button kind="secondary" title={t.cancel} accessibilityLabel={tk.cancelUploadLabel(it.file.name)} onPress={onCancel} /> : null}
+        {it.state !== 'uploading' ? <Button kind="secondary" title={t.retry} accessibilityLabel={tk.reuploadLabel(it.file.name)} onPress={onRetry} /> : null}
+        {it.state !== 'uploading' ? <Button kind="secondary" title={t.dismiss} accessibilityLabel={tk.removeFromListLabel(it.file.name)} onPress={onDismiss} /> : null}
       </View>
       {it.state === 'uploading' ? <ProgressBar label={label} p={p} /> : null}
       {it.state === 'uploading' && p ? (
         <Text style={{ color: colors.muted, fontSize: font.small }}>
-          {p.phase === 'preparing' ? 'Hazırlanıyor…' : p.phase === 'sharing' ? 'Sohbete paylaşılıyor…' : `${formatBytes(p.sent)} / ${formatBytes(p.total)} (%${percent(p)})`}
+          {p.phase === 'preparing' ? tk.preparing : p.phase === 'sharing' ? tk.sharingToChat : tk.transferProgress(formatBytes(p.sent), formatBytes(p.total), percent(p))}
         </Text>
       ) : null}
-      {it.state === 'cancelled' ? <Text style={{ color: colors.muted, fontSize: font.small }}>Yükleme iptal edildi.</Text> : null}
+      {it.state === 'cancelled' ? <Text style={{ color: colors.muted, fontSize: font.small }}>{tk.uploadCancelled}</Text> : null}
       {it.state === 'failed' ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: font.small }}>{describeError(it.error)}</Text> : null}
     </View>
   );
@@ -132,7 +134,7 @@ function UploadRow({ it, onCancel, onRetry, onDismiss }: { it: UploadItem; onCan
 export function UploadTray({ uploads }: { uploads: ReturnType<typeof useUploads> }) {
   if (!uploads.items.length) return null;
   return (
-    <View accessibilityLabel="Dosya yüklemeleri">
+    <View accessibilityLabel={tk.uploadsLabel}>
       {uploads.items.map((it) => (
         <UploadRow key={it.id} it={it} onCancel={() => uploads.cancel(it)} onRetry={() => uploads.retry(it)} onDismiss={() => uploads.dismiss(it)} />
       ))}
@@ -179,7 +181,7 @@ export function VoiceBar({ onRecorded, onError, onClose }: { onRecorded: (f: Pic
       const f = await platform.voice!.stop();
       started.current = false;
       if (f) onRecorded(f);
-      else onError(new OcsError('client', undefined, 'Kayıt çok kısa.'));
+      else onError(new OcsError('client', undefined, tk.recordingTooShort));
     } catch (e) {
       onError(e);
     } finally {
@@ -189,20 +191,20 @@ export function VoiceBar({ onRecorded, onError, onClose }: { onRecorded: (f: Pic
   };
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2), padding: space(2), borderTopWidth: 1, borderColor: colors.border }}>
-      <Text accessibilityRole="timer" accessibilityLabel={since ? `Kaydediliyor, ${clock(now - since)}` : 'Mikrofon açılıyor'} style={{ flex: 1, color: colors.danger, fontWeight: '600' }}>
-        {since ? `● Kaydediliyor ${clock(now - since)}` : 'Mikrofon açılıyor…'}
+      <Text accessibilityRole="timer" accessibilityLabel={since ? tk.recordingLabel(clock(now - since)) : tk.micOpeningLabel} style={{ flex: 1, color: colors.danger, fontWeight: '600' }}>
+        {since ? tk.recordingText(clock(now - since)) : tk.micOpeningText}
       </Text>
       <Button
         kind="secondary"
-        title="Vazgeç"
-        accessibilityLabel="Kaydı iptal et"
+        title={tk.giveUp}
+        accessibilityLabel={tk.cancelRecording}
         onPress={() => {
           started.current = false;
           void platform.voice?.cancel();
           onClose();
         }}
       />
-      <Button title="Gönder" accessibilityLabel="Sesli notu gönder" disabled={!since} busy={busy} onPress={() => void stop()} />
+      <Button title={t.send} accessibilityLabel={tk.sendVoiceNote} disabled={!since} busy={busy} onPress={() => void stop()} />
     </View>
   );
 }
@@ -230,7 +232,7 @@ export function FileCard({ accountId, token, messageId, file }: { accountId: Acc
     setTx(id);
     try {
       const r = await backend.downloadFile(accountId, token, messageId, mode, id);
-      setNotice(r === 'saved' ? 'Kaydedildi.' : r === 'opened' ? 'Açıldı.' : '');
+      setNotice(r === 'saved' ? tk.saved : r === 'opened' ? tk.opened : '');
     } catch (e) {
       if (!(e instanceof OcsError && e.kind === 'aborted')) setError(e);
     } finally {
@@ -262,27 +264,27 @@ export function FileCard({ accountId, token, messageId, file }: { accountId: Acc
   const canDownload = !file.hideDownload && !!platform.files;
   const audio = file.voice || file.mimetype.startsWith('audio/');
   return (
-    <View accessibilityLabel={`${file.voice ? 'Sesli not' : 'Dosya'}: ${file.name}, ${formatBytes(file.size)}`} style={{ marginTop: 2, gap: space(1) }}>
+    <View accessibilityLabel={tk.fileLabel(!!file.voice, file.name, formatBytes(file.size))} style={{ marginTop: 2, gap: space(1) }}>
       <Text style={{ color: colors.text, fontWeight: '600' }} numberOfLines={2}>
-        {file.voice ? '🎤 Sesli not' : `📎 ${file.name}`} <Text style={{ color: colors.muted, fontSize: font.small, fontWeight: '400' }}>{formatBytes(file.size)}</Text>
+        {file.voice ? `🎤 ${tk.voiceNote}` : `📎 ${file.name}`} <Text style={{ color: colors.muted, fontSize: font.small, fontWeight: '400' }}>{formatBytes(file.size)}</Text>
       </Text>
-      {file.hideDownload ? <Text style={{ color: colors.muted, fontSize: font.small }}>Paylaşan kişi indirmeyi kapatmış.</Text> : null}
+      {file.hideDownload ? <Text style={{ color: colors.muted, fontSize: font.small }}>{tk.downloadDisabledNote}</Text> : null}
       {canDownload ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(1) }}>
           {audio && platform.playAudio ? (
-            <Button kind="secondary" title={playing ? '■ Durdur' : '▶ Dinle'} accessibilityLabel={playing ? 'Oynatmayı durdur' : `Dinle: ${file.name}`} busy={loadingClip} onPress={() => void play()} />
+            <Button kind="secondary" title={playing ? tk.stopPlayback : tk.play} accessibilityLabel={playing ? tk.stopPlaybackLabel : tk.listenLabel(file.name)} busy={loadingClip} onPress={() => void play()} />
           ) : null}
           {tx ? (
-            <Button kind="secondary" title="İptal" accessibilityLabel="İndirmeyi iptal et" onPress={() => void backend.cancel(tx)} />
+            <Button kind="secondary" title={t.cancel} accessibilityLabel={tk.cancelDownload} onPress={() => void backend.cancel(tx)} />
           ) : (
             <>
-              <Button kind="secondary" title={platform.kind === 'desktop' ? 'İndir' : 'Kaydet / paylaş'} accessibilityLabel={`İndir: ${file.name}`} onPress={() => void download('save')} />
-              {canOpenSafely(file.name) ? <Button kind="secondary" title="Aç" accessibilityLabel={`Aç: ${file.name}`} onPress={() => void download('open')} /> : null}
+              <Button kind="secondary" title={platform.kind === 'desktop' ? tk.download : tk.saveOrShare} accessibilityLabel={tk.downloadLabel(file.name)} onPress={() => void download('save')} />
+              {canOpenSafely(file.name) ? <Button kind="secondary" title={tk.open} accessibilityLabel={tk.openLabel(file.name)} onPress={() => void download('open')} /> : null}
             </>
           )}
         </View>
       ) : null}
-      {tx ? <ProgressBar label={`${file.name} indiriliyor`} p={p} /> : null}
+      {tx ? <ProgressBar label={tk.downloadingLabel(file.name)} p={p} /> : null}
       {notice ? <Text accessibilityRole="alert" style={{ color: colors.ok, fontSize: font.small }}>{notice}</Text> : null}
       {error ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: font.small }}>{describeError(error)}</Text> : null}
     </View>

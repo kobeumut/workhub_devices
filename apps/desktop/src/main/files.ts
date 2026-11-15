@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 type FsHandle = Awaited<ReturnType<typeof fs.open>>;
 import { basename, extname, join } from 'node:path';
+import { mainTexts } from './i18n';
 import { canOpenSafely, safeFileName, voiceNoteName, wavInfo, FILE_LIMITS, type FileHost, type FileSink, type PickedFile, type SinkMode } from '@workhub-devices/core';
 
 /**
@@ -35,7 +36,6 @@ export function createDesktopFiles(getWindow: () => BrowserWindow | null, smokeO
     handles.set(handle, e);
     return { handle, name: e.name, size: e.kind === 'path' ? e.size : e.data.byteLength, mime: e.mime };
   };
-  const openDir = join(app.getPath('temp'), `workhub-open-${process.pid}`);
 
   const host: FileHost = {
     async stat(handle) {
@@ -69,8 +69,9 @@ export function createDesktopFiles(getWindow: () => BrowserWindow | null, smokeO
         target = join(smokeOut, `${mode === 'open' ? 'opened-' : 'saved-'}${name}`);
       } else if (mode === 'open') {
         if (!canOpenSafely(name)) throw new Error('unsafe type');
-        const dir = join(openDir, randomBytes(6).toString('hex'));
-        await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+        // mkdtemp: unpredictable name, created atomically with mode 0700 (a pre-created or symlinked
+        // `/tmp/workhub-open-<pid>` on a shared temp dir can neither be guessed nor reused).
+        const dir = await fs.mkdtemp(join(app.getPath('temp'), 'workhub-open-'));
         target = join(dir, name);
       } else {
         const win = getWindow();
@@ -115,7 +116,8 @@ export function createDesktopFiles(getWindow: () => BrowserWindow | null, smokeO
     /** OS open dialog (smoke: a generated test file). Returns metadata + handles only. */
     async pick(): Promise<PickedFile[]> {
       if (smokeOut) {
-        const p = join(smokeOut, `Masaüstü ek ${Date.now().toString(36)}.txt`);
+        // Non-ASCII letters on purpose ("ğü"): the upload path must round-trip UTF-8 file names.
+        const p = join(smokeOut, `Desktop attachment ğü ${Date.now().toString(36)}.txt`);
         await fs.writeFile(p, `GENE-58 desktop smoke ${new Date().toISOString()}\n`.repeat(200));
         const st = await fs.stat(p);
         return [register({ kind: 'path', path: p, name: basename(p), size: st.size, mime: 'text/plain' })];
@@ -137,7 +139,7 @@ export function createDesktopFiles(getWindow: () => BrowserWindow | null, smokeO
       if (!(bytes instanceof Uint8Array) || bytes.byteLength > FILE_LIMITS.maxVoice) return null;
       const info = wavInfo(bytes);
       if (!info || info.durationMs < 300) return null;
-      return register({ kind: 'buffer', data: new Uint8Array(bytes), name: voiceNoteName(), mime: 'audio/wav' });
+      return register({ kind: 'buffer', data: new Uint8Array(bytes), name: voiceNoteName(new Date(), mainTexts().voiceMessage), mime: 'audio/wav' });
     },
     release(handle: unknown) {
       if (typeof handle === 'string') handles.delete(handle);

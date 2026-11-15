@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { presenceLabel, readMarker, unreadTotal, watchTalk } from '../src/talkSync';
+import { presenceCode, presenceLabel, PRESENCE_LABELS_EN, readMarker, unreadTotal, watchTalk } from '../src/talkSync';
 import type { RoomListResult, TalkRoom } from '../src/talk';
 import { OcsError } from '../src/ocs';
 
@@ -75,11 +75,11 @@ test('network failure keeps loop alive for reconciliation without inventing pres
   t.after(s.stop);
   await flush(); t.mock.timers.tick(5000); await flush();
   assert.equal(errors, 1); assert.deepEqual(totals, [3]);
-  assert.equal(presenceLabel(undefined), 'Durum bilinmiyor');
-  assert.equal(presenceLabel('future-status'), 'Durum bilinmiyor');
-  assert.equal(presenceLabel('invisible'), 'Çevrimdışı');
-  assert.equal(presenceLabel('dnd'), 'Rahatsız etmeyin');
-  assert.equal(presenceLabel('online'), 'Çevrimiçi');
+  assert.equal(presenceLabel(undefined), 'Status unknown');
+  assert.equal(presenceLabel('future-status'), 'Status unknown');
+  assert.equal(presenceLabel('invisible'), 'Offline');
+  assert.equal(presenceLabel('dnd'), 'Do not disturb');
+  assert.equal(presenceLabel('online'), 'Online');
 });
 
 test('room and activity retries honor server Retry-After and clear recovered presence errors', async (t) => {
@@ -133,4 +133,14 @@ test('stopping while a read is in flight prevents queued writes and late callbac
   const m = readMarker(async (id) => { sent.push(id); await pending.promise; }, () => fail('late read'), fail);
   m.read(1); m.read(2); m.stop(); pending.resolve(); await flush();
   assert.deepEqual(sent, [1]);
+});
+
+test('presence codes are stable and labels can be localized by the caller', () => {
+  assert.deepEqual(
+    ['online', 'away', 'busy', 'dnd', 'offline', 'invisible', 'future-status', undefined, 42].map(presenceCode),
+    ['online', 'away', 'busy', 'dnd', 'offline', 'offline', 'unknown', 'unknown', 'unknown'],
+  );
+  assert.equal(presenceLabel('away'), PRESENCE_LABELS_EN.away);
+  const other = { online: 'o', away: 'a', busy: 'b', dnd: 'd', offline: 'x', unknown: '?' };
+  assert.deepEqual(['online', 'away', 'busy', 'dnd', 'invisible', 'nope'].map((s) => presenceLabel(s, other)), ['o', 'a', 'b', 'd', 'x', '?']);
 });

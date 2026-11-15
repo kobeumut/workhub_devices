@@ -42,7 +42,7 @@ const proposal = (over: Partial<AiProposal> = {}): AiProposal => ({
   id: 7, requestId: RID, action: 'update_card_draft', state: 'ready', version: 1, createdAt: '', expiresAt: '', resultRef: null,
   restricted: false, stale: false,
   target: { type: 'card', cardId: 50, boardId: 4, boardTitle: 'P', url: 'https://ex.com/apps/workhub/projects/4/cards/50', canEdit: true },
-  proposed: { title: 'Yeni başlık' }, current: { title: 'Eski', description: '', due: null }, ...over,
+  proposed: { title: 'New title' }, current: { title: 'Old', description: '', due: null }, ...over,
 });
 
 test('per-action scope rules mirror AiRequestService::validate', () => {
@@ -55,15 +55,15 @@ test('per-action scope rules mirror AiRequestService::validate', () => {
   assert.equal(aiInputError(input('board_summary', { boardIds: [4], cardIds: [1] })), 'one_board');
   assert.equal(aiInputError(input('question', { boardIds: [4] })), 'message_required');
   assert.equal(aiInputError(input('question', { boardIds: [4] }, '   ')), 'message_required');
-  assert.equal(aiInputError(input('question', {}, 'Ne durumda?')), 'scope_required');
-  assert.equal(aiInputError(input('question', { cardIds: [1], boardIds: [4] }, 'Ne durumda?')), null);
+  assert.equal(aiInputError(input('question', {}, 'What is the status?')), 'scope_required');
+  assert.equal(aiInputError(input('question', { cardIds: [1], boardIds: [4] }, 'What is the status?')), null);
   assert.equal(aiInputError(input('question', { boardIds: [4] }, 'x'.repeat(4001))), 'message_too_long');
-  assert.equal(aiInputError(input('create_card_draft', { boardIds: [4] }, 'Görev yaz')), 'stack_required');
-  assert.equal(aiInputError(input('create_card_draft', { boardIds: [4], stackId: 9 }, 'Görev yaz')), null);
+  assert.equal(aiInputError(input('create_card_draft', { boardIds: [4] }, 'Write a task')), 'stack_required');
+  assert.equal(aiInputError(input('create_card_draft', { boardIds: [4], stackId: 9 }, 'Write a task')), null);
   assert.equal(aiInputError(input('create_card_draft', { boardIds: [4], stackId: 9 })), 'message_required');
   assert.equal(aiInputError(input('board_summary', { boardIds: [4], stackId: 9 })), 'stack_not_allowed');
-  assert.equal(aiInputError(input('update_card_draft', { cardIds: [1] }, 'Kısalt')), null);
-  assert.equal(aiInputError(input('update_card_draft', { cardIds: [1, 2] }, 'Kısalt')), 'one_card');
+  assert.equal(aiInputError(input('update_card_draft', { cardIds: [1] }, 'Shorten')), null);
+  assert.equal(aiInputError(input('update_card_draft', { cardIds: [1, 2] }, 'Shorten')), 'one_card');
   assert.equal(aiInputError(input('suggest_checklist', { cardIds: [1] })), null);
   assert.equal(aiInputError(input('suggest_checklist', { cardIds: [1], boardIds: [4] })), 'no_board_allowed');
 });
@@ -95,12 +95,12 @@ test('create sends the canonical body with a UUID Idempotency-Key; invalid scope
     json(202, ocs({ requestId: RID, state: 'queued', pollAfterMs: 1000, providerConfigVersion: 6 }, 202)),
   );
   await assert.rejects(b.aiCreate(id, input('question', { boardIds: [4] }, '  '), KEY), isCode('AI_INVALID_SCOPE'));
-  const r = await b.aiCreate(id, input('question', { boardIds: [4], includeComments: true }, '  Ne kaldı?  '), KEY);
+  const r = await b.aiCreate(id, input('question', { boardIds: [4], includeComments: true }, '  What is left?  '), KEY);
   assert.deepEqual(r, { requestId: RID, pollAfterMs: 1000 });
   const call = f.calls.find((c) => c.url.split('?')[0]!.endsWith('/ai/requests'))!;
   assert.equal(call.init.method, 'POST');
   assert.equal(headerOf(call, 'Idempotency-Key'), KEY);
-  assert.deepEqual(JSON.parse(String(call.init.body)), { action: 'question', scope: { cardIds: [], boardIds: [4], includeComments: true }, message: 'Ne kaldı?' });
+  assert.deepEqual(JSON.parse(String(call.init.body)), { action: 'question', scope: { cardIds: [], boardIds: [4], includeComments: true }, message: 'What is left?' });
 });
 
 test('cancel reads the request first: finished → AI_REQUEST_FINISHED, active → POST cancel', async () => {
@@ -176,6 +176,6 @@ test('IPC rejects malformed AI arguments before the backend runs', async () => {
     ['aiStatus', ['acc', 'extra']],
   ];
   for (const [m, args] of cases) assert.deepEqual(await dispatchWire(never, m, args), BAD, `${m} ${JSON.stringify(args).slice(0, 80)}`);
-  assert.ok(isValidAiRequestInput(input('create_card_draft', { boardIds: [4], stackId: 9 }, 'Taslak')));
-  assert.ok(!isValidAiRequestInput(input('create_card_draft', { boardIds: [4] }, 'Taslak')));
+  assert.ok(isValidAiRequestInput(input('create_card_draft', { boardIds: [4], stackId: 9 }, 'Draft')));
+  assert.ok(!isValidAiRequestInput(input('create_card_draft', { boardIds: [4] }, 'Draft')));
 });

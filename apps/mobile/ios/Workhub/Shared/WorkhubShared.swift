@@ -15,6 +15,34 @@ enum WorkhubShared {
   static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 }
 
+/// Minimal localization for the few strings native iOS code shows itself (quick-reply action,
+/// reply failures, generic notification titles). Everything inside the app is localized by the
+/// shared React UI. English is the default; Turkish is chosen from the first preferred device
+/// language. The tables live in code (no `.strings` files), so the Xcode project needs no change.
+enum L10n {
+  /// "tr" when the first preferred language is Turkish ("tr", "tr-TR"), otherwise "en".
+  static var language: String {
+    (Locale.preferredLanguages.first ?? "en").lowercased().hasPrefix("tr") ? "tr" : "en"
+  }
+  private static func pick(_ en: String, _ tr: String) -> String { language == "tr" ? tr : en }
+
+  // Quick reply (notification action).
+  static var reply: String { pick("Reply", "Yanıtla") }
+  static var send: String { pick("Send", "Gönder") }
+  static var replyPlaceholder: String { pick("Type a reply", "Yanıt yazın") }
+  static var replyFailedTitle: String { pick("Reply could not be sent", "Yanıt gönderilemedi") }
+  static var signInAgain: String { pick("Sign in again", "Tekrar giriş gerekli") }
+  static var noConnection: String { pick("No connection — open the chat and check", "Bağlantı yok — sohbeti açıp kontrol edin") }
+  static func noChatAccess(_ status: Int) -> String { pick("No access to the chat (\(status))", "Sohbete erişim yok (\(status))") }
+
+  // Notification content set by the extension.
+  static var notificationsEnabled: String { pick("Notifications enabled", "Bildirimler etkinleştirildi") }
+  static var notificationUpdated: String { pick("Notification updated", "Bildirim güncellendi") }
+  static var titleMessage: String { pick("New message", "Yeni mesaj") }
+  static var titleWorkhub: String { pick("Workhub notification", "Workhub bildirimi") }
+  static var titleGeneric: String { pick("New notification", "Yeni bildirim") }
+}
+
 enum Keychain {
   private static func base(_ key: String) -> [String: Any] {
     [kSecClass as String: kSecClassGenericPassword,

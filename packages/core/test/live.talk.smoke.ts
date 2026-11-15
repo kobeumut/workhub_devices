@@ -83,10 +83,11 @@ async function main() {
     assert.equal(room.type, 2);
     assert.equal(roomActions(room, f).rename, true);
     await talkRoomApi.rename(A, token, 'GENE-57 smoke (renamed)');
-    await talkRoomApi.describe(A, token, 'Açıklama: Türkçe ğüşiöç');
+    // Non-ASCII description on purpose (Turkish letters as an example): the server must round-trip UTF-8.
+    await talkRoomApi.describe(A, token, 'Description: Turkish ğüşiöç');
     const read = await talkRoomApi.get(A, token);
     assert.equal(read.displayName, 'GENE-57 smoke (renamed)');
-    assert.equal(read.description, 'Açıklama: Türkçe ğüşiöç');
+    assert.equal(read.description, 'Description: Turkish ğüşiöç');
   });
 
   await step('participants: invite candidates, add B and C, promote/demote B, remove C', async () => {
@@ -124,13 +125,13 @@ async function main() {
   await step('message → reply with quote visible to B', async () => {
     feedB = new Feed(B, token);
     await feedB.catchUp();
-    mid = (await sendMessage(A, token, { message: 'smoke ilk mesaj', referenceId: newReferenceId() }))!.id;
+    mid = (await sendMessage(A, token, { message: 'smoke first message', referenceId: newReferenceId() }))!.id;
     await feedB.catchUp();
     const seen = feedB.get(mid)!;
     assert.ok(seen, 'B sees the message');
     const room = await talkRoomApi.get(B, token);
     assert.equal(messageActions(seen, room, { actorType: 'users', actorId: uidB }, f, now()).reply, true);
-    replyId = (await sendMessage(B, token, { message: `${mentionText(uidA)} yanıt`, replyTo: mid, referenceId: newReferenceId() }))!.id;
+    replyId = (await sendMessage(B, token, { message: `${mentionText(uidA)} reply`, replyTo: mid, referenceId: newReferenceId() }))!.id;
     const feedA = new Feed(A, token);
     await feedA.catchUp();
     const reply = feedA.get(replyId)!;
@@ -166,25 +167,25 @@ async function main() {
   });
 
   await step('edit by A: B sees new text + edited marker; quote in the reply updates; B cannot edit A', async () => {
-    const sys = await editMessage(A, token, mid, 'smoke düzenlendi');
+    const sys = await editMessage(A, token, mid, 'smoke edited');
     assert.equal(sys.systemMessage, 'message_edited');
     await feedB!.catchUp();
     const m = feedB!.get(mid)!;
-    assert.equal(m.message, 'smoke düzenlendi');
+    assert.equal(m.message, 'smoke edited');
     assert.ok(m.lastEditTimestamp && m.lastEditTimestamp > 0);
     const q = feedB!.get(replyId)!.parent;
-    assert.ok(q && 'message' in q && q.message === 'smoke düzenlendi');
+    assert.ok(q && 'message' in q && q.message === 'smoke edited');
     const roomB = await talkRoomApi.get(B, token);
     assert.equal(messageActions(m, roomB, { actorType: 'users', actorId: uidB }, f, now()).edit, false);
     assert.equal(await code(editMessage(B, token, mid, 'x')), 'forbidden:403');
   });
 
   await step('search: unified search finds the message, with and without the conversation filter', async () => {
-    const inRoom = await searchMessages(B, { term: 'düzenlendi', token });
+    const inRoom = await searchMessages(B, { term: 'edited', token });
     assert.ok(inRoom.hits.some((h) => h.token === token && h.messageId === mid));
-    const global = await searchMessages(B, { term: 'düzenlendi' });
+    const global = await searchMessages(B, { term: 'edited' });
     assert.ok(global.hits.some((h) => h.token === token));
-    assert.equal((await searchMessages(C, { term: 'düzenlendi', token })).hits.length, 0, 'removed participant gets no hits');
+    assert.equal((await searchMessages(C, { term: 'edited', token })).hits.length, 0, 'removed participant gets no hits');
     return `hits=${inRoom.hits.length}`;
   });
 

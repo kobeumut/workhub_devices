@@ -15,9 +15,17 @@ import {
 } from '@workhub-devices/core';
 import { Icon, type IconName } from './icons';
 import { colors, hexColor, priorityColors, radius, shadow, space } from './theme';
-import { t } from './i18n';
+import { intlTag, messages, t } from './i18n';
 
-export const PRIORITY_LABEL: Record<Priority, string> = { urgent: 'Acil', high: 'Yüksek', normal: 'Normal', low: 'Düşük' };
+const m = messages.tasks;
+
+/** Priority labels; accessors, so every read follows the active language. */
+export const PRIORITY_LABEL: Record<Priority, string> = {
+  get urgent() { return m.priorityUrgent; },
+  get high() { return m.priorityHigh; },
+  get normal() { return m.priorityNormal; },
+  get low() { return m.priorityLow; },
+};
 /** Distinct, colour-independent cue per priority (web uses ▲▲ / ▲ / ■ / ▼). */
 const PRIORITY_GLYPH: Record<Priority, string> = { urgent: '▲▲', high: '▲', normal: '■', low: '▼' };
 const STACK_PALETTE = ['#64748b', '#2563eb', '#7c3aed', '#d97706', '#0891b2', '#db2777'];
@@ -71,13 +79,13 @@ export function AvatarStack({ people, max = 3, size = 24 }: { people: Pick<TaskA
   );
 }
 
-const shortDate = (iso: string) => new Date(iso).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString(intlTag(), { day: 'numeric', month: 'short' });
 
 export function DueBadge({ due, done }: { due: string | null; done: string | null }) {
   if (!due) return null;
   const state = dueState(due, done, Date.now(), deviceDay(new Date().toISOString()), deviceDay);
   const tone = state === 'overdue' ? { fg: colors.danger, bg: colors.dangerSoft } : state === 'today' ? { fg: colors.warning, bg: colors.warningSoft } : state === 'done' ? { fg: colors.ok, bg: 'transparent' } : { fg: colors.muted, bg: 'transparent' };
-  const word = state === 'overdue' ? ' · gecikmiş' : state === 'today' ? ' · bugün' : '';
+  const word = state === 'overdue' ? ` · ${m.overdue}` : state === 'today' ? ` · ${m.today}` : '';
   return (
     <View accessible accessibilityLabel={`${t.due}: ${shortDate(due)}${word}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: tone.bg === 'transparent' ? 0 : 6, height: 20, borderRadius: radius.sm, backgroundColor: tone.bg }}>
       <Icon name="calendar" size={13} color={tone.fg} />
@@ -132,7 +140,7 @@ export function TaskCard({ task, labels, canEdit, onOpen, onToggleDone, onMenu, 
   const pct = task.subtasks.total ? Math.round((task.subtasks.done / task.subtasks.total) * 100) : 0;
   return (
     <View style={[{ backgroundColor: colors.bg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: space(3), gap: space(2), opacity: dragging ? 0.4 : 1 }, shadow]}>
-      <Pressable accessibilityRole="button" accessibilityLabel={`${done ? 'Tamamlandı: ' : ''}${task.title}`} accessibilityHint="Görev ayrıntılarını açar" onPress={onOpen} onLongPress={onMenu} style={{ gap: space(2) }}>
+      <Pressable accessibilityRole="button" accessibilityLabel={done ? m.taskLabelDone(task.title) : task.title} accessibilityHint={m.openTaskDetailsHint} onPress={onOpen} onLongPress={onMenu} style={{ gap: space(2) }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 22 }}>
           <Text style={{ fontSize: 11.5, color: colors.muted, fontVariant: ['tabular-nums'] }}>#{task.id}</Text>
           <PriorityBadge priority={task.priority} />
@@ -145,9 +153,9 @@ export function TaskCard({ task, labels, canEdit, onOpen, onToggleDone, onMenu, 
         {task.subtasks.total ? (
           <View style={{ gap: 6 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <Text style={{ fontSize: 11.5, color: colors.muted }}>Alt işler</Text>
+              <Text style={{ fontSize: 11.5, color: colors.muted }}>{m.subtasks}</Text>
               <Text style={{ fontSize: 11.5, color: colors.muted, fontVariant: ['tabular-nums'] }}>
-                {task.subtasks.done}/{task.subtasks.total} (%{pct})
+                {m.subtaskProgress(task.subtasks.done, task.subtasks.total, pct)}
               </Text>
             </View>
             <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.hover, overflow: 'hidden' }}>
@@ -161,7 +169,7 @@ export function TaskCard({ task, labels, canEdit, onOpen, onToggleDone, onMenu, 
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: done }}
-            accessibilityLabel={done ? `${task.title}: tamamlanmadı olarak işaretle` : `${task.title}: tamamlandı olarak işaretle`}
+            accessibilityLabel={done ? m.markNotDoneLabel(task.title) : m.markDoneLabel(task.title)}
             onPress={onToggleDone}
             hitSlop={10}
             style={{ width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: done ? colors.ok : colors.borderStrong, backgroundColor: done ? colors.ok : 'transparent', alignItems: 'center', justifyContent: 'center' }}
@@ -174,7 +182,7 @@ export function TaskCard({ task, labels, canEdit, onOpen, onToggleDone, onMenu, 
         <DueBadge due={task.dueDate} done={task.done} />
         <View style={{ flex: 1 }} />
         <AvatarStack people={task.assignees} size={22} />
-        {onMenu ? <IconButton icon="more" label={`${task.title}: işlemler`} onPress={onMenu} expanded={!!menuOpen} /> : null}
+        {onMenu ? <IconButton icon="more" label={m.taskActionsLabel(task.title)} onPress={onMenu} expanded={!!menuOpen} /> : null}
       </View>
     </View>
   );
@@ -211,25 +219,25 @@ export function BoardToolbar({ filters, onChange }: { filters: TaskFilters; onCh
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: space(2) }}>
           <Icon name="search" size={16} color={colors.muted} />
           <TextInput
-            accessibilityLabel="Görevlerde ara"
-            placeholder="Görevlerde ara…"
+            accessibilityLabel={m.searchInTasks}
+            placeholder={m.searchInTasksPlaceholder}
             placeholderTextColor={colors.muted}
             value={filters.q}
             onChangeText={(q) => onChange({ ...filters, q })}
             style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 0, ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}) }}
           />
-          {filters.q ? <IconButton icon="close" label="Aramayı temizle" size={15} onPress={() => onChange({ ...filters, q: '' })} /> : null}
+          {filters.q ? <IconButton icon="close" label={m.clearSearch} size={15} onPress={() => onChange({ ...filters, q: '' })} /> : null}
         </View>
-        <Chip label="Filtreler" icon="filter" selected={open || count > 0} {...(count ? { count } : {})} onPress={() => setOpen((o) => !o)} />
+        <Chip label={m.filters} icon="filter" selected={open || count > 0} {...(count ? { count } : {})} onPress={() => setOpen((o) => !o)} />
       </View>
       {open ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
-          <Chip label="Yalnız benim" icon="user" selected={filters.mine} onPress={() => onChange({ ...filters, mine: !filters.mine })} />
-          <Chip label="Tamamlananları göster" icon="checkCircle" selected={filters.showDone} onPress={() => onChange({ ...filters, showDone: !filters.showDone })} />
+          <Chip label={m.onlyMine} icon="user" selected={filters.mine} onPress={() => onChange({ ...filters, mine: !filters.mine })} />
+          <Chip label={m.showCompleted} icon="checkCircle" selected={filters.showDone} onPress={() => onChange({ ...filters, showDone: !filters.showDone })} />
           {(['urgent', 'high', 'normal', 'low', 'none'] as const).map((p) => (
-            <Chip key={p} label={p === 'none' ? 'Önceliksiz' : PRIORITY_LABEL[p]} selected={filters.priorities.includes(p)} onPress={() => togglePriority(p)} />
+            <Chip key={p} label={p === 'none' ? m.noPriority : PRIORITY_LABEL[p]} selected={filters.priorities.includes(p)} onPress={() => togglePriority(p)} />
           ))}
-          {count ? <Chip label="Temizle" icon="close" selected={false} onPress={() => onChange({ ...emptyFilters(), q: filters.q })} /> : null}
+          {count ? <Chip label={m.clear} icon="close" selected={false} onPress={() => onChange({ ...emptyFilters(), q: filters.q })} /> : null}
         </View>
       ) : null}
     </View>
@@ -321,17 +329,17 @@ function CardMenu({ task, columns, onMove, onToggleDone, onOpen, onClose }: { ta
   const to = (c: KanbanColumn | null) => (c ? moveToColumn(columns, task.id, c.stack.id) : null);
   return (
     <View accessibilityRole="menu" style={[{ backgroundColor: colors.bg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingVertical: space(1), marginTop: space(1) }, shadow]}>
-      {item('open', 'chevronRight', 'Ayrıntıları aç', onOpen)}
-      {item('done', 'checkCircle', task.done ? 'Tamamlanmadı olarak işaretle' : 'Tamamlandı olarak işaretle', onToggleDone)}
+      {item('open', 'chevronRight', m.openDetails, onOpen)}
+      {item('done', 'checkCircle', task.done ? m.markNotDone : t.markDone, onToggleDone)}
       <View style={{ height: 1, backgroundColor: colors.border, marginVertical: space(1) }} />
-      {item('left', 'arrowLeft', left ? `Sola taşı: ${left.stack.title}` : 'Sola taşı', () => onMove(to(left)!), !to(left))}
-      {item('right', 'arrowRight', right ? `Sağa taşı: ${right.stack.title}` : 'Sağa taşı', () => onMove(to(right)!), !to(right))}
-      {item('up', 'arrowUp', 'Yukarı taşı', () => onMove(up!), !up)}
-      {item('down', 'arrowDown', 'Aşağı taşı', () => onMove(down!), !down)}
+      {item('left', 'arrowLeft', left ? m.moveLeftTo(left.stack.title) : m.moveLeft, () => onMove(to(left)!), !to(left))}
+      {item('right', 'arrowRight', right ? m.moveRightTo(right.stack.title) : m.moveRight, () => onMove(to(right)!), !to(right))}
+      {item('up', 'arrowUp', m.moveUp, () => onMove(up!), !up)}
+      {item('down', 'arrowDown', m.moveDown, () => onMove(down!), !down)}
       {columns.length > 3 ? (
         <>
           <View style={{ height: 1, backgroundColor: colors.border, marginVertical: space(1) }} />
-          {columns.filter((c) => c.stack.id !== task.stackId).map((c) => item(`to-${c.stack.id}`, 'kanban', `Taşı: ${c.stack.title}`, () => onMove(to(c)!), !to(c)))}
+          {columns.filter((c) => c.stack.id !== task.stackId).map((c) => item(`to-${c.stack.id}`, 'kanban', `${t.move}: ${c.stack.title}`, () => onMove(to(c)!), !to(c)))}
         </>
       ) : null}
       {item('close', 'close', t.cancel, () => undefined)}
@@ -392,7 +400,7 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
   const countText = col.tasks.length === col.totalCount ? String(col.totalCount) : `${col.tasks.length}/${col.totalCount}`;
   const target = dragId !== null && dropBefore !== 'none';
   return (
-    <View ref={ref} accessibilityLabel={`${col.stack.title}, ${col.totalCount} görev`} style={{ width, maxHeight: '100%', backgroundColor: target ? colors.primarySoft : colors.hover, borderRadius: radius.lg, borderWidth: 1, borderColor: target ? colors.primary : 'transparent', padding: space(2) }}>
+    <View ref={ref} accessibilityLabel={m.columnLabel(col.stack.title, col.totalCount)} style={{ width, maxHeight: '100%', backgroundColor: target ? colors.primarySoft : colors.hover, borderRadius: radius.lg, borderWidth: 1, borderColor: target ? colors.primary : 'transparent', padding: space(2) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2), paddingHorizontal: space(1), minHeight: 36 }}>
         <View style={{ width: 10, height: 10, borderRadius: 3, backgroundColor: color }} />
         <Text accessibilityRole="header" numberOfLines={1} style={{ flexShrink: 1, fontWeight: '700', fontSize: 14, color: colors.textStrong }}>
@@ -403,7 +411,7 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
         </View>
         {col.stack.isDone ? <Icon name="checkCircle" size={15} color={colors.ok} /> : null}
         <View style={{ flex: 1 }} />
-        {canEdit ? <IconButton icon="plus" label={`${col.stack.title} listesine görev ekle`} onPress={() => setAddOpen(!addOpen)} expanded={addOpen} /> : null}
+        {canEdit ? <IconButton icon="plus" label={m.addTaskToList(col.stack.title)} onPress={() => setAddOpen(!addOpen)} expanded={addOpen} /> : null}
       </View>
       <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: space(2), paddingTop: space(1), paddingBottom: space(1) }}>
         {col.tasks.map((task) => (
@@ -428,7 +436,7 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
         {dragId !== null && dropBefore === null ? <View style={{ height: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
         {col.tasks.length === 0 ? (
           <View style={{ borderWidth: 1, borderStyle: 'dashed', borderColor: colors.borderStrong, borderRadius: radius.md, paddingVertical: space(5), alignItems: 'center' }}>
-            <Text style={{ color: colors.muted, fontSize: 13 }}>{dragId !== null ? 'Buraya bırakın' : col.totalCount ? 'Eşleşen görev yok' : t.noTasks}</Text>
+            <Text style={{ color: colors.muted, fontSize: 13 }}>{dragId !== null ? m.dropHere : col.totalCount ? m.noMatchingTasks : t.noTasks}</Text>
           </View>
         ) : null}
       </ScrollView>
@@ -436,8 +444,8 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
         <View style={{ gap: space(2), paddingTop: space(2) }}>
           <TextInput
             autoFocus
-            accessibilityLabel={`${col.stack.title} listesinde yeni görev`}
-            placeholder="Görev başlığı…"
+            accessibilityLabel={m.newTaskInList(col.stack.title)}
+            placeholder={m.taskTitlePlaceholder}
             placeholderTextColor={colors.muted}
             value={title}
             onChangeText={setTitle}
@@ -446,7 +454,7 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
           />
           <View style={{ flexDirection: 'row', gap: space(2) }}>
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy || !title.trim() }} onPress={() => void submit()} style={{ flex: 1, height: 34, borderRadius: radius.sm, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !title.trim() ? 0.6 : 1 }}>
-              <Text style={{ color: colors.primaryText, fontWeight: '600' }}>{busy ? '…' : 'Ekle'}</Text>
+              <Text style={{ color: colors.primaryText, fontWeight: '600' }}>{busy ? '…' : m.add}</Text>
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => { setTitle(''); setAddOpen(false); }} style={{ paddingHorizontal: space(3), height: 34, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: colors.muted }}>{t.cancel}</Text>
@@ -454,9 +462,9 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
           </View>
         </View>
       ) : canEdit ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={`${col.stack.title} listesine görev ekle`} onPress={() => setAddOpen(true)} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space(2), height: 36, borderRadius: radius.sm, backgroundColor: pressed ? colors.border : 'transparent', marginTop: space(1) })}>
+        <Pressable accessibilityRole="button" accessibilityLabel={m.addTaskToList(col.stack.title)} onPress={() => setAddOpen(true)} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space(2), height: 36, borderRadius: radius.sm, backgroundColor: pressed ? colors.border : 'transparent', marginTop: space(1) })}>
           <Icon name="plus" size={16} color={colors.muted} />
-          <Text style={{ color: colors.muted, fontSize: 13 }}>Görev ekle</Text>
+          <Text style={{ color: colors.muted, fontSize: 13 }}>{m.addTask}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -468,7 +476,7 @@ export function KanbanBoard({ board, columns, canEdit, actions, addInStack, onAd
   columns: KanbanColumn[];
   canEdit: boolean;
   actions: KanbanActions;
-  /** Opens the quick-add of a column (header "+ Görev ekle"). */
+  /** Opens the quick-add of a column (header "+ Add task"). */
   addInStack?: number | null;
   onAddHandled?: () => void;
 }) {
@@ -509,7 +517,7 @@ export function KanbanBoard({ board, columns, canEdit, actions, addInStack, onAd
           setAddOpen={(open) => setAddOpen(open ? col.stack.id : null)}
         />
       ))}
-      {!columns.length ? <Text style={{ color: colors.muted, padding: space(4) }}>Bu projede liste yok.</Text> : null}
+      {!columns.length ? <Text style={{ color: colors.muted, padding: space(4) }}>{m.noLists}</Text> : null}
     </ScrollView>
   );
 }
