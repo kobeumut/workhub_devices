@@ -5,7 +5,7 @@ import {
   type AccountId, type GoalCheckinInput, type GoalDetail, type GoalListFilter, type GoalPatch, type GoalProgressState, type GoalSummary, type GoalTarget, type GoalTargetInput, type GoalTargetPatch,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Field, Loading, card, styles as ui } from './ui';
+import { Button, Field, Loading, card, styles as ui, PressCard } from './ui';
 import { Chip } from './taskEdit';
 import { Tabs } from './time';
 import { PrincipalPicker, SharesEditor } from './projectAdmin';
@@ -95,6 +95,7 @@ type OwnerTab = GoalListFilter['owner'];
  * transfer and delete. Every action is shown only when the server's role flags allow it.
  */
 export function GoalsScreen({ accountId }: { accountId: AccountId }) {
+  const [creating, setCreating] = useState(false);
   const { backend } = useServices();
   const [owner, setOwner] = useState<OwnerTab>('all');
   const [archived, setArchived] = useState(false);
@@ -114,6 +115,10 @@ export function GoalsScreen({ accountId }: { accountId: AccountId }) {
   }
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }}>
+      <View style={{ alignItems: 'flex-end', marginBottom: space(2) }}>
+        <Button title={creating ? 'Formu kapat' : 'Yeni hedef'} kind={creating ? 'secondary' : 'primary'} onPress={() => setCreating((c) => !c)} />
+      </View>
+      {creating ? <CreateGoal accountId={accountId} onCreated={(id) => { setCreating(false); list.reload(); setOpen(id); }} /> : null}
       <Tabs value={owner} items={[['all', 'Tümü'], ['me', 'Benim'], ['shared', 'Paylaşılan']]} onChange={setOwner} />
       <View style={{ flexDirection: 'row', gap: space(2), marginBottom: space(2) }}>
         <Chip label="Etkin" selected={!archived} onPress={() => setArchived(false)} />
@@ -123,17 +128,15 @@ export function GoalsScreen({ accountId }: { accountId: AccountId }) {
       {list.loading && !list.data ? <Loading /> : null}
       {items.length === 0 && !list.loading && !list.error ? <Text style={{ color: colors.muted, marginBottom: space(3) }}>Hedef yok.</Text> : null}
       {items.map((g) => (
-        <View key={g.id} style={card}>
+        <PressCard key={g.id} accessibilityLabel={`Hedef: ${g.title}`} onPress={() => setOpen(g.id)}>
           <Text style={{ fontWeight: '700', color: colors.text }}>{g.title}</Text>
           <Text style={{ color: colors.muted }}>
             {g.owner.displayName}{g.dueDate ? ` · Bitiş ${formatDate(g.dueDate)}` : ''}{g.targetCount !== undefined ? ` · ${g.targetCount} hedef değer` : ''}{g.state === 'archived' ? ' · arşivde' : ''}
           </Text>
           <ProgressBar bp={g.progressBp} label={g.title} />
           {g.progressState !== 'ok' ? <Text style={{ color: colors.muted, fontSize: font.small }}>{PROGRESS_STATE[g.progressState] ?? g.progressState}</Text> : null}
-          <Button title="Aç" accessibilityLabel={`Hedef: ${g.title}`} kind="secondary" onPress={() => setOpen(g.id)} />
-        </View>
+        </PressCard>
       ))}
-      {!archived ? <CreateGoal accountId={accountId} onCreated={(id) => { list.reload(); setOpen(id); }} /> : null}
     </ScrollView>
   );
 }

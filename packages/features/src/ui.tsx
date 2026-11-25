@@ -13,8 +13,16 @@ import { describeError, t } from './i18n';
  */
 export const keyboardAvoidBehavior: 'padding' | undefined = Platform.OS === 'ios' ? 'padding' : undefined;
 
-export function Button({ title, onPress, kind = 'primary', disabled, busy, accessibilityHint, accessibilityLabel }: {
+/** RN Web (desktop renderer) uses the web app's denser 36 px controls; touch platforms keep 44 px. */
+const desktop = Platform.OS === 'web';
+
+/**
+ * Content-width button like the web app's `wh-btn` / `NcButton`; `block` stretches it (login,
+ * full-width form submit on phones).
+ */
+export function Button({ title, onPress, kind = 'primary', disabled, busy, accessibilityHint, accessibilityLabel, block = false }: {
   title: string;
+  block?: boolean;
   accessibilityLabel?: string;
   onPress: () => void;
   kind?: 'primary' | 'secondary' | 'danger';
@@ -32,6 +40,7 @@ export function Button({ title, onPress, kind = 'primary', disabled, busy, acces
       onPress={off ? undefined : onPress}
       style={({ pressed }) => [
         styles.button,
+        !block && { alignSelf: 'flex-start' },
         kind === 'primary' && styles.primary,
         kind === 'secondary' && styles.secondary,
         kind === 'danger' && styles.dangerBtn,
@@ -144,10 +153,65 @@ export function Row({ title, subtitle, right, onPress, selected, badge, dotColor
   );
 }
 
+/**
+ * Page heading of a Workhub module (web `workhub-page__header` / `wh-hub__header`): optional
+ * eyebrow, title, muted description, and actions on the right (wrapping under on phones).
+ */
+export function PageHeader({ title, eyebrow, subtitle, actions }: { title: string; eyebrow?: string; subtitle?: string; actions?: ReactNode }) {
+  return (
+    <View style={styles.pageHeader}>
+      <View style={{ flexGrow: 1, flexShrink: 1, minWidth: 200 }}>
+        {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
+        <Text accessibilityRole="header" style={styles.pageTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.pageSubtitle}>{subtitle}</Text> : null}
+      </View>
+      {actions ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(2), flexShrink: 1, maxWidth: '100%' }}>{actions}</View> : null}
+    </View>
+  );
+}
+
+/** Rounded status pill (web `request-status` / `workhub-hub__badge`): text always carries the meaning. */
+export function Pill({ label, tone = 'neutral' }: { label: string; tone?: 'neutral' | 'primary' | 'ok' | 'warning' | 'danger' }) {
+  const c = {
+    neutral: [colors.muted, colors.hover, colors.border],
+    primary: [colors.primary, colors.primarySoft, '#b6dcf2'],
+    ok: [colors.ok, colors.okSoft, '#a7f3d0'],
+    warning: [colors.warning, colors.warningSoft, '#fcd34d'],
+    danger: [colors.danger, colors.dangerSoft, '#f5b5ae'],
+  }[tone];
+  return (
+    <View style={{ alignSelf: 'flex-start', borderRadius: 999, borderWidth: 1, borderColor: c[2], backgroundColor: c[1], paddingHorizontal: space(2), paddingVertical: 2 }}>
+      <Text style={{ color: c[0], fontSize: 12, fontWeight: '600' }}>{label}</Text>
+    </View>
+  );
+}
+
+/** Count chip next to a section title (web `request-count` / `wh-count`). */
+export function CountChip({ count }: { count: number }) {
+  return (
+    <View style={{ minWidth: 22, borderRadius: 999, backgroundColor: colors.primary, paddingHorizontal: 7, paddingVertical: 1, alignItems: 'center' }}>
+      <Text style={{ color: colors.primaryText, fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{count}</Text>
+    </View>
+  );
+}
+
+/** A whole card that opens something (web list items are links, not cards with a "Details" button). */
+export function PressCard({ onPress, accessibilityLabel, children, style }: { onPress: () => void; accessibilityLabel: string; children: ReactNode; style?: ViewStyle }) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} onPress={onPress} style={({ pressed }) => [card, { gap: 4 }, pressed && { backgroundColor: colors.hover, borderColor: colors.borderStrong }, style]}>
+      {children}
+    </Pressable>
+  );
+}
+
 export const card: ViewStyle = { backgroundColor: colors.bg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: space(3), marginBottom: space(2) };
 
 export const styles = StyleSheet.create({
-  button: { minHeight: 44, borderRadius: radius.sm, paddingHorizontal: space(4), alignItems: 'center', justifyContent: 'center', marginVertical: space(1) },
+  pageHeader: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(3), paddingHorizontal: space(4), paddingTop: space(4), paddingBottom: space(3), backgroundColor: colors.bg },
+  eyebrow: { color: colors.muted, fontSize: 12, fontWeight: '700', letterSpacing: 1, marginBottom: 2 },
+  pageTitle: { fontSize: font.h1, fontWeight: '800', color: colors.textStrong },
+  pageSubtitle: { fontSize: font.small, color: colors.muted, marginTop: 2 },
+  button: { minHeight: desktop ? 36 : 44, borderRadius: radius.sm, paddingHorizontal: space(4), alignItems: 'center', justifyContent: 'center', marginVertical: space(1) },
   primary: { backgroundColor: colors.primary },
   secondary: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.primary },
   dangerBtn: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.danger },

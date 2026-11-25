@@ -5,7 +5,7 @@ import {
   type AccountId, type AiAction, type AiInputError, type AiProposal, type AiRequestDetail, type AiRequestInput, type AiRequestState, type AiStatus, type BoardPayload,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Field, Loading, card, styles as ui } from './ui';
+import { Button, Field, Loading, card, styles as ui, PressCard } from './ui';
 import { Chip } from './taskEdit';
 import { Tabs } from './time';
 import { ProjectChips, TaskPicker, type PickedTask } from './taskPicker';
@@ -273,13 +273,12 @@ function History({ accountId, onOpen }: { accountId: AccountId; onOpen: (id: str
       {(list.data ?? []).map((r) => {
         const scope = [r.boardCount ? `${r.boardCount} proje` : '', r.cardCount ? `${r.cardCount} görev` : ''].filter(Boolean).join(', ');
         return (
-          <View key={r.requestId} style={card}>
+          <PressCard key={r.requestId} accessibilityLabel={`${AI_ACTION_LABEL[r.action] ?? r.action}, ${STATE_LABEL[r.state] ?? r.state}: aç`} onPress={() => onOpen(r.requestId)}>
             <Text style={{ fontWeight: '700' }}>{AI_ACTION_LABEL[r.action] ?? r.action}</Text>
             <Text style={{ color: colors.muted, fontSize: font.small }}>
               {STATE_LABEL[r.state] ?? r.state} · {dateTime(r.createdAt)}{scope ? ` · ${scope}` : ''}
             </Text>
-            <Button title="Aç" kind="secondary" accessibilityLabel={`${AI_ACTION_LABEL[r.action] ?? r.action}, ${STATE_LABEL[r.state] ?? r.state}: aç`} onPress={() => onOpen(r.requestId)} />
-          </View>
+          </PressCard>
         );
       })}
       <Button title="Yenile" kind="secondary" onPress={list.reload} />

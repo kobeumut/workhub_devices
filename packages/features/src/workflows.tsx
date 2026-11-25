@@ -7,7 +7,7 @@ import {
   type WorkflowNode, type WorkflowPerson, type WorkflowRun, type WorkflowRunState, type WorkflowStep, type WorkflowStepState,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Field, Loading, card, styles as ui } from './ui';
+import { Button, Field, Loading, card, styles as ui, PressCard } from './ui';
 import { Chip } from './taskEdit';
 import { Tabs } from './time';
 import { SharesEditor } from './projectAdmin';
@@ -105,6 +105,7 @@ type Tab = 'pending' | 'templates';
  * server's role/step flags allow it; the server re-checks.
  */
 export function WorkflowsScreen({ accountId, onOpenTask }: { accountId: AccountId; onOpenTask?: (cardId: number) => void }) {
+  const [creating, setCreating] = useState(false);
   const { backend } = useServices();
   const [tab, setTab] = useState<Tab>('pending');
   const [open, setOpen] = useState<number | null>(null);
@@ -119,6 +120,10 @@ export function WorkflowsScreen({ accountId, onOpenTask }: { accountId: AccountI
   const pending = list.data?.pendingHandoffs ?? 0;
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }}>
+      <View style={{ alignItems: 'flex-end', marginBottom: space(2) }}>
+        <Button title={creating ? 'Formu kapat' : '+ Yeni iş akışı'} kind={creating ? 'secondary' : 'primary'} onPress={() => setCreating((c) => !c)} />
+      </View>
+      {creating ? <CreateWorkflow accountId={accountId} onCreated={(id) => { setCreating(false); setTab('templates'); list.reload(); setOpen(id); }} /> : null}
       <Tabs value={tab} items={[['pending', `Sizi bekleyenler${pending ? ` (${pending})` : ''}`], ['templates', 'Şablonlar']]} onChange={setTab} />
       {tab === 'pending' ? <HandoffList accountId={accountId} onChanged={list.reload} {...(onOpenTask ? { onOpenTask } : {})} /> : null}
       {tab === 'templates' ? (
@@ -127,16 +132,14 @@ export function WorkflowsScreen({ accountId, onOpenTask }: { accountId: AccountI
           {list.loading && !list.data ? <Loading /> : null}
           {list.data && list.data.workflows.length === 0 ? <Text style={{ color: colors.muted, marginBottom: space(3) }}>İş akışı yok.</Text> : null}
           {(list.data?.workflows ?? []).map((w) => (
-            <View key={w.id} style={card}>
+            <PressCard key={w.id} accessibilityLabel={`İş akışı: ${w.title}`} onPress={() => setOpen(w.id)}>
               <Text style={{ fontWeight: '700', color: colors.text }}>{w.title}{w.enabled ? '' : ' (devre dışı)'}</Text>
               <Muted>
                 {`${CATEGORY_LABEL[w.category] ?? w.category} · ${w.stepCount} adım · ${w.startMode === 'auto' ? 'otomatik başlar' : 'elle başlar'} · ${w.runs.running} çalışıyor, ${w.runs.completed} tamamlandı`}
               </Muted>
               <Muted>{`${w.owner.displayName} · ${ROLE_LABEL[w.role]} yetkisi`}</Muted>
-              <Button title="Aç" accessibilityLabel={`İş akışı: ${w.title}`} kind="secondary" onPress={() => setOpen(w.id)} />
-            </View>
+            </PressCard>
           ))}
-          <CreateWorkflow accountId={accountId} onCreated={(id) => { list.reload(); setOpen(id); }} />
         </>
       ) : null}
     </ScrollView>

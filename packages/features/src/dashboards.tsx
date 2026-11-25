@@ -7,7 +7,7 @@ import {
   type DashboardTemplate, type DashboardWidget, type WidgetResult, type WidgetTypeDef,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Field, Loading, card, styles as ui } from './ui';
+import { Button, Field, Loading, card, styles as ui, PressCard } from './ui';
 import { Chip } from './taskEdit';
 import { ProgressBar } from './goals';
 import { SharesEditor } from './projectAdmin';
@@ -92,6 +92,7 @@ const Muted = ({ children }: { children: ReactNode }) => <Text style={{ color: c
  * widget CRUD, header edit, sharing and delete — every action gated by the server's role.
  */
 export function DashboardsScreen({ accountId, projectsEnabled, onOpenTask }: { accountId: AccountId; projectsEnabled: boolean; onOpenTask?: (cardId: number) => void }) {
+  const [creating, setCreating] = useState(false);
   const { backend } = useServices();
   const [open, setOpen] = useState<number | null>(null);
   const [more, setMore] = useState<DashboardSummary[]>([]);
@@ -129,22 +130,24 @@ export function DashboardsScreen({ accountId, projectsEnabled, onOpenTask }: { a
   }
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }}>
+      <View style={{ alignItems: 'flex-end', marginBottom: space(2) }}>
+        <Button title={creating ? 'Formu kapat' : 'Yeni gösterge paneli'} kind={creating ? 'secondary' : 'primary'} onPress={() => setCreating((c) => !c)} />
+      </View>
+      {creating ? <CreateDashboard accountId={accountId} projectsEnabled={projectsEnabled} onCreated={(id) => { setCreating(false); list.reload(); setOpen(id); }} /> : null}
       {list.error ? <Alert text={dashboardError(list.error)} /> : null}
       {list.loading && !list.data ? <Loading /> : null}
       {items.length === 0 && !list.loading && !list.error ? <Text style={{ color: colors.muted, marginBottom: space(3) }}>Dashboard yok. Aşağıdan oluşturabilirsiniz.</Text> : null}
       {items.map((d) => (
-        <View key={d.id} style={card}>
+        <PressCard key={d.id} accessibilityLabel={`Dashboard: ${d.title}`} onPress={() => setOpen(d.id)}>
           <Text style={{ fontWeight: '700', color: colors.text }}>{d.title}</Text>
           <Muted>
             {d.owner.displayName} · {d.widgetCount} widget · rolünüz: {ROLE[d.role] ?? d.role} · güncelleme {dateTime(d.updatedAt)}
           </Muted>
           {d.description ? <Text style={{ color: colors.text, marginTop: space(1) }} numberOfLines={2}>{d.description}</Text> : null}
-          <Button title="Aç" accessibilityLabel={`Dashboard: ${d.title}`} kind="secondary" onPress={() => setOpen(d.id)} />
-        </View>
+        </PressCard>
       ))}
       {cursor ? <Button title="Daha fazla" kind="secondary" onPress={() => void loadMore()} /> : null}
       <Alert text={moreErr} />
-      <CreateDashboard accountId={accountId} projectsEnabled={projectsEnabled} onCreated={(id) => { list.reload(); setOpen(id); }} />
     </ScrollView>
   );
 }
