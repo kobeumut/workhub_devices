@@ -7,7 +7,7 @@ import {
 import type { SecretStore } from '../src/accounts';
 import { OcsError } from '../src/ocs';
 import {
-  barData, buildDashboardFilter, buildDashboardPatch, buildWidgetConfig, buildWidgetPatch, canDrilldown, configToForm, dashboardRoleAtLeast, filterToForm, formatWidgetValue,
+  barData, buildDashboardFilter, buildDashboardPatch, buildWidgetConfig, buildWidgetPatch, canDrilldown, configFieldVisible, configToForm, dashboardRoleAtLeast, filterToForm, formatWidgetValue,
   mergeCards, sortWidgets, widgetState, widgetTitle,
   type ConfigFieldSchema, type Dashboard, type DashboardCard, type DashboardWidget,
 } from '../src/workhub';
@@ -241,4 +241,24 @@ test('dashboard / widget patches carry only changed fields + version', () => {
 test('mergeCards drops cards already shown', () => {
   const c = (id: number) => ({ id } as DashboardCard);
   assert.deepEqual(mergeCards([c(1), c(2)], [c(2), c(3)]).map((x) => x.id), [1, 2, 3]);
+});
+
+test('request widget config: date/person fields and showIf (GENE-246)', () => {
+  const schema: Record<string, ConfigFieldSchema> = {
+    period: { type: 'enum', label: 'Dönem', default: 'last_30_days', options: [{ value: 'last_30_days', label: '30' }, { value: 'custom', label: 'Özel' }] },
+    dateFrom: { type: 'date', label: 'Başlangıç', default: null, showIf: { period: 'custom' } },
+    dateTo: { type: 'date', label: 'Bitiş', default: null, showIf: { period: 'custom' } },
+    person: { type: 'person', label: 'Personel', source: 'requestPeople', default: null },
+  };
+  const form = configToForm(schema, { period: 'custom', dateFrom: '2026-11-01', dateTo: '2026-11-25', person: 'ayse' });
+  assert.deepEqual(form, { period: 'custom', dateFrom: '2026-11-01', dateTo: '2026-11-25', person: 'ayse' });
+  assert.equal(configFieldVisible(schema.dateFrom!, form), true);
+  assert.equal(configFieldVisible(schema.dateFrom!, { ...form, period: 'last_30_days' }), false);
+  assert.equal(configFieldVisible(schema.person!, form), true);
+  assert.deepEqual(buildWidgetConfig(schema, form), { config: { period: 'custom', dateFrom: '2026-11-01', dateTo: '2026-11-25', person: 'ayse' } });
+  // Hidden dates are left to the server default, even when the hidden text is invalid.
+  assert.deepEqual(buildWidgetConfig(schema, { ...form, period: 'last_30_days', dateFrom: 'x' }), { config: { period: 'last_30_days', person: 'ayse' } });
+  assert.deepEqual(buildWidgetConfig(schema, { ...form, dateFrom: '2026-02-30' }), { field: 'dateFrom', error: 'date' });
+  assert.deepEqual(buildWidgetConfig(schema, { ...form, person: '' }), { config: { period: 'custom', dateFrom: '2026-11-01', dateTo: '2026-11-25' } });
+  assert.deepEqual(buildWidgetConfig(schema, { ...form, person: 'x'.repeat(65) }), { field: 'person', error: 'person' });
 });

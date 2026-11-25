@@ -754,7 +754,11 @@ export const requestsApi = {
   convert: async (c: OcsClient, id: number, version: number, boardId: number, stackId: number, idempotencyKey: string) =>
     (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/convert`, { method: 'POST', body: { version, boardId: posId(boardId), stackId: posId(stackId) }, headers: keyHeader(idempotencyKey) })).data,
   report: (c: OcsClient, f: RequestReportFilters) => c.get<RequestReport>(`${BASE}/requests/report`, { query: { scope: f.scope, type: f.type, state: f.state, from: f.from, to: f.to } }),
+  /** People the viewer may pick in request filters and widgets: their reports, everybody for a reviewer, else none. */
+  people: async (c: OcsClient) => (await c.get<{ items: RequestPerson[] }>(`${BASE}/requests/people`)).items,
 };
+
+export interface RequestPerson { uid: string; displayName: string }
 
 export interface RequestContext {
   uid: string;
@@ -1435,11 +1439,18 @@ export interface Dashboard {
   limits: { widgets: number; sources: number };
 }
 
-export type ConfigFieldSchema =
-  | { type: 'int'; label: string; min: number; max: number; default: number | null }
-  | { type: 'enum'; label: string; options: Array<{ value: string; label: string }>; default: string | null }
-  | { type: 'bool'; label: string; default: boolean | null }
-  | { type: 'idList'; label: string; max: number; required?: boolean };
+/** `showIf`: the field only applies while these other settings have these values (e.g. dates of a custom range). */
+type ConfigFieldBase = { label: string; showIf?: Record<string, string> };
+export type ConfigFieldSchema = ConfigFieldBase & (
+  | { type: 'int'; min: number; max: number; default: number | null }
+  | { type: 'enum'; options: Array<{ value: string; label: string }>; default: string | null }
+  | { type: 'bool'; default: boolean | null }
+  | { type: 'idList'; max: number; required?: boolean }
+  /** A day, YYYY-MM-DD. */
+  | { type: 'date'; default: string | null }
+  /** A user id; choices come from `source` (`requestPeople` → Backend.requestPeople). The server re-checks visibility. */
+  | { type: 'person'; source?: string; default: string | null }
+);
 
 export interface WidgetTypeDef {
   type: string;
@@ -1536,6 +1547,7 @@ export interface WidgetResult {
   items?: Array<{ id: number; title: string; progressBp: number | null; state: string; due: string | null; owner: string; url: string }>;
   /** list */
   columns?: Array<{ key: string; label: string }>;
+  /** Deck card lists: DashboardCard rows. Other modules (e.g. requests) send generic rows keyed by `columns`. */
   rows?: DashboardCard[];
   nextCursor?: string | null;
   /** text (AI summary; shown as plain text, never rendered as HTML) */
@@ -1759,12 +1771,20 @@ export const configToForm = (schema: Record<string, ConfigFieldSchema>, config: 
     if (f.type === 'idList') return [k, Array.isArray(v) ? v.join(', ') : ''];
     return [k, v === null || v === undefined ? '' : String(v)];
   }));
-export type ConfigFormError = { field: string; error: 'int_range' | 'enum' | 'id_list' | 'too_many' };
+export type ConfigFormError = { field: string; error: 'int_range' | 'enum' | 'id_list' | 'too_many' | 'date' | 'person' };
+
+/** Whether a config field applies with the current form values (its `showIf` conditions hold). */
+export const configFieldVisible = (field: ConfigFieldSchema, form: ConfigForm) =>
+  Object.entries(field.showIf ?? {}).every(([k, v]) => form[k] === v);
+
+const isDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().startsWith(s);
 
 /** Config form → config object by the schema (ConfigSchema::normalize rules); empty → server default. */
 export function buildWidgetConfig(schema: Record<string, ConfigFieldSchema>, form: ConfigForm): { config: Record<string, unknown> } | ConfigFormError {
   const out: Record<string, unknown> = {};
   for (const [k, f] of Object.entries(schema)) {
+    // A hidden field (e.g. custom-range dates while a preset period is chosen) is left to the server default.
+    if (!configFieldVisible(f, form)) continue;
     const raw = form[k];
     if (f.type === 'bool') {
       if (typeof raw === 'boolean') out[k] = raw;
@@ -1777,6 +1797,12 @@ export function buildWidgetConfig(schema: Record<string, ConfigFieldSchema>, for
       out[k] = Number(s);
     } else if (f.type === 'enum') {
       if (!f.options.some((o) => o.value === s)) return { field: k, error: 'enum' };
+      out[k] = s;
+    } else if (f.type === 'date') {
+      if (!isDay(s)) return { field: k, error: 'date' };
+      out[k] = s;
+    } else if (f.type === 'person') {
+      if (s.length > 64) return { field: k, error: 'person' };
       out[k] = s;
     } else {
       const parts = s.split(/[\s,;]+/).filter(Boolean);
