@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDirectBackend, dispatchWire, isValidReportFilters, type PlainStore } from '../src/backend';
+import { createDirectBackend, createWireBackend, dispatchWire, isValidReportFilters, type PlainStore } from '../src/backend';
 import type { SecretStore } from '../src/accounts';
 import { OcsClient, OcsError } from '../src/ocs';
 import { loadPendingRequestApprovals, requestActions, requestReportStatus, requestsApi, type RequestListState, type RequestScope, type WorkRequest } from '../src/workhub';
@@ -107,7 +107,7 @@ test('new request endpoints preserve inbox counts, decision bodies, and report f
   const r = json(200, ocs(req()));
   const inbox = { items: [], total: 27, canSeeAll: true, reviewer: true };
   const report = { items: [], total: 0, scope: 'team', approval: 'approved', person: 'ali', people: [{ uid: 'ali', displayName: 'Ali' }], reviewer: true };
-  const { b, f, id } = await loggedIn(bootstrap(true), json(200, ocs(inbox)), r.clone(), r.clone(), r.clone(), r, json(200, ocs(report)));
+  const { b, f, id } = await loggedIn(bootstrap(true), json(200, ocs(inbox)), r.clone(), r.clone(), r.clone(), r, json(200, ocs(report)), json(200, ocs({ items: report.people })));
   assert.deepEqual(await dispatchWire(b, 'requestInbox', [id, 10]), { ok: true, value: inbox });
   for (const [method, args] of [
     ['requestDecide', [id, 5, 2, 'reject', ' Neden ', KEY]], ['requestCancel', [id, 5, 2, null, KEY]],
@@ -115,8 +115,11 @@ test('new request endpoints preserve inbox counts, decision bodies, and report f
   ] as const) assert.equal((await dispatchWire(b, method, [...args])).ok, true);
   const filters = { scope: 'team', type: 'all', state: 'any', from: '2026-10-01', to: '2026-11-02', person: 'ali', approval: 'approved' };
   assert.deepEqual(await dispatchWire(b, 'requestReport', [id, filters]), { ok: true, value: report });
+  const renderer = createWireBackend((method, args) => dispatchWire(b, method, args));
+  assert.deepEqual(await renderer.requestPeople(id), report.people);
   const calls = f.calls.slice(3);
-  assert.deepEqual(calls.map((x) => new URL(x.url).pathname.split('/requests').at(-1)), ['/inbox', '/5/approval', '/5/cancel', '/5/remind', '/5/remind-managers', '/report']);
+  assert.deepEqual(calls.map((x) => new URL(x.url).pathname.split('/requests').at(-1)), ['/inbox', '/5/approval', '/5/cancel', '/5/remind', '/5/remind-managers', '/report', '/people']);
+  assert.equal(calls[6]!.init.method, 'GET');
   assert.equal(new URL(calls[0]!.url).searchParams.get('limit'), '10');
   assert.deepEqual(calls.slice(1, 5).map((x) => JSON.parse(String(x.init.body))), [{ version: 2, decision: 'reject', reason: 'Neden' }, { version: 2 }, { version: 2 }, { version: 2 }]);
   for (const call of calls.slice(1, 5)) assert.equal(headerOf(call, 'Idempotency-Key'), KEY);
@@ -133,6 +136,7 @@ test('backend gate: module disabled stops calls, but recipient conversion and se
   {
     const { b, f, id } = await loggedIn(bootstrap(false));
     await assert.rejects(b.requestDetail(id, 5), (e: unknown) => e instanceof OcsError && e.errorCode === 'REQUESTS_DISABLED');
+    await assert.rejects(b.requestPeople(id), (e: unknown) => e instanceof OcsError && e.errorCode === 'REQUESTS_DISABLED');
     assert.equal(f.calls.length, 3, 'only login + bootstrap');
   }
   {
@@ -170,6 +174,9 @@ test('IPC validation: request actions and report filters', async () => {
   assert.deepEqual(await dispatchWire(b, 'requestConvert', ['acc', 5, -1, 1, 3, KEY]), BAD, 'negative version');
   assert.deepEqual(await dispatchWire(b, 'requestHistory', ['acc', 5, 'x']), BAD);
   assert.deepEqual(await dispatchWire(b, 'requestReport', ['acc', { ...filters, to: '2026-09-01' }]), BAD);
+  assert.deepEqual(await dispatchWire(b, 'requestPeople', ['acc', 'extra']), BAD);
+  const people = await dispatchWire(b, 'requestPeople', ['acc']);
+  assert.equal(people.ok === false && people.error.kind, 'unauthorized', 'valid call reaches the account check');
   const ok = await dispatchWire(b, 'requestConvert', ['acc', 5, 2, 1, 3, KEY]);
   assert.equal(ok.ok === false && ok.error.kind, 'unauthorized');
 });

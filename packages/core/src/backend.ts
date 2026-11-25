@@ -13,7 +13,7 @@ import {
 import {
   openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, goalsApi, cardSetWithout, REPORT_APPROVALS, REPORT_STATES, REQUEST_STATES, GOAL_MAX_SCALE,
   SHARE_OBJECT_TYPES, SHARE_ROLES, ASSIGNMENT_STATUSES, type AssignedTasks, type AssignmentStatus, type WorkhubBadges, type MemberRights, type ProjectMembers,
-  type CsvScope, type RequestDecision, type RequestEvent, type RequestInbox, type RequestListState, type RequestPage, type RequestReport, type RequestReportFilters, type RequestScope, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
+  type CsvScope, type RequestDecision, type RequestEvent, type RequestInbox, type RequestListState, type RequestPage, type RequestPerson, type RequestReport, type RequestReportFilters, type RequestScope, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
   projectViewsApi, ACTIVITY_TYPES, WORKLOAD_MAX_DAYS,
   type ActivityFilter, type ActivityPage, type GanttPayload, type WorkloadMatrix, type WorkloadQuery,
   dashboardsApi, dashboardRoleAtLeast, DASHBOARD_FILTER_FIELDS, DASHBOARD_FILTER_LIMITS, DASHBOARD_MAX_SOURCES, DASHBOARD_MAX_WIDGETS, DASHBOARD_TEMPLATES, DASHBOARD_GRID_COLUMNS,
@@ -207,6 +207,8 @@ export interface Backend {
   requestRemind(accountId: AccountId, requestId: number, version: number, idempotencyKey: string): Promise<WorkRequest | null>;
   requestRemindManagers(accountId: AccountId, requestId: number, version: number, idempotencyKey: string): Promise<WorkRequest | null>;
   requestReport(accountId: AccountId, filters: RequestReportFilters): Promise<RequestReport>;
+  /** People the account may pick in request widgets (reports; everybody for a reviewer; empty otherwise). */
+  requestPeople(accountId: AccountId): Promise<RequestPerson[]>;
   /** Goals module (gate: `modules.goals`, fail closed). Default filter: all visible, active. */
   goals(accountId: AccountId, filter?: GoalListFilter): Promise<GoalSummary[]>;
   goalDetail(accountId: AccountId, goalId: number): Promise<GoalDetail>;
@@ -1032,6 +1034,9 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async requestReport(accountId, filters) {
       return requestsApi.report(await requestClient(accountId), filters);
     },
+    async requestPeople(accountId) {
+      return requestsApi.people(await requestClient(accountId));
+    },
     async goals(accountId, filter) {
       return goalsApi.list(await goalClient(accountId), filter);
     },
@@ -1277,7 +1282,7 @@ export const BACKEND_METHODS = [
   'timer', 'timerStart', 'timerStop', 'timeWeek', 'timePeriod', 'timeCardEntries',
   'timeEntryCreate', 'timeEntryUpdate', 'timeEntryDelete', 'timeSubmit', 'timeWithdraw', 'timeReviews', 'timeSubmission', 'timeDecide', 'timeTeam', 'timeCsv',
   'requests', 'requestPage', 'requestInbox', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert',
-  'requestDecide', 'requestCancel', 'requestRemind', 'requestRemindManagers', 'requestReport',
+  'requestDecide', 'requestCancel', 'requestRemind', 'requestRemindManagers', 'requestReport', 'requestPeople',
   'goals', 'goalDetail', 'goalCreate', 'goalUpdate', 'goalDelete', 'goalTransfer', 'goalTargetAdd', 'goalTargetUpdate', 'goalTargetDelete',
   'goalCheckin', 'goalCheckins', 'goalSetCards', 'cardGoals', 'cardLinkGoal', 'cardUnlinkGoal',
   'projectGantt', 'projectActivity', 'taskActivity', 'workload',
@@ -1684,6 +1689,7 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   requestRemind: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
   requestRemindManagers: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
   requestReport: (a) => a.length === 2 && isAccountId(a[0]) && isValidReportFilters(a[1]),
+  requestPeople: (a) => a.length === 1 && isAccountId(a[0]),
   goals: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && (a[1] === undefined || isValidGoalFilter(a[1])),
   goalDetail: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   goalCreate: (a) => a.length === 2 && isAccountId(a[0]) && isValidGoalInput(a[1]),
