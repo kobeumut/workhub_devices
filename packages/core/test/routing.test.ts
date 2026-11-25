@@ -51,6 +51,17 @@ test('server links: pretty, index.php and sub-directory forms; foreign origins r
   assert.equal(parseServerLink(root, 'https://example.com/apps/workhub/projects/2/evil?card=9'), null);
 });
 
+test('request notifications and approval links open only a valid request on the account server', () => {
+  const sub = normalizeServerUrl('https://example.com/nc');
+  assert.deepEqual(interpretPush({ app: 'workhub', type: 'request', id: '9', nid: 12 }), {
+    action: 'show', notificationId: 12, app: 'workhub', route: { name: 'request', requestId: 9 },
+  });
+  assert.deepEqual(parseServerLink(sub, 'https://example.com/nc/index.php/apps/workhub/requests/approvals?request=9'), { name: 'request', requestId: 9 });
+  assert.equal(parseServerLink(sub, 'https://evil.example/nc/apps/workhub/requests/approvals?request=9'), null);
+  assert.equal(parseServerLink(sub, 'https://example.com/nc/apps/workhub/requests/approvals?request=9999999999999999'), null);
+  assert.deepEqual(routeForObject('talk', 'request', '9'), { name: 'inbox' });
+});
+
 test('lock screen default hides content; foreground suppression is account-aware', () => {
   const n = { app: 'spreed', subject: 'Ali: gizli', message: 'detay', shouldNotify: true };
   assert.deepEqual(presentNotification(n, false), { title: 'Yeni mesaj', body: '', channel: 'chat' });

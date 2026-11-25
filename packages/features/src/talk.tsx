@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   activeMentionQuery, classifySendFailure, editableText, fileOf, insertMention, isHiddenSystemMessage, lastServerId, mentionsSelf, mergeTimeline, messageActions,
-  newReferenceId, presenceLabel, presenceTone, sortRooms, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
-  type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type TalkFeatures, type TalkMessage, type TalkRoom,
+  newReferenceId, parseServerLink, presenceLabel, presenceTone, sortRooms, readMarker, reactionSummary, reconnectDelay, renderMessageSegments, roomActions, setPendingState, withReactions, TALK_LIMITS,
+  type AccountId, type ChatItem, type MentionSuggestion, type MessageSearchHit, type ReactionMap, type ServerBase, type TalkFeatures, type TalkMessage, type TalkRoom,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { chatReadViewability, useActivity, type TalkState } from './talkState';
@@ -129,7 +129,7 @@ export function RoomList({ accountId, selected, onOpen, features, canCreate, sta
 
 const PRESENCE_COLORS = { green: '#16a34a', yellow: '#eab308', red: '#dc2626', gray: '#9ca3af' } as const;
 
-function MessageText({ m, selfId }: { m: TalkMessage; selfId: string }) {
+function MessageText({ m, selfId, serverBase, onOpenRequest }: { m: TalkMessage; selfId: string; serverBase?: ServerBase | undefined; onOpenRequest?: ((id: number) => void) | undefined }) {
   const segs = renderMessageSegments(m.message, m.messageParameters);
   return (
     <Text style={{ color: colors.text, fontSize: font.body }} selectable>
@@ -147,7 +147,10 @@ function MessageText({ m, selfId }: { m: TalkMessage; selfId: string }) {
             📎 {s.text}
           </Text>
         ) : (
-          <Text key={i}>{s.text}</Text>
+          <Text key={i}>{serverBase && onOpenRequest ? s.text.split(/(https?:\/\/[^\s<>"']+)/gi).map((piece, j) => {
+            const route = j % 2 ? parseServerLink(serverBase, piece) : null;
+            return route?.name === 'request' ? <Text key={j} accessibilityRole="link" onPress={() => onOpenRequest(route.requestId)} style={{ color: colors.primary, textDecorationLine: 'underline' }}>{piece}</Text> : piece;
+          }) : s.text}</Text>
         ),
       )}
     </Text>
@@ -163,11 +166,13 @@ type Mode = { kind: 'reply'; message: TalkMessage } | { kind: 'edit'; message: T
  * (`features`) and role-gated from the CURRENT room; edits, deletions and reactions of others
  * arrive through the same feed (update system messages, merged by `mergeTimeline`).
  */
-export function ChatView({ accountId, room: roomRef, selfId, features, onBack, onRoomChanged, onRead, onRoomGone }: {
+export function ChatView({ accountId, room: roomRef, selfId, features, serverBase, onOpenRequest, onBack, onRoomChanged, onRead, onRoomGone }: {
   accountId: AccountId;
   room: { token: string; displayName: string };
   selfId: string;
   features: TalkFeatures;
+  serverBase?: ServerBase;
+  onOpenRequest?: (id: number) => void;
   onBack?: () => void;
   onRoomChanged?: () => void;
   onRead?: () => void;
@@ -522,11 +527,11 @@ export function ChatView({ accountId, room: roomRef, selfId, features, onBack, o
                     <Text style={{ color: colors.muted, fontStyle: 'italic' }}>🗑 Bu mesaj silindi</Text>
                   ) : file ? (
                     <>
-                      {file.caption ? <MessageText m={m} selfId={selfId} /> : null}
+                      {file.caption ? <MessageText m={m} selfId={selfId} serverBase={serverBase} onOpenRequest={onOpenRequest} /> : null}
                       <FileCard accountId={accountId} token={token} messageId={m.id} file={file} />
                     </>
                   ) : (
-                    <MessageText m={m} selfId={selfId} />
+                    <MessageText m={m} selfId={selfId} serverBase={serverBase} onOpenRequest={onOpenRequest} />
                   )}
                   <Text style={{ fontSize: 11, color: colors.muted, alignSelf: 'flex-end' }}>
                     {formatTime(m.timestamp)}

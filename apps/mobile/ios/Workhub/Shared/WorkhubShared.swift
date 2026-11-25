@@ -116,6 +116,9 @@ enum WorkhubRouting {
          ["chat", "room", "call", "reminder", "remote_talk_share"].contains(type) { return ["name": "room", "token": token] }
     }
     if app == "workhub", type == "card", let n = Int(id), n > 0 { return ["name": "task", "cardId": n] }
+    if app == "workhub", type == "request", let n = Int(id), n > 0, n <= 9_007_199_254_740_991, String(n) == id {
+      return ["name": "request", "requestId": n]
+    }
     return ["name": "inbox"]
   }
 }

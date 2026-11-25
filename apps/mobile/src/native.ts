@@ -65,11 +65,12 @@ export interface NativeRoute {
 export function parseNativeRoute(raw: string | null): NativeRoute | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw) as { tag?: unknown; route?: { name?: unknown; token?: unknown; cardId?: unknown } };
+    const v = JSON.parse(raw) as { tag?: unknown; route?: { name?: unknown; token?: unknown; cardId?: unknown; requestId?: unknown } };
     if (typeof v.tag !== 'string' || !v.route) return null;
     const r = v.route;
     if (r.name === 'room' && typeof r.token === 'string' && /^[a-z0-9]{1,64}$/i.test(r.token)) return { tag: v.tag, route: { name: 'room', token: r.token } };
     if (r.name === 'task' && Number.isInteger(r.cardId) && (r.cardId as number) > 0) return { tag: v.tag, route: { name: 'task', cardId: r.cardId as number } };
+    if (r.name === 'request' && typeof r.requestId === 'number' && Number.isSafeInteger(r.requestId) && r.requestId > 0) return { tag: v.tag, route: { name: 'request', requestId: r.requestId } };
     return { tag: v.tag, route: { name: 'inbox' } };
   } catch {
     return null;

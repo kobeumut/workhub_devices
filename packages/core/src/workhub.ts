@@ -13,6 +13,8 @@ export interface ProjectSummary {
   title: string;
   color: string;
   archived: boolean;
+  personal?: boolean;
+  reviewer?: boolean;
   edit: boolean;
   manage: boolean;
   /** May add members (Deck "share" permission). */
@@ -22,10 +24,45 @@ export interface ProjectSummary {
   overdueCount: number;
 }
 
+export const ASSIGNMENT_STATUSES = ['open', 'done', 'all'] as const;
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
+
+/** Display fields from the signed-in person's cross-project assignment list. */
+export interface AssignedTasks {
+  boards: Pick<ProjectSummary, 'id' | 'title' | 'color'>[];
+  tasks: { id: number; boardId: number; title: string; dueDate: string | null; done: string | null; priority: Priority | null }[];
+  truncated: boolean;
+}
+
+export interface WorkhubBadges {
+  overdue: number;
+  overdueByProject: Record<number, number>;
+  approvals: { requests: number; timesheets: number; total: number };
+  total: number;
+}
+
+function parseWorkhubBadges(raw: WorkhubBadges): WorkhubBadges {
+  const count = (n: unknown): n is number => Number.isSafeInteger(n) && Number(n) >= 0;
+  const map = raw?.overdueByProject;
+  if (!map || typeof map !== 'object' || Array.isArray(map) ||
+      ![raw.overdue, raw.approvals?.requests, raw.approvals?.timesheets, raw.approvals?.total, raw.total].every(count) ||
+      !Object.entries(map).every(([key, n]) => /^[1-9]\d*$/.test(key) && Number.isSafeInteger(Number(key)) && count(n))) {
+    throw new OcsError('server', undefined, 'invalid badge summary');
+  }
+  return raw;
+}
+
 export interface TaskAssignee {
   type: 'user' | 'group';
   id: string;
   displayName: string;
+}
+
+export interface TaskRunningTimer {
+  uid: string;
+  displayName: string;
+  startedAt: string;
+  elapsedSec: number;
 }
 
 export interface Task {
@@ -44,6 +81,7 @@ export interface Task {
   lastModified: string;
   url: string;
   subtasks: { done: number; total: number };
+  runningTimers?: TaskRunningTimer[];
 }
 
 export interface SubtaskItem {
@@ -65,6 +103,9 @@ export interface TaskLink {
 export interface TaskDetail extends Task {
   /** Description WITHOUT checklist lines; the server preserves the checklist on PATCH. */
   description: string;
+  canComment?: boolean;
+  trackedSec?: number;
+  mySec?: number;
   estimateSec: number | null;
   /** Story points (whole number); null/absent = not sized (absent on servers older than Workhub 0.5.1). */
   storyPoints?: number | null;
@@ -89,10 +130,17 @@ export interface BoardPayload {
     stacks: { id: number; title: string; order: number; isDone: boolean }[];
     labels: ProjectLabel[];
     members: { uid: string; displayName: string }[];
-    permissions: { read: boolean; edit: boolean; manage: boolean; share: boolean };
+    reviewer?: boolean;
+    permissions: { read: boolean; edit: boolean; manage: boolean; share: boolean; canComment?: boolean };
     features?: { dependencies?: boolean; doneColumn?: boolean };
   };
   tasks: Task[];
+}
+
+/** Reviewer-only access never offers project writes; ordinary direct grants keep their own permissions. */
+export function projectWritePermissions(project?: Pick<BoardPayload['project'], 'permissions' | 'reviewer'>) {
+  const perms = project?.reviewer !== true && project?.permissions.read === true ? project.permissions : undefined;
+  return { edit: perms?.edit === true, manage: perms?.manage === true, share: perms?.share === true };
 }
 
 export interface StackSummary {
@@ -116,6 +164,13 @@ export interface MemberGrant {
   edit: boolean;
   share: boolean;
   manage: boolean;
+}
+
+export type MemberRights = Pick<MemberGrant, 'edit' | 'share' | 'manage'>;
+export interface ProjectMembers {
+  owner: { uid: string; displayName: string } | null;
+  shares: (MemberGrant & { id: number; displayName: string })[];
+  permissions: BoardPayload['project']['permissions'];
 }
 
 /** Objects with Workhub's own ACL (projects use Deck/native board ACL instead). */
@@ -146,6 +201,7 @@ export interface TaskPatch {
   title?: string;
   description?: string;
   done?: boolean;
+  archived?: boolean;
   /** Complete set of user ids (replaces). */
   assignees?: string[];
   /** Complete set of label ids INCLUDING the current priority label (the server replaces the whole set). */
@@ -156,6 +212,17 @@ export interface TaskPatch {
   storyPoints?: number | null;
   priority?: Priority | null;
 }
+
+export type TaskSchedule = Pick<TaskPatch, 'startDate' | 'dueDate' | 'estimateSec'>;
+
+export const canEditProjectTasks = (project: BoardPayload['project'] | undefined) =>
+  project?.permissions.edit === true && project.reviewer !== true;
+
+export const canWriteTaskComment = (project: Pick<BoardPayload['project'], 'permissions'> | undefined, task: Pick<TaskDetail, 'canComment'>) =>
+  project?.permissions.read === true && (task.canComment ?? project.permissions.canComment ?? true) === true;
+
+export const canTrackTask = (project: BoardPayload['project'] | undefined, policy: TimePolicySummary | undefined) =>
+  project?.permissions.read === true && project.reviewer !== true && !!policy && (policy.requireCardEdit !== true || canEditProjectTasks(project));
 
 export interface TaskComment {
   id: number;
@@ -191,8 +258,29 @@ const shareType = (t: string): ShareObjectType => {
 export const workhubApi = {
   projects: async (c: OcsClient, includeArchived = false) =>
     (await c.get<{ projects: ProjectSummary[] }>(`${BASE}/projects`, { query: { includeArchived } })).projects,
-  board: async (c: OcsClient, boardId: number, view: 'kanban' | 'list' = 'kanban') =>
-    c.get<BoardPayload>(`${BASE}/projects/${id(boardId)}/views/${view}`),
+  assignedTasks: async (c: OcsClient, status: AssignmentStatus) => {
+    const data = await c.get<AssignedTasks>(`${BASE}/assignments`, { query: { status } });
+    const validId = (n: number) => Number.isSafeInteger(n) && n > 0;
+    const nullableText = (value: unknown) => value === null || typeof value === 'string';
+    if (!Array.isArray(data?.boards) || !Array.isArray(data.tasks) || typeof data.truncated !== 'boolean' ||
+        !data.boards.every((p) => p && validId(p.id) && typeof p.title === 'string') ||
+        !data.tasks.every((task) => task && validId(task.id) && validId(task.boardId) && typeof task.title === 'string' && nullableText(task.done) && nullableText(task.dueDate) &&
+          (task.priority === null || task.priority === 'urgent' || task.priority === 'high' || task.priority === 'normal' || task.priority === 'low'))) {
+      throw new OcsError('server', undefined, 'invalid assignment list');
+    }
+    return data;
+  },
+  badges: async (c: OcsClient, fresh: boolean) =>
+    parseWorkhubBadges(await c.get<WorkhubBadges>(`${BASE}/badges`, fresh ? { query: { fresh: 1 } } : undefined)),
+  personalProject: async (c: OcsClient) => {
+    const { data } = await c.request<{ id: number }>(`${BASE}/projects/personal`, { method: 'POST' });
+    if (!data) throw new OcsError('server', undefined, 'missing personal project');
+    return { id: id(data.id) };
+  },
+  board: async (c: OcsClient, boardId: number, view: 'kanban' | 'list' = 'kanban', includeArchived = false) =>
+    c.get<BoardPayload>(`${BASE}/projects/${id(boardId)}/views/${view}`, includeArchived ? { query: { includeArchived: true } } : {}),
+  createTask: async (c: OcsClient, boardId: number, stackId: number, title: string, idempotencyKey: string, schedule?: TaskSchedule) =>
+    (await c.request<Task>(`${BASE}/projects/${id(boardId)}/tasks`, { method: 'POST', body: { ...schedule, stackId: id(stackId), title: text(title, 255) }, headers: { 'Idempotency-Key': idempotencyKey } })).data,
   task: async (c: OcsClient, cardId: number) => c.get<TaskDetail>(`${BASE}/tasks/${id(cardId)}`),
   comments: async (c: OcsClient, cardId: number) => (await c.get<{ items: TaskComment[] }>(`${BASE}/tasks/${id(cardId)}/comments`)).items,
   /** Idempotency-Key is supported by this endpoint, so a lost response can be retried with the same key. */
@@ -229,13 +317,22 @@ export const workhubApi = {
     })).data,
   renameProject: async (c: OcsClient, boardId: number, title: string) =>
     (await c.request<{ id: number; title: string }>(`${BASE}/projects/${id(boardId)}`, { method: 'PATCH', body: { title: text(title, RENAME_MAX) } })).data,
-  /** 409 `PROJECT_MEMBER_EXISTS` when the user/group already has direct access. There is no remove API. */
+  projectMembers: (c: OcsClient, boardId: number) => c.get<ProjectMembers>(`${BASE}/projects/${id(boardId)}/members`),
+  /** 409 `PROJECT_MEMBER_EXISTS` when the user/group already has direct access. */
   addProjectMember: async (c: OcsClient, boardId: number, grant: MemberGrant, idempotencyKey: string = uuid()) =>
     (await c.request<{ id: number }>(`${BASE}/projects/${id(boardId)}/members`, {
       method: 'POST',
       body: { type: grant.type, participant: grant.participant, edit: grant.edit, share: grant.share, manage: grant.manage },
       headers: { 'Idempotency-Key': idempotencyKey },
     })).data,
+  updateProjectMember: async (c: OcsClient, boardId: number, shareId: number, rights: MemberRights) =>
+    (await c.request<{ id: number }>(`${BASE}/projects/${id(boardId)}/members/${id(shareId)}`, {
+      method: 'PATCH', body: { edit: rights.edit, share: rights.share, manage: rights.manage },
+    })).data,
+  removeProjectMember: async (c: OcsClient, boardId: number, shareId: number) =>
+    (await c.request<{ id: number; deleted: boolean }>(`${BASE}/projects/${id(boardId)}/members/${id(shareId)}`, { method: 'DELETE' })).data,
+  reorderProjectStacks: async (c: OcsClient, boardId: number, stackIds: number[]) =>
+    (await c.request<{ stacks: StackSummary[] }>(`${BASE}/projects/${id(boardId)}/stacks/order`, { method: 'PUT', body: { stackIds } })).data,
   createStack: async (c: OcsClient, boardId: number, title: string, order: number) =>
     (await c.request<StackSummary>(`${BASE}/projects/${id(boardId)}/stacks`, { method: 'POST', body: { title: text(title, STACK_TITLE_MAX), order: idx(order) } })).data,
   renameStack: async (c: OcsClient, stackId: number, title: string) =>
@@ -371,6 +468,8 @@ export interface TimePolicySummary {
   weekStart: number;
   overlap: 'allow' | 'warn' | 'reject';
   allowTaskless: boolean;
+  requireCardEdit?: boolean;
+  policyVersion?: number;
   maxEntrySeconds: number;
 }
 
@@ -453,7 +552,8 @@ const keyHeader = (k: string) => ({ 'Idempotency-Key': k });
 
 export const timeApi = {
   week: (c: OcsClient, date?: string) => c.get<TimeWeek>(`${BASE}/time/week`, date ? { query: { date } } : {}),
-  period: (c: OcsClient, periodId: number) => c.get<TimeWeek & { viewerRole: 'owner' | 'reviewer'; user: { uid: string; displayName: string } }>(`${BASE}/time/periods/${posId(periodId)}`),
+  period: (c: OcsClient, periodId: number) => c.get<Pick<TimeWeek, 'period' | 'days' | 'entries' | 'totals' | 'submissions'> & { viewerRole: 'owner' | 'reviewer'; user: { uid: string; displayName: string } }>(`${BASE}/time/periods/${posId(periodId)}`),
+  cardEntries: async (c: OcsClient, cardId: number) => (await c.get<{ entries: TimeEntry[]; cardId: number }>(`${BASE}/time/entries`, { query: { cardId: posId(cardId) } })).entries,
   createEntry: async (c: OcsClient, input: TimeEntryInput, idempotencyKey: string) => {
     const { kind, ...rest } = input;
     return (await c.request<TimeEntryResult>(`${BASE}/time/entries`, { method: 'POST', body: { entryKind: kind, ...rest }, headers: keyHeader(idempotencyKey) })).data;
@@ -570,14 +670,22 @@ export function buildTimeEntry(form: TimeEntryForm, zone: string, opts: { maxEnt
   // Policy `allowTaskless=false`: new entries and changed links need a task (an existing taskless entry may stay).
   if (!opts.allowTaskless && cardId === null && (!entry || entry.cardId !== null)) return { error: 'task_required' };
   if (!description && cardId === null) return { error: 'description_required' };
+  if (entry && entry.kind !== form.kind) return { error: 'time_invalid' };
+  const base = entry ? timeEntryFormOf(entry, zone, form.date) : null;
+  const patch: TimeEntryPatch = { version: entry?.version ?? 0 };
+  const sameDay = form.date === base?.date;
   let time: { startUtc: string; endUtc: string } | { localDate: string; durationSeconds: number };
-  if (form.kind === 'range') {
+  if (entry && sameDay && form.start === base?.start && form.end === base?.end && form.hours === base?.hours) {
+    // A metadata edit must not round seconds, alter DST offsets or rebuild a multi-day range.
+    time = entry.kind === 'range' ? { startUtc: entry.startUtc!, endUtc: entry.endUtc! } : { localDate: entry.localDate, durationSeconds: entry.durationSec };
+  } else if (form.kind === 'range') {
     const hm = /^([01]\d|2[0-3]):[0-5]\d$/;
     if (!hm.test(form.start) || !hm.test(form.end)) return { error: 'time_invalid' };
-    const startUtc = zonedToUtc(form.date, form.start, zone);
+    const startUtc = sameDay && form.start === base?.start ? entry!.startUtc! : zonedToUtc(form.date, form.start, zone);
     let endDate = form.date;
     if (form.end <= form.start) endDate = new Date(Date.parse(`${form.date}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
-    const endUtc = zonedToUtc(endDate, form.end, zone);
+    const endUtc = sameDay && form.start === base?.start && form.end === base?.end ? entry!.endUtc! : zonedToUtc(endDate, form.end, zone);
+    if (utcToZoned(startUtc, zone).time !== form.start || utcToZoned(endUtc, zone).time !== form.end) return { error: 'time_invalid' };
     const sec = (Date.parse(endUtc) - Date.parse(startUtc)) / 1000;
     if (sec <= 0) return { error: 'time_invalid' };
     if (sec > opts.maxEntrySeconds) return { error: 'too_long' };
@@ -592,8 +700,6 @@ export function buildTimeEntry(form: TimeEntryForm, zone: string, opts: { maxEnt
     const extra = { timezone: zone, description: description || null, billable: form.billable, ...(cardId ? { cardId } : {}) };
     return { create: form.kind === 'range' ? { kind: 'range', ...(time as { startUtc: string; endUtc: string }), ...extra } : { kind: 'duration', ...(time as { localDate: string; durationSeconds: number }), ...extra } };
   }
-  if (entry.kind !== form.kind) return { error: 'time_invalid' };
-  const patch: TimeEntryPatch = { version: entry.version };
   if ('startUtc' in time) {
     if (time.startUtc !== entry.startUtc) patch.startUtc = time.startUtc;
     if (time.endUtc !== entry.endUtc) patch.endUtc = time.endUtc;
@@ -621,7 +727,17 @@ export function periodActions(week: Pick<TimeWeek, 'period' | 'submissions'>): {
 /** An entry may be edited/deleted only when the server says neither it nor its period is locked. */
 export const entryEditable = (week: Pick<TimeWeek, 'period'>, e: TimeEntry) => week.period.open && !e.locked && e.periodId === week.period.id;
 
-export type RequestState = 'pending' | 'rejected' | 'open' | 'converted' | 'resolved';
+/** Card history omits reliable period locks. Edit only the fresh owner-period row. */
+export function editableCardEntry(period: Awaited<ReturnType<typeof timeApi.period>>, entryId: number, cardId: number): TimeEntry | undefined {
+  if (period.viewerRole !== 'owner') return undefined;
+  return period.entries.find((e) => e.id === entryId && e.cardId === cardId && entryEditable(period, e) && Number.isInteger(e.version) && e.version >= 0);
+}
+
+export const REQUEST_STATES = ['pending', 'rejected', 'withdrawn', 'open', 'converted', 'resolved', 'cancelled'] as const;
+export type RequestState = (typeof REQUEST_STATES)[number];
+export type RequestListState = 'any' | RequestState;
+export type RequestScope = 'mine' | 'received' | 'team';
+export type ManagerApprovalState = 'waiting' | 'approved' | 'rejected';
 export type RequestTaskState = 'open' | 'closed' | 'missing' | null;
 
 /** Linked task as the server resolves it for the caller (null when not readable → `cardRestricted`). */
@@ -640,18 +756,38 @@ export interface RequestCard {
 
 export interface WorkRequest {
   id: number;
-  /** Optimistic lock for respond / resolve / convert. */
+  /** Optimistic lock for request decisions and lifecycle changes. */
   version: number;
   title: string;
   description: string;
   requesterUid: string;
   requesterName: string;
+  recipientUid: string;
   recipientName: string;
   managerName: string | null;
-  /** Caller is in the approval subject's management chain (only meaningful once consented). */
+  managerApproval?: { state: ManagerApprovalState | null; uid: string | null; name: string | null; at: string | null };
+  /** Membership is not an action grant. Use the explicit per-row action flags. */
   canManage: boolean;
-  /** Caller is the recipient of a pending request. */
   canRespond: boolean;
+  canConvert?: boolean;
+  canResolve?: boolean;
+  canDecide?: boolean;
+  awaitingYou?: boolean;
+  canCancel?: boolean;
+  canRemind?: boolean;
+  remindAvailableAt?: string | null;
+  canRemindManagers?: boolean;
+  remindManagersAvailableAt?: string | null;
+  talkAvailable?: boolean;
+  remindedAt?: string | null;
+  managersRemindedAt?: string | null;
+  overdueNotifiedAt?: string | null;
+  escalated?: boolean;
+  isRequester?: boolean;
+  isRecipient?: boolean;
+  cancelledAt?: string | null;
+  cancelReason?: string | null;
+  cancelledByName?: string | null;
   rejectionReason: string | null;
   respondedAt: string | null;
   state: RequestState;
@@ -669,21 +805,47 @@ export interface WorkRequest {
 export interface RequestEvent {
   id: number;
   actorUid: string;
+  actorName?: string | null;
   action: string;
   reason: string | null;
   changes: { doneAt?: string | null; source?: string; recipientUid?: string; state?: string } | null;
   occurredAt: string;
 }
 
-export interface RequestPage<T> {
+export interface RequestPage<T, Cursor = number> {
   items: T[];
-  nextCursor: number | null;
+  nextCursor: Cursor | null;
+}
+
+export type PendingRequestCursor = Partial<Record<'received' | 'open' | 'converted', number>>;
+
+/** Shared by Approvals and a Projects preview. Continue each filtered feed with its own cursor. */
+export async function loadPendingRequestApprovals(
+  load: (scope: RequestScope, state: RequestListState, before: number | null) => Promise<RequestPage<WorkRequest>>,
+  before: PendingRequestCursor | null,
+): Promise<RequestPage<WorkRequest, PendingRequestCursor>> {
+  const sources = ['received', 'open', 'converted'] as const;
+  const pages = await Promise.all(sources.filter((source) => before === null || before[source] !== undefined).map(async (source) => {
+    const page = await load(source === 'received' ? 'received' : 'team', source === 'received' ? 'pending' : source, before?.[source] ?? null);
+    return { source, page };
+  }));
+  const items = new Map<number, WorkRequest>();
+  const next: PendingRequestCursor = {};
+  for (const { source, page } of pages) {
+    for (const row of page.items) {
+      if ((source === 'received' ? row.canRespond === true : row.awaitingYou === true && row.canDecide === true) && !items.has(row.id)) items.set(row.id, row);
+    }
+    if (page.nextCursor !== null) next[source] = page.nextCursor;
+  }
+  return { items: [...items.values()], nextCursor: Object.keys(next).length ? next : null };
 }
 
 export type ReportScope = 'all' | 'mine' | 'received' | 'team';
 export type ReportType = 'all' | 'request' | 'timesheet';
-export const REPORT_STATES = ['any', 'pending', 'rejected', 'open', 'converted', 'resolved', 'approved', 'changes_requested', 'withdrawn', 'superseded'] as const;
+export const REPORT_STATES = ['any', ...REQUEST_STATES, 'approved', 'changes_requested', 'superseded'] as const;
 export type ReportState = (typeof REPORT_STATES)[number];
+export const REPORT_APPROVALS = ['any', 'waiting', 'approved', 'rejected', 'none'] as const;
+export type ReportApproval = (typeof REPORT_APPROVALS)[number];
 
 export interface RequestReportFilters {
   scope: ReportScope;
@@ -692,6 +854,9 @@ export interface RequestReportFilters {
   /** `YYYY-MM-DD` (UTC days); the server caps the range at 366 days. */
   from: string;
   to: string;
+  /** Exact requester or recipient UID; empty means all people in the authorized scope. */
+  person?: string;
+  approval?: ReportApproval;
 }
 
 export interface RequestReportRow {
@@ -704,6 +869,8 @@ export interface RequestReportRow {
   recipientName: string | null;
   state: string;
   taskState: RequestTaskState;
+  managerState?: ManagerApprovalState | null;
+  approval?: Exclude<ReportApproval, 'any'>;
   createdAt: string;
   periodStart: string | null;
   periodEnd: string | null;
@@ -724,22 +891,63 @@ export interface RequestReport {
   zone: string;
   timeEnabled: boolean;
   generatedAt: string;
+  person?: string;
+  approval?: ReportApproval;
+  people?: { uid: string; displayName: string }[];
+  reviewer?: boolean;
+}
+
+export interface RequestInboxItem {
+  id: number;
+  kind: string;
+  title: string;
+  subtitle: string;
+  approval: Exclude<ReportApproval, 'any'>;
+  avatarUid: string;
+  at: string;
+  url: string;
+}
+
+export interface RequestInbox {
+  items: RequestInboxItem[];
+  total: number;
+  canSeeAll: boolean;
+  reviewer: boolean;
 }
 
 export type RequestDecision = 'approve' | 'reject';
+type RequestActionFlags = Pick<WorkRequest, 'canRespond' | 'canResolve' | 'canConvert' | 'canDecide' | 'canCancel' | 'canRemind' | 'canRemindManagers' | 'talkAvailable' | 'remindAvailableAt' | 'remindManagersAvailableAt'>;
 
-/**
- * Actions the UI may offer, derived only from server flags. The server's state machine:
- * respond only `pending` → recipient; resolve/convert only `open` → management chain.
- */
-export function requestActions(r: Pick<WorkRequest, 'state' | 'canRespond' | 'canManage'>): { respond: boolean; resolve: boolean; convert: boolean } {
-  const manage = r.canManage && r.state === 'open';
-  return { respond: r.canRespond && r.state === 'pending', resolve: manage, convert: manage };
+/** Missing action flags fail closed, including on older servers. Talk also needs a detail DTO. */
+export function requestActions(r: RequestActionFlags, now = Date.now()) {
+  const ready = (at: string | null | undefined) => at === null || (typeof at === 'string' && Date.parse(at) <= now);
+  return {
+    respond: r.canRespond === true,
+    resolve: r.canResolve === true,
+    convert: r.canConvert === true,
+    decide: r.canDecide === true,
+    cancel: r.canCancel === true,
+    remind: r.canRemind === true && r.talkAvailable === true && ready(r.remindAvailableAt),
+    remindManagers: r.canRemindManagers === true && r.talkAvailable === true && ready(r.remindManagersAvailableAt),
+  };
 }
 
+export function requestReportStatus(row: Pick<RequestReportRow, 'type' | 'state' | 'managerState'>): string {
+  if (row.type === 'request') {
+    if (row.managerState === 'rejected') return 'manager_rejected';
+    if (row.managerState === 'waiting' && (row.state === 'open' || row.state === 'converted')) return 'manager_waiting';
+    if (row.managerState === 'approved' && row.state === 'open') return 'manager_approved';
+  }
+  return row.state;
+}
+
+const requestWrite = async (c: OcsClient, id: number, action: string, body: object, key: string) =>
+  (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/${action}`, { method: 'POST', body, headers: keyHeader(key) })).data;
+
 export const requestsApi = {
-  list: (c: OcsClient, scope: 'mine' | 'received' | 'team', state: 'any' | RequestState = 'any', before?: number) =>
-    c.get<RequestPage<WorkRequest>>(`${BASE}/requests`, { query: { scope, state, ...(before ? { before: posId(before) } : {}) } }),
+  list: (c: OcsClient, scope: RequestScope, state: RequestListState = 'any', before?: number) =>
+    c.get<RequestPage<WorkRequest>>(`${BASE}/requests`, { query: { scope, state, ...(before === undefined ? {} : { before: posId(before) }) } }),
+  inbox: (c: OcsClient, limit = 10) => c.get<RequestInbox>(`${BASE}/requests/inbox`, { query: { limit } }),
   get: (c: OcsClient, id: number) => c.get<WorkRequest>(`${BASE}/requests/${posId(id)}`),
   history: (c: OcsClient, id: number, before?: number) =>
     c.get<RequestPage<RequestEvent>>(`${BASE}/requests/${posId(id)}/history`, before ? { query: { before: posId(before) } } : {}),
@@ -753,7 +961,13 @@ export const requestsApi = {
     (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/resolve`, { method: 'POST', body: { version, reason }, headers: keyHeader(idempotencyKey) })).data,
   convert: async (c: OcsClient, id: number, version: number, boardId: number, stackId: number, idempotencyKey: string) =>
     (await c.request<WorkRequest>(`${BASE}/requests/${posId(id)}/convert`, { method: 'POST', body: { version, boardId: posId(boardId), stackId: posId(stackId) }, headers: keyHeader(idempotencyKey) })).data,
-  report: (c: OcsClient, f: RequestReportFilters) => c.get<RequestReport>(`${BASE}/requests/report`, { query: { scope: f.scope, type: f.type, state: f.state, from: f.from, to: f.to } }),
+  decide: (c: OcsClient, id: number, version: number, decision: RequestDecision, reason: string | null, key: string) =>
+    requestWrite(c, id, 'approval', { version, decision, ...(reason ? { reason } : {}) }, key),
+  cancel: (c: OcsClient, id: number, version: number, reason: string | null, key: string) =>
+    requestWrite(c, id, 'cancel', { version, ...(reason ? { reason } : {}) }, key),
+  remind: (c: OcsClient, id: number, version: number, key: string) => requestWrite(c, id, 'remind', { version }, key),
+  remindManagers: (c: OcsClient, id: number, version: number, key: string) => requestWrite(c, id, 'remind-managers', { version }, key),
+  report: (c: OcsClient, f: RequestReportFilters) => c.get<RequestReport>(`${BASE}/requests/report`, { query: { scope: f.scope, type: f.type, state: f.state, from: f.from, to: f.to, person: f.person, approval: f.approval } }),
   /** People the viewer may pick in request filters and widgets: their reports, everybody for a reviewer, else none. */
   people: async (c: OcsClient) => (await c.get<{ items: RequestPerson[] }>(`${BASE}/requests/people`)).items,
 };
@@ -765,6 +979,7 @@ export interface RequestContext {
   manager: { uid: string; displayName: string } | null;
   managers: { uid: string; displayName: string }[];
   isManager: boolean;
+  isReviewer?: boolean;
 }
 
 export type GoalProgressState = 'ok' | 'not_calculable' | 'restricted' | 'stale' | 'source_missing';
@@ -980,7 +1195,7 @@ export const workhubModulesApi = {
   timer: (c: OcsClient) => c.get<{ timer: Timer | null; serverTime: string }>(`${BASE}/time/timer`),
   /** One active timer per user (server enforced: 409 TIMER_ALREADY_RUNNING). */
   timerStart: async (c: OcsClient, body: { cardId?: number; description?: string }, idempotencyKey: string) =>
-    (await c.request<{ timer: Timer }>(`${BASE}/time/timer/start`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
+    (await c.request<{ timer: Timer; serverTime?: string; movedToStackId?: number | null }>(`${BASE}/time/timer/start`, { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } })).data,
   timerStop: async (c: OcsClient) => (await c.request<{ entries: TimeEntry[]; totalSec: number }>(`${BASE}/time/timer/stop`, { method: 'POST', body: {} })).data,
   requests: async (c: OcsClient, scope: 'mine' | 'received' | 'team') => (await c.get<{ items: WorkRequest[] }>(`${BASE}/requests`, { query: { scope, state: 'any' } })).items,
   requestContext: (c: OcsClient) => c.get<RequestContext>(`${BASE}/requests/context`),
@@ -994,10 +1209,12 @@ export interface TaskForm {
   title: string;
   description: string;
   priority: Priority | null;
-  /** `YYYY-MM-DD` or '' (no date). */
+  /** Local calendar days and optional local wall times. */
   startDate: string;
+  startTime: string;
   dueDate: string;
-  /** Hours as typed ('' = no estimate); comma or dot decimals. */
+  dueTime: string;
+  /** Duration as typed ('' = no estimate). */
   estimateHours: string;
   /** Story points as typed ('' = not sized). */
   storyPoints: string;
@@ -1013,7 +1230,84 @@ export type TaskFormError = 'title_empty' | 'date_invalid' | 'date_range' | 'est
 export const STORY_POINT_SCALE = [0, 1, 2, 3, 5, 8, 13, 21] as const;
 export const MAX_STORY_POINTS = 1000;
 
-const dayOf = (iso: string | null) => (iso ? iso.slice(0, 10) : '');
+export type TaskScheduleForm = Pick<TaskForm, 'startDate' | 'startTime' | 'dueDate' | 'dueTime' | 'estimateHours'>;
+
+const padTime = (n: number) => String(n).padStart(2, '0');
+export const localTaskDay = (d: Date) => `${String(d.getFullYear()).padStart(4, '0')}-${padTime(d.getMonth() + 1)}-${padTime(d.getDate())}`;
+const localTaskTime = (d: Date) => `${padTime(d.getHours())}:${padTime(d.getMinutes())}`;
+export function taskDateFields(iso: string | null, kind: 'start' | 'due'): { date: string; time: string } {
+  if (!iso) return { date: '', time: '' };
+  if (isValidLocalDate(iso)) return { date: iso, time: '' };
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return { date: '', time: '' };
+  const time = localTaskTime(d);
+  return { date: localTaskDay(d), time: time === (kind === 'start' ? '00:00' : '23:59') ? '' : time };
+}
+
+/** 8 hours per day: the start counts, and additional days skip weekends. */
+export function dueDateForEstimate(start: string, seconds: number): string {
+  const day = new Date(`${start}T00:00:00Z`);
+  let left = Math.max(0, Math.ceil(seconds / 28800) - 1);
+  while (left > 0) {
+    day.setUTCDate(day.getUTCDate() + 1);
+    if (day.getUTCDay() % 6 !== 0) left--;
+  }
+  return day.toISOString().slice(0, 10);
+}
+
+export function parseTaskEstimate(raw: string): number | null {
+  const value = raw.trim().toLowerCase().replace(',', '.');
+  const hm = /^(\d{1,3}):([0-5]\d)$/.exec(value);
+  if (hm) return Number(hm[1]) * 3600 + Number(hm[2]) * 60;
+  const minutes = /^(\d{1,4})\s*(?:dk|m|min)$/.exec(value);
+  if (minutes) return Number(minutes[1]) * 60;
+  return /^\d{1,3}(?:\.\d{1,2})?\s*(?:sa|h)?$/.test(value) ? Math.round(Number(value.replace(/\s*(?:sa|h)$/, '')) * 3600) : null;
+}
+
+export function taskScheduleOf(task?: Pick<TaskDetail, 'startDate' | 'dueDate' | 'estimateSec'>): TaskScheduleForm {
+  const start = taskDateFields(task?.startDate ?? null, 'start');
+  const due = taskDateFields(task?.dueDate ?? null, 'due');
+  return { startDate: start.date, startTime: start.time, dueDate: due.date, dueTime: due.time, estimateHours: task?.estimateSec == null ? '' : String(Math.round(task.estimateSec / 36) / 100) };
+}
+
+export function buildTaskSchedule(form: TaskScheduleForm, task?: Pick<TaskDetail, 'startDate' | 'dueDate' | 'estimateSec'>, now = new Date()): { patch: TaskSchedule } | { error: TaskFormError } {
+  const base = taskScheduleOf(task);
+  let startDate = form.startDate.trim();
+  let dueDate = form.dueDate.trim();
+  const startTime = startDate ? form.startTime.trim() : '';
+  const dueTime = dueDate ? form.dueTime.trim() : '';
+  const hm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if ([startDate, dueDate].some((d) => d && !isValidLocalDate(d)) || [startTime, dueTime].some((time) => time && !hm.test(time))) return { error: 'date_invalid' };
+  const est = form.estimateHours.trim();
+  const baseSec = task?.estimateSec ?? null;
+  const seconds = est === base.estimateHours ? baseSec : est ? parseTaskEstimate(est) : null;
+  if (est && seconds === null) return { error: 'estimate_invalid' };
+  if (seconds !== null && (seconds !== baseSec || (seconds > 0 && startDate && (startDate !== base.startDate || startTime !== base.startTime)))) {
+    startDate ||= localTaskDay(now);
+    // An explicit deadline in this draft overrides the estimate. Existing clock time is retained.
+    if (dueDate === base.dueDate) dueDate = dueDateForEstimate(startDate, seconds);
+  }
+  const patch: TaskSchedule = {};
+  const dates = [['startDate', startDate, startTime, base.startTime, '00:00'], ['dueDate', dueDate, dueTime, base.dueTime, '23:59']] as const;
+  for (const [key, date, time, baseTime, fallback] of dates) {
+    if (date === base[key] && time === baseTime) continue;
+    if (!date) {
+      patch[key] = null;
+      continue;
+    }
+    const clock = time || fallback;
+    const d = new Date(`${date}T${clock}:00`);
+    if (localTaskDay(d) !== date || localTaskTime(d) !== clock) return { error: 'date_invalid' };
+    patch[key] = d.toISOString();
+  }
+  const ms = (key: 'startDate' | 'dueDate', fallback: string) => {
+    const value = Object.hasOwn(patch, key) ? patch[key] : task?.[key];
+    return value ? Date.parse(isValidLocalDate(value) ? `${value}T${fallback}:00` : value) : NaN;
+  };
+  if ((Object.hasOwn(patch, 'startDate') || Object.hasOwn(patch, 'dueDate')) && ms('startDate', '00:00') > ms('dueDate', '23:59')) return { error: 'date_range' };
+  if (seconds !== baseSec) patch.estimateSec = seconds;
+  return { patch };
+}
 const sameSet = <T>(a: T[], b: T[]) => a.length === b.length && a.every((x) => b.includes(x));
 
 export function taskFormOf(task: TaskDetail, labels: ProjectLabel[]): TaskForm {
@@ -1022,9 +1316,7 @@ export function taskFormOf(task: TaskDetail, labels: ProjectLabel[]): TaskForm {
     title: task.title,
     description: task.description,
     priority: task.priority,
-    startDate: dayOf(task.startDate),
-    dueDate: dayOf(task.dueDate),
-    estimateHours: task.estimateSec == null ? '' : String(Math.round((task.estimateSec / 3600) * 100) / 100),
+    ...taskScheduleOf(task),
     storyPoints: task.storyPoints == null ? '' : String(task.storyPoints),
     labels: task.labels.filter((id) => !priorityIds.has(id)),
     assignees: task.assignees.filter((a) => a.type === 'user').map((a) => a.id),
@@ -1039,32 +1331,18 @@ export function buildTaskPatch(task: TaskDetail, labels: ProjectLabel[], form: T
   const base = taskFormOf(task, labels);
   const title = form.title.trim();
   if (!title) return { error: 'title_empty' };
-  const date = /^\d{4}-\d{2}-\d{2}$/;
-  const valid = (d: string) => d === '' || (date.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d));
-  const start = form.startDate.trim();
-  const due = form.dueDate.trim();
-  if (!valid(start) || !valid(due)) return { error: 'date_invalid' };
-  if (start && due && start > due) return { error: 'date_range' };
-  let estimateSec: number | null = null;
-  const est = form.estimateHours.trim().replace(',', '.');
-  if (est) {
-    const h = Number(est);
-    if (!/^\d+(\.\d+)?$/.test(est) || !Number.isFinite(h) || h > 10_000) return { error: 'estimate_invalid' };
-    estimateSec = Math.round(h * 3600);
-  }
+  const schedule = buildTaskSchedule(form, task);
+  if ('error' in schedule) return schedule;
   let storyPoints: number | null = null;
   const pts = form.storyPoints.trim();
   if (pts) {
     storyPoints = Number(pts);
     if (!/^\d{1,4}$/.test(pts) || storyPoints > MAX_STORY_POINTS) return { error: 'points_invalid' };
   }
-  const patch: TaskPatch = {};
+  const patch: TaskPatch = { ...schedule.patch };
   if (title !== task.title) patch.title = title;
   if (form.description !== base.description) patch.description = form.description;
   if (form.priority !== base.priority) patch.priority = form.priority;
-  if (start !== base.startDate) patch.startDate = start || null;
-  if (due !== base.dueDate) patch.dueDate = due || null;
-  if (estimateSec !== (task.estimateSec ?? null)) patch.estimateSec = estimateSec;
   if (storyPoints !== (task.storyPoints ?? null)) patch.storyPoints = storyPoints;
   if (!sameSet(form.labels, base.labels)) {
     const priorityIds = new Set(labels.filter((l) => l.priority).map((l) => l.id));
@@ -1210,6 +1488,8 @@ const activityQuery = (f: ActivityFilter, cursor: string | null, limit: number) 
 });
 
 export const projectViewsApi = {
+  taskActivity: (c: OcsClient, cardId: number, cursor: string | null) =>
+    c.get<ActivityPage>(`${BASE}/tasks/${id(cardId)}/activity`, { query: { limit: ACTIVITY_PAGE, ...(cursor ? { cursor } : {}) } }),
   gantt: (c: OcsClient, boardId: number) => c.get<GanttPayload>(`${BASE}/projects/${id(boardId)}/views/gantt`),
   /** Newest first. A page may hold more than `limit` items (all events of the boundary second are kept). */
   activity: (c: OcsClient, boardId: number, f: ActivityFilter, cursor: string | null = null, limit = ACTIVITY_PAGE) =>

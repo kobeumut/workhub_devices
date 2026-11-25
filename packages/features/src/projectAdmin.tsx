@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { nextStackOrder, upsertShare, PROJECT_TITLE_MAX, RENAME_MAX, type AccountId, type BoardPayload, type ObjectShare, type Principal, type ShareObjectType, type ShareRole } from '@workhub-devices/core';
+import { OcsError, nextStackOrder, projectWritePermissions, upsertShare, PROJECT_TITLE_MAX, RENAME_MAX, type AccountId, type BoardPayload, type MemberRights, type ObjectShare, type Principal, type ShareObjectType, type ShareRole } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { Button, ErrorBanner, Field, Loading, card, styles as ui } from './ui';
 import { Chip } from './taskEdit';
-import { colors, font, space } from './theme';
+import { colors, space } from './theme';
 import { describeError, t } from './i18n';
 
 type Board = BoardPayload['project'];
@@ -100,29 +100,44 @@ export function PrincipalPicker({ accountId, onPick, exclude = [], label = t.sea
 }
 
 /**
- * Project settings: rename and columns need `manage`; adding members needs `share`. Buttons are only
- * rendered for the permissions the server reported, and every write still handles 403 visibly.
- * There is no member-removal API in Workhub (recorded Gap).
+ * Workhub project settings. Column writes and removal require manage; ACL updates require share.
+ * Older servers without the direct-share list still show the board's member names and Add control.
  */
 export function ProjectAdminPanel({ accountId, board, onChanged }: { accountId: AccountId; board: Board; onChanged: () => void }) {
   const { backend } = useServices();
-  const perms = board.permissions;
+  const perms = projectWritePermissions(board);
   const w = useWrite();
+  const members = useAsync(() => perms.manage || perms.share ? backend.projectMembers(accountId, board.board.id) : Promise.resolve(undefined), [accountId, board.board.id, perms.manage, perms.share]);
+  const memberList = members.error ? undefined : members.data;
+  const [confirmRemove, setConfirmRemove] = useState<number>();
   const [title, setTitle] = useState(board.board.title);
   const [stackTitles, setStackTitles] = useState<Record<number, string>>({});
   const [newStack, setNewStack] = useState('');
   const [grant, setGrant] = useState({ edit: true, share: false, manage: false });
   const [added, setAdded] = useState<string>();
-  const stacks = board.stacks.slice().sort((a, b) => a.order - b.order);
-
-  const addMember = (p: Principal) =>
+  const stacks = board.stacks.slice().sort((a, b) => a.order - b.order || a.id - b.id);
+  const rights = { edit: perms.edit || perms.manage, share: perms.share, manage: perms.manage };
+  const membersChanged = () => {
+    members.reload();
+    onChanged();
+  };
+  const addMember = (p: Principal) => {
+    if (!perms.share || w.busy) return;
     void w.run(
-      () => backend.addProjectMember(accountId, board.board.id, { type: p.principalType, participant: p.principalId, ...grant }, uuid()),
+      () => backend.addProjectMember(accountId, board.board.id, { type: p.principalType, participant: p.principalId, edit: grant.edit && rights.edit, share: grant.share && rights.share, manage: grant.manage && rights.manage }, uuid()),
       () => {
         setAdded(p.displayName);
-        onChanged();
+        membersChanged();
       },
     );
+  };
+  const reorder = (from: number, to: number) => {
+    if (!perms.manage || w.busy || stacks.length > 200 || to < 0 || to >= stacks.length) return;
+    const ids = stacks.map((s) => s.id);
+    [ids[from], ids[to]] = [ids[to]!, ids[from]!];
+    void w.run(() => backend.reorderProjectStacks(accountId, board.board.id, ids), onChanged);
+  };
+  const labels: Record<keyof MemberRights, string> = { edit: t.permEdit, share: t.permShare, manage: t.permManage };
 
   return (
     <View style={[card, { margin: space(2) }]}>
@@ -141,12 +156,14 @@ export function ProjectAdminPanel({ accountId, board, onChanged }: { accountId: 
             </View>
           </View>
           <Text style={ui.label}>{t.columns}</Text>
-          {stacks.map((st) => {
+          {stacks.map((st, index) => {
             const v = stackTitles[st.id] ?? st.title;
             return (
               <View key={st.id} style={{ flexDirection: 'row', gap: space(2), alignItems: 'center', marginBottom: space(1) }}>
                 <TextInput accessibilityLabel={`${t.columnName}: ${st.title}`} value={v} maxLength={RENAME_MAX} onChangeText={(x) => setStackTitles((m) => ({ ...m, [st.id]: x }))} style={[ui.input, { flex: 1 }]} />
                 <Button title={t.rename} accessibilityLabel={`${t.rename}: ${st.title}`} kind="secondary" busy={w.busy} disabled={!v.trim() || v.trim() === st.title} onPress={() => void w.run(() => backend.renameStack(accountId, st.id, v.trim()), onChanged)} />
+                <Button title="↑" accessibilityLabel={`${t.moveColumnEarlier}: ${st.title}`} kind="secondary" disabled={w.busy || index === 0 || stacks.length > 200} onPress={() => reorder(index, index - 1)} />
+                <Button title="↓" accessibilityLabel={`${t.moveColumnLater}: ${st.title}`} kind="secondary" disabled={w.busy || index === stacks.length - 1 || stacks.length > 200} onPress={() => reorder(index, index + 1)} />
               </View>
             );
           })}
@@ -162,7 +179,35 @@ export function ProjectAdminPanel({ accountId, board, onChanged }: { accountId: 
         </>
       ) : null}
       <Text style={[ui.label, { marginTop: space(3) }]}>{t.members}</Text>
-      <Text style={{ color: colors.text }}>{board.members.map((m) => m.displayName).join(', ') || '—'}</Text>
+      {members.error instanceof OcsError && members.error.kind === 'not_found' ? null : <ErrorBanner error={members.error} onRetry={members.reload} />}
+      {memberList ? (
+        <>
+          {memberList.owner ? <Text style={{ color: colors.text }}>{t.projectOwner}: {memberList.owner.displayName}</Text> : null}
+          {memberList.shares.map((member) => {
+            // The server clamps all three flags; do not strip rights the actor cannot grant.
+            const canUpdate = perms.share && (!member.edit || rights.edit) && (!member.share || rights.share) && (!member.manage || rights.manage);
+            return <View key={member.id} style={{ marginTop: space(2), gap: space(1) }}>
+              <Text style={{ color: colors.text }}>{member.displayName}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
+                {(Object.keys(labels) as (keyof MemberRights)[]).map((key) => (
+                  <Chip key={key} label={labels[key]} selected={member[key]} disabled={w.busy || members.loading || !canUpdate || !rights[key]} onPress={() => {
+                    const change: MemberRights = { edit: member.edit, share: member.share, manage: member.manage, [key]: !member[key] };
+                    void w.run(() => backend.updateProjectMember(accountId, board.board.id, member.id, change), membersChanged);
+                  }} />
+                ))}
+                {perms.manage && confirmRemove !== member.id ? <Button title={t.removeMember} kind="danger" disabled={w.busy || members.loading} onPress={() => setConfirmRemove(member.id)} /> : null}
+              </View>
+              {perms.manage && confirmRemove === member.id ? (
+                <View style={{ gap: space(1), alignItems: 'flex-start' }}>
+                  <Text style={{ color: colors.text }}>{t.confirmRemoveMember(member.displayName)}</Text>
+                  <Button title={t.removeMember} kind="danger" disabled={members.loading} busy={w.busy} onPress={() => void w.run(() => backend.removeProjectMember(accountId, board.board.id, member.id), () => { setConfirmRemove(undefined); membersChanged(); })} />
+                  <Button title={t.cancel} kind="secondary" disabled={w.busy} onPress={() => setConfirmRemove(undefined)} />
+                </View>
+              ) : null}
+            </View>;
+          })}
+        </>
+      ) : <Text style={{ color: colors.text }}>{board.members.map((m) => m.displayName).join(', ') || '—'}</Text>}
       {perms.share ? (
         <>
           <Text style={[ui.label, { marginTop: space(2) }]}>{t.newMemberRights}</Text>
@@ -171,11 +216,10 @@ export function ProjectAdminPanel({ accountId, board, onChanged }: { accountId: 
             <Chip label={t.permShare} selected={grant.share} onPress={() => setGrant((g) => ({ ...g, share: !g.share }))} />
             <Chip label={t.permManage} selected={grant.manage} disabled={!perms.manage} onPress={() => setGrant((g) => ({ ...g, manage: !g.manage }))} />
           </View>
-          <PrincipalPicker accountId={accountId} onPick={addMember} exclude={board.members.map((m) => `user:${m.uid}`)} label={t.addMember} />
+          <PrincipalPicker accountId={accountId} onPick={addMember} exclude={memberList ? [...(memberList.owner ? [`user:${memberList.owner.uid}`] : []), ...memberList.shares.map((m) => `${m.type}:${m.participant}`)] : board.members.map((m) => `user:${m.uid}`)} label={t.addMember} />
           {added ? <Text style={{ color: colors.ok, marginTop: space(1) }}>{added}: {t.memberAdded}</Text> : null}
         </>
       ) : null}
-      <Text style={{ color: colors.muted, fontSize: font.small, marginTop: space(2) }}>{t.memberRemoveGap}</Text>
     </View>
   );
 }

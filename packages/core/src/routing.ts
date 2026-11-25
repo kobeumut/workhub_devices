@@ -6,6 +6,7 @@ import type { OcsClient } from './ocs';
 export type AppRoute =
   | { name: 'room'; token: string; messageId?: number }
   | { name: 'task'; cardId: number }
+  | { name: 'request'; requestId: number }
   | { name: 'inbox'; notificationId?: number };
 
 export interface RoutedTarget {
@@ -60,6 +61,9 @@ export function routeForObject(app: string, objectType: string, objectId: string
   // Native and Deck backends both emit app=workhub/objectType=card (the rich subject's `deck-card` is irrelevant).
   if (app === 'workhub' && objectType === 'card' && POSITIVE_INT.test(objectId)) {
     return { name: 'task', cardId: Number(objectId) };
+  }
+  if (app === 'workhub' && objectType === 'request' && POSITIVE_INT.test(objectId) && Number.isSafeInteger(Number(objectId))) {
+    return { name: 'request', requestId: Number(objectId) };
   }
   return notificationId ? { name: 'inbox', notificationId } : { name: 'inbox' };
 }
@@ -122,6 +126,10 @@ export function parseServerLink(serverBase: ServerBase, link: string): AppRoute 
   m = /^\/apps\/workhub\/projects\/\d+\/(board|list|gantt|activity)$/.exec(path);
   const card = url.searchParams.get('card');
   if (m && card && POSITIVE_INT.test(card)) return { name: 'task', cardId: Number(card) };
+  const request = url.searchParams.get('request');
+  if (path === '/apps/workhub/requests/approvals' && request && POSITIVE_INT.test(request) && Number.isSafeInteger(Number(request))) {
+    return { name: 'request', requestId: Number(request) };
+  }
   m = /^\/call\/([a-z0-9]+)$/i.exec(path);
   if (m?.[1] && ROOM_TOKEN.test(m[1])) return { name: 'room', token: m[1] };
   return null;

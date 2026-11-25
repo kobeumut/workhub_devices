@@ -6,7 +6,7 @@
  * accessible name, so every icon is hidden from screen readers.
  */
 import {
-  Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bell, Calendar, ChartGantt, Check, ChevronDown, ChevronLeft, ChevronRight,
+  Activity, Archive, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bell, Calendar, ChartGantt, Check, ChevronDown, ChevronLeft, ChevronRight,
   Circle, CircleCheck, CircleUser, Clock, Ellipsis, FolderKanban, Funnel, Inbox, Kanban, LayoutDashboard, List, ListChecks, LogOut,
   MessageCircle, MessageSquare, Mic, MicOff, Phone, PhoneIncoming, PhoneOff, Plus, Search, Send, Server, Settings, ShieldCheck,
   Sparkles, SquareKanban, SwitchCamera, Target, Timer, User, UserPlus, Users, Video, VideoOff, Workflow, X,
@@ -18,6 +18,7 @@ const ICONS = {
   activity: Activity,
   admin: ShieldCheck,
   ai: Sparkles,
+  archive: Archive,
   arrowDown: ArrowDown,
   arrowLeft: ArrowLeft,
   arrowRight: ArrowRight,

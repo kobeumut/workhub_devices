@@ -11,16 +11,16 @@ import {
   type RoomListResult, type RoomPatch, type TalkFeatures, type TalkMessage, type TalkParticipant, type TalkRoom,
 } from './talk';
 import {
-  openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, goalsApi, cardSetWithout, REPORT_STATES, GOAL_MAX_SCALE,
-  SHARE_OBJECT_TYPES, SHARE_ROLES,
-  type CsvScope, type RequestDecision, type RequestEvent, type RequestPage, type RequestReport, type RequestReportFilters, type RequestPerson, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
+  openTaskFromNotification, requestsApi, timeApi, workhubApi, workhubModulesApi, goalsApi, cardSetWithout, REPORT_APPROVALS, REPORT_STATES, REQUEST_STATES, GOAL_MAX_SCALE,
+  SHARE_OBJECT_TYPES, SHARE_ROLES, ASSIGNMENT_STATUSES, type AssignedTasks, type AssignmentStatus, type WorkhubBadges, type MemberRights, type ProjectMembers,
+  type CsvScope, type RequestDecision, type RequestEvent, type RequestInbox, type RequestListState, type RequestPage, type RequestPerson, type RequestReport, type RequestReportFilters, type RequestScope, type ReviewAction, type ReviewItem, type SubmissionResult, type TeamReport, type TimeEntryInput, type TimeEntryPatch, type TimeEntryResult,
   projectViewsApi, ACTIVITY_TYPES, WORKLOAD_MAX_DAYS,
   type ActivityFilter, type ActivityPage, type GanttPayload, type WorkloadMatrix, type WorkloadQuery,
   dashboardsApi, dashboardRoleAtLeast, DASHBOARD_FILTER_FIELDS, DASHBOARD_FILTER_LIMITS, DASHBOARD_MAX_SOURCES, DASHBOARD_MAX_WIDGETS, DASHBOARD_TEMPLATES, DASHBOARD_GRID_COLUMNS,
   type Dashboard, type DashboardFilter, type DashboardInput, type DashboardPatch, type DashboardQueryOptions, type DashboardQueryResult, type DashboardRole, type DashboardSummary,
   type DashboardWidget, type DrilldownOptions, type DrilldownPage, type WidgetInput, type WidgetPatch, type WidgetTypeDef,
   type CardGoal, type GoalCheckin, type GoalCheckinInput, type GoalCheckinResult, type GoalDetail, type GoalInput, type GoalListFilter, type GoalPatch, type GoalTarget, type GoalTargetInput, type GoalTargetPatch,
-  type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
+  type BoardPayload, type GoalSummary, type MemberGrant, type ObjectShare, type ObjectShares, type Principal, type ShareObjectType, type StackSummary, type SubtaskList, type TaskPatch, type TaskSchedule, type ProjectSummary, type RequestContext, type Task, type TaskComment, type TaskOpenResult, type TimeEntry, type Timer, type TimeWeek, type WorkRequest,
 } from './workhub';
 import {
   workflowsApi, workflowRoleAtLeast, stepActions, isActionableStep, WORKFLOW_CATEGORIES, WORKFLOW_ID_RE, WORKFLOW_LIMITS,
@@ -141,13 +141,16 @@ export interface Backend {
   dismissNotification(accountId: AccountId, id: number): Promise<void>;
 
   projects(accountId: AccountId): Promise<ProjectSummary[]>;
-  board(accountId: AccountId, boardId: number): Promise<BoardPayload>;
+  assignedTasks(accountId: AccountId, status: AssignmentStatus): Promise<AssignedTasks>;
+  workhubBadges(accountId: AccountId, fresh: boolean): Promise<WorkhubBadges>;
+  personalProject(accountId: AccountId): Promise<{ id: number }>;
+  board(accountId: AccountId, boardId: number, includeArchived?: boolean): Promise<BoardPayload>;
   openTask(accountId: AccountId, cardId: number): Promise<TaskOpenResult>;
   comments(accountId: AccountId, cardId: number): Promise<TaskComment[]>;
   addComment(accountId: AccountId, cardId: number, message: string, idempotencyKey: string): Promise<TaskComment | null>;
   updateTask(accountId: AccountId, cardId: number, patch: TaskUpdate): Promise<Task | null>;
   moveTask(accountId: AccountId, cardId: number, stackId: number, order: number): Promise<Task | null>;
-  createTask(accountId: AccountId, boardId: number, stackId: number, title: string, idempotencyKey: string): Promise<Task | null>;
+  createTask(accountId: AccountId, boardId: number, stackId: number, title: string, idempotencyKey: string, schedule?: TaskSchedule): Promise<Task | null>;
   addSubtask(accountId: AccountId, cardId: number, text: string): Promise<SubtaskList | null>;
   updateSubtask(accountId: AccountId, cardId: number, index: number, expectedText: string, change: { text?: string; done?: boolean }): Promise<SubtaskList | null>;
   deleteSubtask(accountId: AccountId, cardId: number, index: number, expectedText: string): Promise<SubtaskList | null>;
@@ -156,7 +159,11 @@ export interface Backend {
 
   createProject(accountId: AccountId, title: string, color: string | null, idempotencyKey: string): Promise<{ id: number; title: string } | null>;
   renameProject(accountId: AccountId, boardId: number, title: string): Promise<{ id: number; title: string } | null>;
+  projectMembers(accountId: AccountId, boardId: number): Promise<ProjectMembers>;
   addProjectMember(accountId: AccountId, boardId: number, grant: MemberGrant, idempotencyKey: string): Promise<{ id: number } | null>;
+  updateProjectMember(accountId: AccountId, boardId: number, shareId: number, rights: MemberRights): Promise<{ id: number } | null>;
+  removeProjectMember(accountId: AccountId, boardId: number, shareId: number): Promise<{ id: number; deleted: boolean } | null>;
+  reorderProjectStacks(accountId: AccountId, boardId: number, stackIds: number[]): Promise<{ stacks: StackSummary[] } | null>;
   createStack(accountId: AccountId, boardId: number, title: string, order: number): Promise<StackSummary | null>;
   renameStack(accountId: AccountId, stackId: number, title: string): Promise<{ id: number; title: string } | null>;
   principals(accountId: AccountId, query: string): Promise<Principal[]>;
@@ -164,9 +171,11 @@ export interface Backend {
   setObjectShares(accountId: AccountId, type: ShareObjectType, objectId: number, shares: Array<Pick<ObjectShare, 'principalType' | 'principalId' | 'role'>>): Promise<{ shares: ObjectShare[] } | null>;
 
   timer(accountId: AccountId): Promise<{ timer: Timer | null; serverTime: string }>;
-  timerStart(accountId: AccountId, cardId: number | null, description: string, idempotencyKey: string): Promise<{ timer: Timer } | null>;
+  timerStart(accountId: AccountId, cardId: number | null, description: string, idempotencyKey: string): Promise<Awaited<ReturnType<typeof workhubModulesApi.timerStart>> | null>;
   timerStop(accountId: AccountId): Promise<{ entries: TimeEntry[]; totalSec: number } | null>;
   timeWeek(accountId: AccountId, date?: string): Promise<TimeWeek>;
+  timePeriod(accountId: AccountId, periodId: number): ReturnType<typeof timeApi.period>;
+  timeCardEntries(accountId: AccountId, cardId: number): Promise<TimeEntry[]>;
   timeEntryCreate(accountId: AccountId, input: TimeEntryInput, idempotencyKey: string): Promise<TimeEntryResult | null>;
   /** Range ↔ duration conversion is refused by the server (`KIND_IMMUTABLE`). */
   timeEntryUpdate(accountId: AccountId, entryId: number, patch: TimeEntryPatch): Promise<TimeEntryResult | null>;
@@ -175,11 +184,14 @@ export interface Backend {
   timeWithdraw(accountId: AccountId, submissionId: number, periodVersion: number, idempotencyKey: string): Promise<SubmissionResult | null>;
   /** Reviewer only (`permissions.canViewTeamReport`); fails closed with 403 otherwise. */
   timeReviews(accountId: AccountId, status: 'pending' | 'approved'): Promise<ReviewItem[]>;
+  timeSubmission(accountId: AccountId, id: number): Promise<ReviewItem>;
   timeDecide(accountId: AccountId, submissionId: number, action: ReviewAction, periodVersion: number, reason: string | null, idempotencyKey: string): Promise<SubmissionResult | null>;
   timeTeam(accountId: AccountId, from: string, to: string): Promise<TeamReport>;
   /** CSV text from the server; the shell saves it (desktop dialog / mobile share sheet). */
   timeCsv(accountId: AccountId, scope: CsvScope, from: string, to: string): Promise<{ filename: string; csv: string }>;
-  requests(accountId: AccountId, scope: 'mine' | 'received' | 'team'): Promise<WorkRequest[]>;
+  requests(accountId: AccountId, scope: RequestScope): Promise<WorkRequest[]>;
+  requestPage(accountId: AccountId, scope: RequestScope, state: RequestListState, before: number | null): Promise<RequestPage<WorkRequest>>;
+  requestInbox(accountId: AccountId, limit: number): Promise<RequestInbox>;
   requestContext(accountId: AccountId): Promise<RequestContext>;
   createRequest(accountId: AccountId, title: string, description: string, recipientUid: string | null, idempotencyKey: string): Promise<{ id: number } | null>;
   /** Detail incl. the linked task (re-reconciled by the server). */
@@ -190,6 +202,10 @@ export interface Backend {
   /** Manager only (gate: `requestContext.isManager`, fail closed); the server re-checks the chain. */
   requestResolve(accountId: AccountId, requestId: number, version: number, reason: string, idempotencyKey: string): Promise<WorkRequest | null>;
   requestConvert(accountId: AccountId, requestId: number, version: number, boardId: number, stackId: number, idempotencyKey: string): Promise<WorkRequest | null>;
+  requestDecide(accountId: AccountId, requestId: number, version: number, decision: RequestDecision, reason: string | null, idempotencyKey: string): Promise<WorkRequest | null>;
+  requestCancel(accountId: AccountId, requestId: number, version: number, reason: string | null, idempotencyKey: string): Promise<WorkRequest | null>;
+  requestRemind(accountId: AccountId, requestId: number, version: number, idempotencyKey: string): Promise<WorkRequest | null>;
+  requestRemindManagers(accountId: AccountId, requestId: number, version: number, idempotencyKey: string): Promise<WorkRequest | null>;
   requestReport(accountId: AccountId, filters: RequestReportFilters): Promise<RequestReport>;
   /** People the account may pick in request widgets (reports; everybody for a reviewer; empty otherwise). */
   requestPeople(accountId: AccountId): Promise<RequestPerson[]>;
@@ -219,6 +235,7 @@ export interface Backend {
   /** Project views (gate: `modules.projects`, fail closed; the server checks board read access). */
   projectGantt(accountId: AccountId, boardId: number): Promise<GanttPayload>;
   /** One page, newest first; pass the previous page's `nextCursor` for older events. */
+  taskActivity(accountId: AccountId, cardId: number, cursor: string | null): Promise<ActivityPage>;
   projectActivity(accountId: AccountId, boardId: number, filter: ActivityFilter, cursor: string | null): Promise<ActivityPage>;
   /** Member × day matrix over the readable boards (optionally restricted). */
   workload(accountId: AccountId, query: WorkloadQuery): Promise<WorkloadMatrix>;
@@ -349,7 +366,8 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
   };
   /**
    * Time module gate (fail closed): the module must be on for this user, and reviewer-only calls
-   * need `permissions.canViewTeamReport` (native direct management). The server re-checks both.
+   * need `permissions.canViewTeamReport` (direct management or Workhub reviewer). The server
+   * still checks direct management per submission for writes.
    */
   const timeClient = async (id: AccountId, reviewer = false): Promise<OcsClient> => {
     const c = await client(id);
@@ -359,23 +377,17 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     return c;
   };
 
-  /** Request context (manager flag), cached like the bootstrap. */
-  const requestContexts = new Map<AccountId, { at: number; value: RequestContext }>();
-  /**
-   * Requests gate (fail closed): the module must be on for this user; resolve/convert need a
-   * management relation (`isManager`). The server re-checks the actual chain per request.
-   */
-  const requestClient = async (id: AccountId, manager = false): Promise<OcsClient> => {
+  /** Module gate only: row actions are authorized by the endpoint (recipient conversion is not a manager operation). */
+  const requestClient = async (id: AccountId): Promise<OcsClient> => {
     const c = await client(id);
     const b = await bootstrap(id, c);
     if (!b.modules.requests) throw new OcsError('forbidden', 403, undefined, undefined, 'REQUESTS_DISABLED');
-    if (manager) {
-      const hit = requestContexts.get(id);
-      const ctx = hit && Date.now() - hit.at < 30_000 ? hit.value : await workhubModulesApi.requestContext(c);
-      requestContexts.set(id, { at: hit && hit.value === ctx ? hit.at : Date.now(), value: ctx });
-      if (!ctx.isManager) throw new OcsError('forbidden', 403, undefined, undefined, 'REQUEST_MANAGER_REQUIRED');
-    }
     return c;
+  };
+  const requestReason = (reason: string | null, required: boolean) => {
+    const value = reason?.trim() || null;
+    if (required && !value) throw new OcsError('client', undefined, 'reason required', undefined, 'REASON_REQUIRED');
+    return value;
   };
 
   /** Goals gate (fail closed): the module must be on for this user. */
@@ -835,8 +847,17 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async projects(accountId) {
       return workhubApi.projects(await client(accountId));
     },
-    async board(accountId, boardId) {
-      return workhubApi.board(await client(accountId), boardId);
+    async assignedTasks(accountId, status) {
+      return workhubApi.assignedTasks(await client(accountId), status);
+    },
+    async workhubBadges(accountId, fresh) {
+      return workhubApi.badges(await client(accountId), fresh);
+    },
+    async personalProject(accountId) {
+      return workhubApi.personalProject(await client(accountId));
+    },
+    async board(accountId, boardId, includeArchived) {
+      return workhubApi.board(await client(accountId), boardId, 'kanban', includeArchived);
     },
     async openTask(accountId, cardId) {
       const c = await client(accountId);
@@ -860,14 +881,8 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async moveTask(accountId, cardId, stackId, order) {
       return workhubApi.moveTask(await client(accountId), cardId, stackId, order);
     },
-    async createTask(accountId, boardId, stackId, title, idempotencyKey) {
-      if (!Number.isInteger(boardId) || boardId <= 0) throw new OcsError('client', undefined, 'invalid id');
-      const r = await (await client(accountId)).request<Task>(`/ocs/v2.php/apps/workhub/api/v1/projects/${boardId}/tasks`, {
-        method: 'POST',
-        body: { stackId, title },
-        headers: { 'Idempotency-Key': idempotencyKey },
-      });
-      return r.data;
+    async createTask(accountId, boardId, stackId, title, idempotencyKey, schedule) {
+      return workhubApi.createTask(await client(accountId), boardId, stackId, title, idempotencyKey, schedule);
     },
     async addSubtask(accountId, cardId, text) {
       return workhubApi.addSubtask(await client(accountId), cardId, text);
@@ -890,8 +905,20 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async renameProject(accountId, boardId, title) {
       return workhubApi.renameProject(await client(accountId), boardId, title);
     },
+    async projectMembers(accountId, boardId) {
+      return workhubApi.projectMembers(await client(accountId), boardId);
+    },
     async addProjectMember(accountId, boardId, grant, idempotencyKey) {
       return workhubApi.addProjectMember(await client(accountId), boardId, grant, idempotencyKey);
+    },
+    async updateProjectMember(accountId, boardId, shareId, rights) {
+      return workhubApi.updateProjectMember(await client(accountId), boardId, shareId, rights);
+    },
+    async removeProjectMember(accountId, boardId, shareId) {
+      return workhubApi.removeProjectMember(await client(accountId), boardId, shareId);
+    },
+    async reorderProjectStacks(accountId, boardId, stackIds) {
+      return workhubApi.reorderProjectStacks(await client(accountId), boardId, stackIds);
     },
     async createStack(accountId, boardId, title, order) {
       return workhubApi.createStack(await client(accountId), boardId, title, order);
@@ -921,6 +948,12 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async timeWeek(accountId, date) {
       return timeApi.week(await timeClient(accountId), date);
     },
+    async timePeriod(accountId, periodId) {
+      return timeApi.period(await timeClient(accountId), periodId);
+    },
+    async timeCardEntries(accountId, cardId) {
+      return timeApi.cardEntries(await timeClient(accountId), cardId);
+    },
     async timeEntryCreate(accountId, input, idempotencyKey) {
       return timeApi.createEntry(await timeClient(accountId), input, idempotencyKey);
     },
@@ -935,6 +968,9 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     },
     async timeWithdraw(accountId, submissionId, periodVersion, idempotencyKey) {
       return timeApi.withdraw(await timeClient(accountId), submissionId, periodVersion, idempotencyKey);
+    },
+    async timeSubmission(accountId, id) {
+      return timeApi.submission(await timeClient(accountId), id);
     },
     async timeReviews(accountId, status) {
       return timeApi.reviews(await timeClient(accountId, true), status);
@@ -952,11 +988,14 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
     async requests(accountId, scope) {
       return workhubModulesApi.requests(await requestClient(accountId), scope);
     },
+    async requestPage(accountId, scope, state, before) {
+      return requestsApi.list(await requestClient(accountId), scope, state, before ?? undefined);
+    },
+    async requestInbox(accountId, limit) {
+      return requestsApi.inbox(await requestClient(accountId), limit);
+    },
     async requestContext(accountId) {
-      const c = await requestClient(accountId);
-      const value = await workhubModulesApi.requestContext(c);
-      requestContexts.set(accountId, { at: Date.now(), value });
-      return value;
+      return workhubModulesApi.requestContext(await requestClient(accountId));
     },
     async createRequest(accountId, title, description, recipientUid, idempotencyKey) {
       return workhubModulesApi.createRequest(await requestClient(accountId), { title, description, ...(recipientUid ? { recipientUid } : {}) }, idempotencyKey);
@@ -968,17 +1007,29 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
       return requestsApi.history(await requestClient(accountId), requestId, before ?? undefined);
     },
     async requestRespond(accountId, requestId, version, decision, reason, idempotencyKey) {
-      const r = reason?.trim() || null;
-      if (decision === 'reject' && !r) throw new OcsError('client', undefined, 'reason required', undefined, 'REASON_REQUIRED');
+      const r = requestReason(reason, decision === 'reject');
       return requestsApi.respond(await requestClient(accountId), requestId, version, decision, r, idempotencyKey);
     },
     async requestResolve(accountId, requestId, version, reason, idempotencyKey) {
       const r = reason.trim();
       if (!r) throw new OcsError('client', undefined, 'reason required', undefined, 'REASON_REQUIRED');
-      return requestsApi.resolve(await requestClient(accountId, true), requestId, version, r, idempotencyKey);
+      return requestsApi.resolve(await requestClient(accountId), requestId, version, r, idempotencyKey);
     },
     async requestConvert(accountId, requestId, version, boardId, stackId, idempotencyKey) {
-      return requestsApi.convert(await requestClient(accountId, true), requestId, version, boardId, stackId, idempotencyKey);
+      return requestsApi.convert(await requestClient(accountId), requestId, version, boardId, stackId, idempotencyKey);
+    },
+    async requestDecide(accountId, requestId, version, decision, reason, idempotencyKey) {
+      const r = requestReason(reason, decision === 'reject');
+      return requestsApi.decide(await requestClient(accountId), requestId, version, decision, r, idempotencyKey);
+    },
+    async requestCancel(accountId, requestId, version, reason, idempotencyKey) {
+      return requestsApi.cancel(await requestClient(accountId), requestId, version, requestReason(reason, false), idempotencyKey);
+    },
+    async requestRemind(accountId, requestId, version, idempotencyKey) {
+      return requestsApi.remind(await requestClient(accountId), requestId, version, idempotencyKey);
+    },
+    async requestRemindManagers(accountId, requestId, version, idempotencyKey) {
+      return requestsApi.remindManagers(await requestClient(accountId), requestId, version, idempotencyKey);
     },
     async requestReport(accountId, filters) {
       return requestsApi.report(await requestClient(accountId), filters);
@@ -1055,6 +1106,9 @@ export function createDirectBackend(deps: DirectBackendDeps): Backend {
 
     async projectGantt(accountId, boardId) {
       return projectViewsApi.gantt(await projectsClient(accountId), boardId);
+    },
+    async taskActivity(accountId, cardId, cursor) {
+      return projectViewsApi.taskActivity(await projectsClient(accountId), cardId, cursor);
     },
     async projectActivity(accountId, boardId, filter, cursor) {
       return projectViewsApi.activity(await projectsClient(accountId), boardId, filter, cursor);
@@ -1222,15 +1276,16 @@ export const BACKEND_METHODS = [
   'participants', 'inviteCandidates', 'addParticipant', 'removeParticipant', 'setModerator', 'leaveRoom', 'deleteRoom',
   'shareFile', 'downloadFile', 'voiceClip', 'transfer',
   'notifications', 'dismissNotification',
-  'projects', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
+  'projects', 'assignedTasks', 'workhubBadges', 'personalProject', 'board', 'openTask', 'comments', 'addComment', 'updateTask', 'moveTask', 'createTask',
   'addSubtask', 'updateSubtask', 'deleteSubtask', 'addDependency', 'removeDependency',
-  'createProject', 'renameProject', 'addProjectMember', 'createStack', 'renameStack', 'principals', 'objectShares', 'setObjectShares',
-  'timer', 'timerStart', 'timerStop', 'timeWeek',
-  'timeEntryCreate', 'timeEntryUpdate', 'timeEntryDelete', 'timeSubmit', 'timeWithdraw', 'timeReviews', 'timeDecide', 'timeTeam', 'timeCsv',
-  'requests', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert', 'requestReport', 'requestPeople',
+  'createProject', 'renameProject', 'projectMembers', 'addProjectMember', 'updateProjectMember', 'removeProjectMember', 'reorderProjectStacks', 'createStack', 'renameStack', 'principals', 'objectShares', 'setObjectShares',
+  'timer', 'timerStart', 'timerStop', 'timeWeek', 'timePeriod', 'timeCardEntries',
+  'timeEntryCreate', 'timeEntryUpdate', 'timeEntryDelete', 'timeSubmit', 'timeWithdraw', 'timeReviews', 'timeSubmission', 'timeDecide', 'timeTeam', 'timeCsv',
+  'requests', 'requestPage', 'requestInbox', 'requestContext', 'createRequest', 'requestDetail', 'requestHistory', 'requestRespond', 'requestResolve', 'requestConvert',
+  'requestDecide', 'requestCancel', 'requestRemind', 'requestRemindManagers', 'requestReport', 'requestPeople',
   'goals', 'goalDetail', 'goalCreate', 'goalUpdate', 'goalDelete', 'goalTransfer', 'goalTargetAdd', 'goalTargetUpdate', 'goalTargetDelete',
   'goalCheckin', 'goalCheckins', 'goalSetCards', 'cardGoals', 'cardLinkGoal', 'cardUnlinkGoal',
-  'projectGantt', 'projectActivity', 'workload',
+  'projectGantt', 'projectActivity', 'taskActivity', 'workload',
   'dashboards', 'dashboardWidgetTypes', 'dashboard', 'dashboardCreate', 'dashboardUpdate', 'dashboardDelete',
   'dashboardWidgetAdd', 'dashboardWidgetUpdate', 'dashboardWidgetDelete', 'dashboardQuery', 'dashboardDrilldown', 'dashboardCsv',
   'workflows', 'workflowSamples', 'workflow', 'workflowCreate', 'workflowUpdate', 'workflowDelete', 'workflowStart',
@@ -1255,6 +1310,7 @@ const TASK_PATCH: Record<keyof TaskPatch, (v: unknown) => boolean> = {
   title: (v) => isStr(255)(v) && (v as string).trim().length > 0,
   description: isStr(100000),
   done: (v) => typeof v === 'boolean',
+  archived: (v) => typeof v === 'boolean',
   assignees: (v) => Array.isArray(v) && v.length <= 50 && v.every((x) => isStr(64)(x) && (x as string).length > 0),
   labels: (v) => Array.isArray(v) && v.length <= 50 && v.every(isInt),
   startDate: isDateOrNull,
@@ -1329,8 +1385,10 @@ const isDayRange = (from: unknown, to: unknown, maxDays: number) =>
 export const isValidReportFilters = (v: unknown): v is RequestReportFilters => {
   if (!isObj(v)) return false;
   const o = v as Record<string, unknown>;
-  return hasOnly(o, ['scope', 'type', 'state', 'from', 'to']) && ['all', 'mine', 'received', 'team'].includes(o.scope as string)
-    && ['all', 'request', 'timesheet'].includes(o.type as string) && (REPORT_STATES as readonly unknown[]).includes(o.state) && isDayRange(o.from, o.to, 366);
+  const { person, approval, ...required } = o;
+  return hasOnly(required, ['scope', 'type', 'state', 'from', 'to']) && ['all', 'mine', 'received', 'team'].includes(o.scope as string)
+    && ['all', 'request', 'timesheet'].includes(o.type as string) && (REPORT_STATES as readonly unknown[]).includes(o.state) && isDayRange(o.from, o.to, 366)
+    && (person === undefined || isStr(64)(person)) && (approval === undefined || (REPORT_APPROVALS as readonly unknown[]).includes(approval));
 };
 
 // ---- Goals wire validation: exact field sets per target type, server decimal format ----
@@ -1568,13 +1626,16 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   notifications: (a) => a.length === 1 && isAccountId(a[0]),
   dismissNotification: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   projects: (a) => a.length === 1 && isAccountId(a[0]),
-  board: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  assignedTasks: (a) => a.length === 2 && isAccountId(a[0]) && (ASSIGNMENT_STATUSES as readonly unknown[]).includes(a[1]),
+  workhubBadges: (a) => a.length === 2 && isAccountId(a[0]) && typeof a[1] === 'boolean',
+  personalProject: (a) => a.length === 1 && isAccountId(a[0]),
+  board: (a) => a.length >= 2 && a.length <= 3 && isAccountId(a[0]) && isInt(a[1]) && (a[2] === undefined || typeof a[2] === 'boolean'),
   openTask: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   comments: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   addComment: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isStr(10000)(a[2]) && isStr(128)(a[3]),
   updateTask: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidTaskPatch(a[2]),
   moveTask: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && Number.isInteger(a[3]),
-  createTask: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isStr(255)(a[3]) && isStr(128)(a[4]),
+  createTask: (a) => a.length >= 5 && a.length <= 6 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isTitle(255)(a[3]) && isStr(128)(a[4]) && (a[5] === undefined || (isObj(a[5]) && fieldsOk(a[5] as Record<string, unknown>, { startDate: isDateOrNull, dueDate: isDateOrNull, estimateSec: TASK_PATCH.estimateSec }, []))),
   addSubtask: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isStr(1000)(a[2]),
   updateSubtask: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isIndex(a[2]) && isStr(4000)(a[3]) && isSubtaskChange(a[4]),
   deleteSubtask: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isIndex(a[2]) && isStr(4000)(a[3]),
@@ -1582,7 +1643,12 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   removeDependency: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
   createProject: (a) => a.length === 4 && isAccountId(a[0]) && isTitle(255)(a[1]) && (a[2] === null || (typeof a[2] === 'string' && /^#?[0-9a-fA-F]{6}$/.test(a[2]))) && isKey(a[3]),
   renameProject: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isTitle(100)(a[2]),
+  projectMembers: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   addProjectMember: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isValidMemberGrant(a[2]) && isKey(a[3]),
+  updateProjectMember: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isObj(a[3]) &&
+    Object.keys(a[3] as object).length === 3 && ['edit', 'share', 'manage'].every((key) => Object.hasOwn(a[3] as object, key) && typeof (a[3] as Record<string, unknown>)[key] === 'boolean'),
+  removeProjectMember: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
+  reorderProjectStacks: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isIdSet(200)(a[2]),
   createStack: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isTitle(255)(a[2]) && isIndex(a[3]),
   renameStack: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isTitle(100)(a[2]),
   principals: (a) => a.length === 2 && isAccountId(a[0]) && isStr(64)(a[1]),
@@ -1592,17 +1658,23 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   timerStart: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === null || isInt(a[1])) && isStr(1000)(a[2]) && isStr(128)(a[3]),
   timerStop: (a) => a.length === 1 && isAccountId(a[0]),
   timeWeek: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && (a[1] === undefined || (typeof a[1] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a[1]))),
+  timePeriod: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  timeCardEntries: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   timeEntryCreate: (a) => a.length === 3 && isAccountId(a[0]) && isValidTimeEntryInput(a[1]) && isKey(a[2]),
   timeEntryUpdate: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isValidTimeEntryPatch(a[2]),
   timeEntryDelete: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]),
   timeSubmit: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
   timeWithdraw: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
+  timeSubmission: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
   timeReviews: (a) => a.length === 2 && isAccountId(a[0]) && (a[1] === 'pending' || a[1] === 'approved'),
   timeDecide: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && ['approve', 'request_changes', 'reopen'].includes(a[2] as string) && isVersion(a[3])
     && (a[4] === null || isStr(2000)(a[4])) && (a[2] === 'approve' || (typeof a[4] === 'string' && a[4].trim().length > 0)) && isKey(a[5]),
   timeTeam: (a) => a.length === 3 && isAccountId(a[0]) && isDayRange(a[1], a[2], 93),
   timeCsv: (a) => a.length === 4 && isAccountId(a[0]) && (a[1] === 'own' || a[1] === 'team') && isDayRange(a[2], a[3], 366),
   requests: (a) => a.length === 2 && isAccountId(a[0]) && ['mine', 'received', 'team'].includes(a[1] as string),
+  requestPage: (a) => a.length === 4 && isAccountId(a[0]) && ['mine', 'received', 'team'].includes(a[1] as string)
+    && (a[2] === 'any' || (REQUEST_STATES as readonly unknown[]).includes(a[2])) && isIdOrNull(a[3]),
+  requestInbox: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]) && (a[1] as number) <= 50,
   requestContext: (a) => a.length === 1 && isAccountId(a[0]),
   createRequest: (a) => a.length === 5 && isAccountId(a[0]) && isStr(255)(a[1]) && isStr(10000)(a[2]) && (a[3] === null || isStr(64)(a[3])) && isStr(128)(a[4]),
   requestDetail: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
@@ -1611,6 +1683,11 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
     && (a[4] === null || isStr(2000)(a[4])) && (a[3] === 'approve' || (typeof a[4] === 'string' && a[4].trim().length > 0)) && isKey(a[5]),
   requestResolve: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isTitle(2000)(a[3]) && isKey(a[4]),
   requestConvert: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isInt(a[3]) && isInt(a[4]) && isKey(a[5]),
+  requestDecide: (a) => a.length === 6 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && (a[3] === 'approve' || a[3] === 'reject')
+    && (a[4] === null || isStr(2000)(a[4])) && (a[3] === 'approve' || isTitle(2000)(a[4])) && isKey(a[5]),
+  requestCancel: (a) => a.length === 5 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && (a[3] === null || isStr(2000)(a[3])) && isKey(a[4]),
+  requestRemind: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
+  requestRemindManagers: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isVersion(a[2]) && isKey(a[3]),
   requestReport: (a) => a.length === 2 && isAccountId(a[0]) && isValidReportFilters(a[1]),
   requestPeople: (a) => a.length === 1 && isAccountId(a[0]),
   goals: (a) => (a.length === 1 || a.length === 2) && isAccountId(a[0]) && (a[1] === undefined || isValidGoalFilter(a[1])),
@@ -1629,6 +1706,7 @@ const VALIDATORS: Record<BackendMethod, (a: unknown[]) => boolean> = {
   cardLinkGoal: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]),
   cardUnlinkGoal: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isInt(a[2]) && isInt(a[3]),
   projectGantt: (a) => a.length === 2 && isAccountId(a[0]) && isInt(a[1]),
+  taskActivity: (a) => a.length === 3 && isAccountId(a[0]) && isInt(a[1]) && isCursor(a[2]),
   projectActivity: (a) => a.length === 4 && isAccountId(a[0]) && isInt(a[1]) && isValidActivityFilter(a[2]) && isCursor(a[3]),
   workload: (a) => a.length === 2 && isAccountId(a[0]) && isValidWorkloadQuery(a[1]),
   dashboards: (a) => a.length === 2 && isAccountId(a[0]) && (a[1] === null || isCursor(a[1])),

@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { buildTaskPatch, STORY_POINT_SCALE, taskFormOf, type AccountId, type BoardPayload, type Priority, type TaskDetail, type TaskForm, type TaskFormError } from '@workhub-devices/core';
+import { buildTaskPatch, buildTaskSchedule, STORY_POINT_SCALE, taskFormOf, type AccountId, type BoardPayload, type Priority, type TaskDetail, type TaskForm, type TaskFormError, type TaskScheduleForm } from '@workhub-devices/core';
 import { useServices } from './services';
 import { Button, ErrorBanner, Field, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
-import { t } from './i18n';
+import { formatTaskDate, t } from './i18n';
 
 type Board = BoardPayload['project'];
 
@@ -16,13 +16,28 @@ const PRIORITIES: Array<[Priority | null, string]> = [
   ['urgent', 'Acil'],
 ];
 
-const FORM_ERROR: Record<TaskFormError, string> = {
-  title_empty: 'Başlık boş olamaz.',
-  date_invalid: 'Tarihleri YYYY-AA-GG biçiminde girin (ör. 2026-11-30).',
-  date_range: 'Başlangıç tarihi bitişten sonra olamaz.',
-  estimate_invalid: 'Tahmini süreyi saat olarak girin (ör. 1,5).',
-  points_invalid: 'Hikaye puanını 0–1000 arası tam sayı olarak girin.',
+export const TASK_FORM_ERROR: Record<TaskFormError, string> = {
+  title_empty: t.taskTitleEmpty,
+  date_invalid: t.taskDateInvalid,
+  date_range: t.taskDateRange,
+  estimate_invalid: t.taskEstimateInvalid,
+  points_invalid: t.taskPointsInvalid,
 };
+
+export function TaskScheduleFields({ form, onChange, task }: { form: TaskScheduleForm; onChange: (patch: Partial<TaskScheduleForm>) => void; task?: TaskDetail }) {
+  const schedule = buildTaskSchedule(form, task);
+  const due = 'patch' in schedule ? schedule.patch.dueDate : null;
+  return (
+    <View>
+      <Field label={t.taskStartDate} value={form.startDate} onChangeText={(startDate) => onChange({ startDate })} autoCapitalize="none" />
+      <Field label={t.taskStartTime} value={form.startTime} onChangeText={(startTime) => onChange({ startTime })} editable={!!form.startDate.trim()} autoCapitalize="none" />
+      <Field label={t.taskDueDate} value={form.dueDate} onChangeText={(dueDate) => onChange({ dueDate })} autoCapitalize="none" />
+      <Field label={t.taskDueTime} value={form.dueTime} onChangeText={(dueTime) => onChange({ dueTime })} editable={!!form.dueDate.trim()} autoCapitalize="none" />
+      <Field label={t.taskEstimate} value={form.estimateHours} onChangeText={(estimateHours) => onChange({ estimateHours })} placeholder={t.taskEstimateHint} autoCapitalize="none" />
+      {due ? <Text style={{ color: colors.muted, marginBottom: space(2) }}>{t.taskPlannedDue}: {formatTaskDate(due, 'due')}</Text> : null}
+    </View>
+  );
+}
 
 export function Chip({ label, selected, onPress, disabled }: { label: string; selected: boolean; onPress: () => void; disabled?: boolean }) {
   return (
@@ -55,7 +70,7 @@ export function TaskEditor({ accountId, task, board, onSaved, onCancel }: { acco
 
   const save = async () => {
     const r = buildTaskPatch(task, board.labels, form);
-    if ('error' in r) return setFormErr(FORM_ERROR[r.error]);
+    if ('error' in r) return setFormErr(TASK_FORM_ERROR[r.error]);
     setFormErr(undefined);
     if (Object.keys(r.patch).length === 0) return onCancel();
     setBusy(true);
@@ -89,15 +104,7 @@ export function TaskEditor({ accountId, task, board, onSaved, onCancel }: { acco
           <Chip key={label} label={label} selected={form.priority === p} onPress={() => set({ priority: p })} />
         ))}
       </View>
-      <View style={{ flexDirection: 'row', gap: space(2) }}>
-        <View style={{ flex: 1 }}>
-          <Field label="Başlangıç (YYYY-AA-GG)" value={form.startDate} onChangeText={(v) => set({ startDate: v })} placeholder="—" autoCapitalize="none" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field label="Bitiş (YYYY-AA-GG)" value={form.dueDate} onChangeText={(v) => set({ dueDate: v })} placeholder="—" autoCapitalize="none" />
-        </View>
-      </View>
-      <Field label="Tahmini süre (saat)" value={form.estimateHours} onChangeText={(v) => set({ estimateHours: v })} keyboardType="decimal-pad" placeholder="—" />
+      <TaskScheduleFields form={form} onChange={set} task={task} />
       <Text style={ui.label}>Hikaye puanı</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginBottom: space(3) }}>
         {STORY_POINT_SCALE.map((p) => (

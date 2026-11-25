@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
-import { type AccountId, type ProjectSummary, type ServerBase, type WorkhubBootstrap } from '@workhub-devices/core';
+import { useEffect, useState, type ReactNode } from 'react';
+import { AppState, Pressable, ScrollView, Text, View } from 'react-native';
+import { type AccountId, type ProjectSummary, type ServerBase, type WorkhubBadges, type WorkhubBootstrap } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { Icon, type IconName } from './icons';
 import { ProjectsScreen } from './workhub';
@@ -13,6 +13,7 @@ import { WorkloadScreen } from './views';
 import { DashboardsScreen } from './dashboards';
 import { WorkflowsScreen } from './workflows';
 import { AiScreen } from './ai';
+import { t } from './i18n';
 
 export type Section = 'projects' | 'workload' | 'workflows' | 'dashboards' | 'time' | 'requests' | 'goals' | 'ai' | 'more';
 
@@ -44,12 +45,38 @@ interface ModuleProps {
   selectedProject?: number;
   onOpenProject: (p: Pick<ProjectSummary, 'id' | 'title'>) => void;
   onOpenTask?: (cardId: number) => void;
+  onOpenRequest?: (id: number) => void;
 }
 
-export function SectionContent({ section, accountId, serverBase, workhub, selectedProject, onOpenProject, onOpenTask, version }: ModuleProps & { section: Section }) {
+function useWorkhubBadges({ accountId, workhub, version = 0 }: Pick<ModuleProps, 'accountId' | 'workhub' | 'version'>) {
+  const { backend } = useServices();
+  const enabled = workhub.modules.projects || workhub.modules.requests || workhub.modules.time;
+  const [refresh, setRefresh] = useState(0);
+  const s = useAsync(async () => enabled ? { accountId, badges: await backend.workhubBadges(accountId, version > 0 || refresh > 0) } : undefined, [accountId, enabled, version, refresh]);
+  useEffect(() => {
+    if (!enabled) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setRefresh((r) => r + 1);
+    });
+    return () => sub.remove();
+  }, [enabled]);
+  // This endpoint is optional on old servers and can fail independently of projects/requests.
+  const badges = enabled && !s.error && s.data?.accountId === accountId ? s.data.badges : undefined;
+  return { badges, refreshBadges: () => setRefresh((r) => r + 1) };
+}
+
+function sectionBadge(key: Section, badges?: WorkhubBadges) {
+  return key === 'projects' ? badges?.overdue : key === 'requests' ? badges?.approvals.requests : key === 'time' ? badges?.approvals.timesheets : undefined;
+}
+
+function AttentionBadge({ count }: { count: number }) {
+  return <Text style={{ minWidth: 22, textAlign: 'center', borderRadius: radius.md, paddingHorizontal: 4, backgroundColor: colors.surface, color: colors.danger, fontSize: font.small, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{count}</Text>;
+}
+
+export function SectionContent({ section, accountId, serverBase, workhub, selectedProject, onOpenProject, onOpenTask, onOpenRequest, onOpenApprovals, version, badges, onRefreshBadges, startInApprovals = false }: ModuleProps & { section: Section; badges?: WorkhubBadges | undefined; onRefreshBadges?: () => void; onOpenApprovals?: (kind: 'requests' | 'time') => void; startInApprovals?: boolean }) {
   switch (section) {
     case 'projects':
-      return <ProjectsScreen accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} onOpen={onOpenProject} />;
+      return <ProjectsScreen key={accountId} accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} {...(onOpenTask ? { onOpenTask } : {})} {...(onOpenRequest ? { onOpenRequest } : {})} {...(onOpenApprovals ? { onOpenApprovals } : {})} requestsEnabled={workhub.modules.requests} timeReviewEnabled={workhub.modules.time && workhub.permissions.canViewTeamReport} {...(onRefreshBadges ? { onRefreshBadges } : {})} badges={badges} onOpen={onOpenProject} />;
     case 'workload':
       return <WorkloadScreen accountId={accountId} {...(onOpenTask ? { onOpenTask } : {})} />;
     case 'workflows':
@@ -57,9 +84,9 @@ export function SectionContent({ section, accountId, serverBase, workhub, select
     case 'dashboards':
       return <DashboardsScreen accountId={accountId} projectsEnabled={workhub.modules.projects} {...(onOpenTask ? { onOpenTask } : {})} />;
     case 'time':
-      return <TimeScreen accountId={accountId} canReview={workhub.permissions.canViewTeamReport} projectsEnabled={workhub.modules.projects} />;
+      return <TimeScreen accountId={accountId} canReview={workhub.permissions.canViewTeamReport} projectsEnabled={workhub.modules.projects} startInReview={startInApprovals} {...(onRefreshBadges ? { onChanged: onRefreshBadges } : {})} />;
     case 'requests':
-      return <RequestsScreen accountId={accountId} timeEnabled={workhub.modules.time} />;
+      return <RequestsScreen startInApprovals={startInApprovals} accountId={accountId} timeEnabled={workhub.modules.time} {...(onOpenTask ? { onOpenTask } : {})} {...(onRefreshBadges ? { onChanged: onRefreshBadges } : {})} />;
     case 'goals':
       return <GoalsScreen accountId={accountId} />;
     case 'ai':
@@ -73,22 +100,29 @@ export function SectionContent({ section, accountId, serverBase, workhub, select
 export function WorkhubHome(props: ModuleProps) {
   const sections = workhubSections(props.workhub);
   const [section, setSection] = useState<Section>(sections[0]?.key ?? 'more');
+  const { badges, refreshBadges } = useWorkhubBadges(props);
+  const [startInApprovals, setStartInApprovals] = useState(false);
+  const onOpenApprovals = (kind: 'requests' | 'time') => { setStartInApprovals(true); setSection(kind); };
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} accessibilityRole="tablist" style={{ flexGrow: 0, borderBottomWidth: 1, borderColor: colors.border }} contentContainerStyle={{ paddingHorizontal: space(2) }}>
-        {sections.map(({ key, label, icon }) => (
-          <Pressable key={key} accessibilityRole="tab" accessibilityState={{ selected: section === key }} onPress={() => setSection(key)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space(3), paddingVertical: space(3), borderBottomWidth: 2, borderColor: section === key ? colors.primary : 'transparent' }}>
-            <Icon name={icon} size={16} color={section === key ? colors.primary : colors.muted} />
-            <Text style={{ color: section === key ? colors.primary : colors.muted, fontWeight: section === key ? '700' : '500' }}>{label}</Text>
-          </Pressable>
-        ))}
+        {sections.map(({ key, label, icon }) => {
+          const count = sectionBadge(key, badges);
+          return (
+            <Pressable key={key} accessibilityRole="tab" accessibilityLabel={count ? `${label}, ${key === 'projects' ? t.projectAttentionCount(count) : t.approvalsCount(count)}` : label} accessibilityState={{ selected: section === key }} onPress={() => { setStartInApprovals(false); setSection(key); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space(3), paddingVertical: space(3), borderBottomWidth: 2, borderColor: section === key ? colors.primary : 'transparent' }}>
+              <Icon name={icon} size={16} color={section === key ? colors.primary : colors.muted} />
+              <Text style={{ color: section === key ? colors.primary : colors.muted, fontWeight: section === key ? '700' : '500' }}>{label}</Text>
+              {count ? <AttentionBadge count={count} /> : null}
+            </Pressable>
+          );
+        })}
       </ScrollView>
-      <SectionContent {...props} section={section} />
+      <SectionContent key={`${section}:${startInApprovals}`} {...props} section={section} startInApprovals={startInApprovals} badges={badges} onRefreshBadges={refreshBadges} onOpenApprovals={onOpenApprovals} />
     </View>
   );
 }
 
-function NavItem({ icon, label, selected, onPress, dot, indent, right, a11y }: { icon?: IconName; label: string; selected: boolean; onPress: () => void; dot?: string; indent?: boolean; right?: string; a11y?: string }) {
+function NavItem({ icon, label, selected, onPress, dot, indent, right, a11y, count }: { icon?: IconName; label: string; selected: boolean; onPress: () => void; dot?: string; indent?: boolean; right?: string; a11y?: string; count?: number | undefined }) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -105,6 +139,7 @@ function NavItem({ icon, label, selected, onPress, dot, indent, right, a11y }: {
         {label}
       </Text>
       {right ? <Text style={{ color: colors.muted, fontSize: 12, fontVariant: ['tabular-nums'] }}>{right}</Text> : null}
+      {count ? <AttentionBadge count={count} /> : null}
     </Pressable>
   );
 }
@@ -114,7 +149,7 @@ function NavItem({ icon, label, selected, onPress, dot, indent, right, a11y }: {
  * project list as coloured sub-items — next to the selected module or project workspace.
  * The project/task panes are rendered by the caller in `children`.
  */
-export function WorkhubWide({ accountId, serverBase, workhub, version, project, onOpenProject, onOpenTask, children, drawer }: {
+export function WorkhubWide({ accountId, serverBase, workhub, version, project, onOpenProject, onOpenTask, onOpenRequest, children, drawer }: {
   accountId: AccountId;
   serverBase: ServerBase;
   workhub: WorkhubBootstrap;
@@ -122,6 +157,7 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
   project: number | null;
   onOpenProject: (p: Pick<ProjectSummary, 'id' | 'title'> | null) => void;
   onOpenTask: (cardId: number) => void;
+  onOpenRequest?: (id: number) => void;
   /** Project workspace when a project is open. */
   children?: ReactNode;
   /** Task detail shown as a right-hand drawer (web `TaskDrawer.vue`). */
@@ -131,8 +167,15 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
   const sections = workhubSections(workhub);
   const [section, setSection] = useState<Section>(sections[0]?.key ?? 'more');
   const [projectsOpen, setProjectsOpen] = useState(true);
-  const projects = useAsync(() => (workhub.modules.projects ? backend.projects(accountId) : Promise.resolve([])), [accountId, version, workhub.modules.projects]);
-  const navProjects = (projects.data ?? []).filter((p) => !p.archived).slice(0, 30);
+  const { badges, refreshBadges } = useWorkhubBadges({ accountId, workhub, ...(version !== undefined ? { version } : {}) });
+  const projects = useAsync(async () => ({ accountId, list: workhub.modules.projects ? await backend.projects(accountId) : [] }), [accountId, version, workhub.modules.projects]);
+  const navProjects = projects.data?.accountId === accountId ? projects.data.list.filter((p) => !p.archived).slice(0, 30) : [];
+  const [startInApprovals, setStartInApprovals] = useState(false);
+  const openApprovals = (kind: 'requests' | 'time') => {
+    onOpenProject(null);
+    setStartInApprovals(true);
+    setSection(kind);
+  };
   return (
     <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.surface }}>
       <View accessibilityRole="navigation" accessibilityLabel="Workhub gezinmesi" style={{ width: 256, backgroundColor: colors.nav, borderRightWidth: 1, borderColor: colors.border }}>
@@ -143,37 +186,43 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
           </Text>
         </View>
         <ScrollView contentContainerStyle={{ paddingBottom: space(4), gap: 2 }}>
-          {sections.map(({ key, label, icon }) => (
-            <View key={key}>
+          {sections.map(({ key, label, icon }) => {
+            const count = sectionBadge(key, badges);
+            return <View key={key}>
               <NavItem
                 icon={icon}
                 label={label}
+                count={count}
+                a11y={count ? `${label}, ${key === 'projects' ? t.projectAttentionCount(count) : t.approvalsCount(count)}` : label}
                 selected={section === key && (key !== 'projects' || project === null)}
                 onPress={() => {
+                  setStartInApprovals(false);
                   setSection(key);
                   onOpenProject(null);
                   if (key === 'projects') setProjectsOpen(true);
                 }}
               />
               {key === 'projects' && projectsOpen
-                ? navProjects.map((p) => (
-                    <NavItem
+                ? navProjects.map((p) => {
+                    const overdue = badges?.overdueByProject[p.id];
+                    return <NavItem
                       key={p.id}
                       indent
                       dot={hexColor(p.color)}
                       label={p.title}
+                      count={overdue}
                       right={String(p.openCount)}
-                      a11y={`${p.title}, ${p.openCount} açık görev`}
+                      a11y={[p.title, t.projectOpenCount(p.openCount), overdue && t.projectAttentionCount(overdue)].filter(Boolean).join(', ')}
                       selected={project === p.id}
                       onPress={() => {
                         setSection('projects');
                         onOpenProject(p);
                       }}
-                    />
-                  ))
+                    />;
+                  })
                 : null}
-            </View>
-          ))}
+            </View>;
+          })}
         </ScrollView>
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -182,13 +231,19 @@ export function WorkhubWide({ accountId, serverBase, workhub, version, project, 
         ) : (
           <View style={{ flex: 1, backgroundColor: colors.bg }}>
             <SectionContent
+              key={`${section}:${startInApprovals}`}
               section={section}
+              startInApprovals={startInApprovals}
+              {...(onOpenRequest ? { onOpenRequest } : {})}
               accountId={accountId}
               serverBase={serverBase}
               workhub={workhub}
               {...(version !== undefined ? { version } : {})}
               onOpenProject={(p) => onOpenProject(p)}
               onOpenTask={onOpenTask}
+              onOpenApprovals={openApprovals}
+              badges={badges}
+              onRefreshBadges={refreshBadges}
             />
           </View>
         )}
