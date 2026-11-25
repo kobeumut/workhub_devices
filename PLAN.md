@@ -1,5 +1,15 @@
 # Workhub Devices uygulama planı — GENE-47
 
+## GENE-247 — web Workhub ile tasarım/kullanım eşitleme (25 Kasım 2026)
+
+Yöntem: dev sunucuda (Workhub 0.6.4 `main`) aynı kullanıcıyla web (Playwright, 1440/412 px) ve masaüstü uygulaması (Electron, aynı boyutlar) ekran ekran karşılaştırıldı.
+
+- [x] Ortak: modül sayfa başlıkları, içerik genişliğinde butonlar, tıklanabilir liste kartları + durum rozeti, "Yeni …" formları başlıktaki butonla.
+- [x] Projeler ana sayfası (onay kartı, atanan görevler, proje kart ızgarası, arama) ve Zaman çizelgem (özet kartı, günlük toplamlar ızgarası, hafta gezintisi) web düzeninde.
+- [x] Masaüstü UI smoke güncel sunucuya uyarlandı (yerelleştirilmiş widget/sütun adları, GENE-245 form etiketleri, yavaş yüklenen izinler için bekleme): 30/30.
+- [ ] Talep merkezi iki sütun düzeni ("Sizi bekleyenler" / "Son taleplerim"), Hedefler filtre seçicileri, proje görünüm sekmesi sırası (web: Kanban, Liste, Gantt, Etkinlik; arşiv sonda) — sonraki adım.
+- [ ] Mobil (Android/iOS) cihazda görsel doğrulama yapılmadı; değişiklikler ortak RN bileşenlerinde, telefon genişliği masaüstü RNW'de 412 px ile kontrol edildi.
+
 ## GENE-245 — Workhub 12–25 Kasım farkı
 
 Başlangıç: Devices `574aa76` (12 Kasım 2026, 11:48 +03); Workhub `30acb2e..a234a61` (`main`, 13 birleşim). Var olan Orbit/Kanban ve hikâye puanı yeniden uygulanmaz. Workhub sunucusu ve dağıtım hattı değiştirilmez.

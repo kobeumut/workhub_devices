@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, SectionList, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { ASSIGNMENT_STATUSES, OcsError, canTrackTask, canWriteTaskComment, emptyFilters, kanbanColumns, loadPendingRequestApprovals, moveToColumn, projectWritePermissions, type AccountId, type AssignmentStatus, type BoardPayload, type ProjectSummary, type Task, type TaskDetail, type TaskFilters, type TaskSchedule, type WorkhubBadges } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Empty, ErrorBanner, Header, Loading, Row, card, styles as ui } from './ui';
-import { colors, font, hexColor, radius, space } from './theme';
+import { Button, CountChip, Empty, ErrorBanner, Header, Loading, PageHeader, Pill, Row, card, styles as ui } from './ui';
+import { colors, font, hexColor, radius, shadow, space } from './theme';
 import { Icon, type IconName } from './icons';
 import { AvatarStack, BoardToolbar, Chip, DueBadge, IconButton, KanbanBoard, LabelChips, PriorityBadge, RunningTimers, stackColor } from './kanban';
 import { describeError, formatDate, formatDuration, formatTaskDate, t } from './i18n';
@@ -33,7 +33,6 @@ export function ProjectsScreen({ accountId, selected, onOpen, version = 0, onOpe
   const { backend } = useServices();
   const s = useAsync(async () => ({ accountId, projects: await backend.projects(accountId) }), [accountId, version]);
   const projects = s.data?.accountId === accountId ? s.data.projects : undefined;
-  const [assigned, setAssigned] = useState(false);
   const [personalBusy, setPersonalBusy] = useState(false);
   const [personalError, setPersonalError] = useState<unknown>();
   const approvals = badges?.approvals.total;
@@ -66,119 +65,159 @@ export function ProjectsScreen({ accountId, selected, onOpen, version = 0, onOpe
       setPersonalBusy(false);
     }
   };
+  const { width } = useWindowDimensions();
+  const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
+  const [showAllApprovals, setShowAllApprovals] = useState(false);
+  const q = query.trim().toLocaleLowerCase('tr');
+  const shown = (projects ?? []).filter((p) => !q || p.title.toLocaleLowerCase('tr').includes(q));
+  // Web grid: `repeat(auto-fill, minmax(280px, 1fr))` inside the page padding.
+  const columns = Math.max(1, Math.min(3, Math.floor((width >= 900 ? width - 600 : width) / 300)));
+  const approvalItems = [
+    ...(approvalRows?.requests ?? []).map((row) => ({ key: `request:${row.id}`, title: row.title, meta: `${row.requesterName} → ${row.recipientName} · ${formatDate(row.createdAt)}`, badge: t.page.sentToYou, open: () => onOpenRequest?.(row.id) })),
+    ...(approvalRows?.timesheets ?? []).map((row) => ({ key: `time:${row.submission.id}`, title: row.user.displayName, meta: t.timesheetApprovalPeriod(formatDate(row.period.localStartDate), formatDate(row.period.localEndDate)), badge: t.page.timesheetPending, open: () => onOpenApprovals?.('time') })),
+  ];
+  const approvalTotal = approvals ?? approvalItems.length;
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      {onOpenApprovals && ((approvals ?? 0) > 0 || approvalRows?.requests.length || approvalRows?.timesheets.length) ? (
-        <View>
-          <Row title={approvals ? t.approvalsCount(approvals) : t.waitingApprovals} onPress={() => onOpenApprovals(requestsEnabled ? 'requests' : 'time')} />
-          {approvalRows?.failed ? <Text style={{ padding: space(2), color: colors.muted }}>{t.approvalsPartial}</Text> : null}
-          {approvalRows?.requests.slice(0, 3).map((row) => <Row key={`request:${row.id}`} title={row.title} subtitle={`${row.requesterName} → ${row.recipientName}`} onPress={() => onOpenRequest?.(row.id)} />)}
-          {approvalRows?.timesheets.slice(0, 3).map((row) => <Row key={`time:${row.submission.id}`} title={row.user.displayName} subtitle={t.timesheetApprovalPeriod(formatDate(row.period.localStartDate), formatDate(row.period.localEndDate))} onPress={() => onOpenApprovals('time')} />)}
-        </View>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: space(6) }}>
+      <PageHeader
+        title={t.page.projects}
+        subtitle={t.page.projectsSub}
+        actions={<>
+          <TextInput accessibilityLabel={t.page.searchProjects} placeholder={t.page.searchProjects} placeholderTextColor={colors.muted} value={query} onChangeText={setQuery} style={[ui.input, { minHeight: 36, width: width >= 600 ? 220 : 160, paddingVertical: 6 }]} />
+          {projects && !projects.some((p) => p.personal) ? <Button title={t.personalProject} kind="secondary" busy={personalBusy} onPress={() => void openPersonal()} /> : null}
+          <Button title={creating ? t.page.closeForm : t.page.newProject} kind={creating ? 'secondary' : 'primary'} onPress={() => setCreating((c) => !c)} />
+        </>}
+      />
+      {creating ? (
+        <CreateProjectForm
+          accountId={accountId}
+          onCreated={(p) => {
+            setCreating(false);
+            refresh();
+            onOpen(p);
+          }}
+        />
       ) : null}
-      {onOpenTask ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: space(2), gap: space(2) }}>
-          <Chip label={t.projectList} selected={!assigned} onPress={() => setAssigned(false)} />
-          <Chip label={t.myAssignedTasks} selected={assigned} onPress={() => setAssigned(true)} />
-        </View>
-      ) : null}
-      {assigned && onOpenTask ? (
-        <AssignedTaskList key={accountId} accountId={accountId} version={version} onOpenTask={onOpenTask} />
-      ) : (
-        <>
-          <CreateProjectForm
-            accountId={accountId}
-            onCreated={(p) => {
-              refresh();
-              onOpen(p);
-            }}
-          />
-          {projects && !projects.some((p) => p.personal) ? (
-            <View style={{ padding: space(2), alignItems: 'flex-start' }}>
-              <Button title={t.personalProject} kind="secondary" busy={personalBusy} onPress={() => void openPersonal()} />
-            </View>
+      <ErrorBanner error={personalError} />
+      {onOpenApprovals && (approvalTotal > 0 || approvalItems.length > 0) ? (
+        <View style={[card, shadow, { marginHorizontal: space(4), marginTop: space(2), borderColor: '#f5c27a', gap: space(2) }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2) }}>
+            <Text accessibilityRole="header" style={{ fontSize: font.title, fontWeight: '800', color: colors.textStrong }}>{t.page.pendingApprovals}</Text>
+            {approvalTotal ? <CountChip count={approvalTotal} /> : null}
+            <View style={{ flex: 1 }} />
+            <Button title={t.page.goToApprovals} kind="secondary" accessibilityLabel={approvals ? t.approvalsCount(approvals) : t.waitingApprovals} onPress={() => onOpenApprovals(requestsEnabled ? 'requests' : 'time')} />
+          </View>
+          {approvalRows?.failed ? <Text style={{ color: colors.muted }}>{t.approvalsPartial}</Text> : null}
+          {(showAllApprovals ? approvalItems : approvalItems.slice(0, 5)).map((row) => (
+            <Pressable key={row.key} accessibilityRole="button" accessibilityLabel={`${row.title}, ${row.badge}`} onPress={row.open} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space(2), padding: space(3), borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.hover : colors.bg })}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text numberOfLines={1} style={{ fontWeight: '700', color: colors.textStrong }}>{row.title}</Text>
+                <Text numberOfLines={1} style={{ fontSize: font.small, color: colors.muted }}>{row.meta}</Text>
+              </View>
+              <Pill label={row.badge} tone="warning" />
+            </Pressable>
+          ))}
+          {!showAllApprovals && approvalItems.length > 5 ? (
+            <Pressable accessibilityRole="button" onPress={() => setShowAllApprovals(true)} style={{ alignSelf: 'flex-start', paddingVertical: space(1) }}>
+              <Text style={{ color: colors.text, fontSize: font.small }}>{t.page.showAll(approvalTotal)}</Text>
+            </Pressable>
           ) : null}
-          <ErrorBanner error={personalError} />
-          <ErrorBanner error={s.error} onRetry={refresh} />
-          {s.loading && !projects ? (
-            <Loading />
-          ) : (
-            <FlatList
-              data={projects ?? []}
-              keyExtractor={(p) => String(p.id)}
-              refreshing={s.loading}
-              onRefresh={refresh}
-              ListEmptyComponent={s.error ? undefined : <Empty text={t.noProjects} />}
-              renderItem={({ item }) => {
-                const attention = badges?.overdueByProject[item.id] ?? 0;
-                const overdue = attention || item.overdueCount;
-                return <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: item.id === selected }}
-                  accessibilityLabel={[item.title, item.reviewer && t.reviewerProject, t.projectOpenCount(item.openCount), t.projectDoneCount(item.doneCount), overdue > 0 && t.projectOverdueCount(overdue)].filter(Boolean).join(', ')}
-                  onPress={() => onOpen(item)}
-                  style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space(3), paddingHorizontal: space(4), paddingVertical: space(3), minHeight: 64, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: item.id === selected ? colors.primarySoft : pressed ? colors.hover : colors.bg })}
-                >
-                  <View style={{ width: 36, height: 36, borderRadius: radius.md, backgroundColor: hexColor(item.color), alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon name="kanban" size={18} color="#fff" />
+        </View>
+      ) : null}
+      {onOpenTask ? <AssignedTaskList key={accountId} accountId={accountId} version={version} onOpenTask={onOpenTask} /> : null}
+      <Text accessibilityRole="header" style={{ fontSize: font.title, fontWeight: '800', color: colors.textStrong, marginHorizontal: space(4), marginTop: space(4), marginBottom: space(2) }}>{t.page.allProjects}</Text>
+      <ErrorBanner error={s.error} onRetry={refresh} />
+      {s.loading && !projects ? <Loading /> : !shown.length && !s.error ? <Empty text={projects?.length ? t.page.noProjectMatch : t.noProjects} /> : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(3), paddingHorizontal: space(4) }}>
+          {shown.map((item) => {
+            const attention = badges?.overdueByProject[item.id] ?? 0;
+            const overdue = attention || item.overdueCount;
+            const total = item.openCount + item.doneCount;
+            const color = hexColor(item.color);
+            return (
+              <Pressable
+                key={item.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: item.id === selected }}
+                accessibilityLabel={[item.title, item.reviewer && t.reviewerProject, t.projectOpenCount(item.openCount), t.projectDoneCount(item.doneCount), overdue > 0 && t.projectOverdueCount(overdue)].filter(Boolean).join(', ')}
+                onPress={() => onOpen(item)}
+                style={({ pressed }) => [card, shadow, { marginBottom: 0, width: columns === 1 ? '100%' : `${(100 - columns * 2) / columns}%`, flexGrow: 1, minHeight: 96, gap: space(2), borderColor: item.id === selected ? colors.primary : colors.border, backgroundColor: pressed ? colors.hover : colors.bg }]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2) }}>
+                  <View style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: color }} accessibilityElementsHidden />
+                  <Text numberOfLines={1} style={{ flex: 1, fontSize: font.body, fontWeight: '700', color: colors.textStrong }}>{item.title}</Text>
+                </View>
+                {total > 0 ? (
+                  <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.hover, overflow: 'hidden' }} accessibilityElementsHidden>
+                    <View style={{ width: `${Math.round((item.doneCount / total) * 100)}%`, height: 4, backgroundColor: color }} />
                   </View>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <Text numberOfLines={1} style={{ fontSize: font.body, fontWeight: '600', color: colors.textStrong }}>{item.title}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
-                      <Text style={{ fontSize: font.small, color: colors.muted }}>{t.projectOpenCount(item.openCount)}</Text>
-                      <Text style={{ fontSize: font.small, color: colors.ok }}>{t.projectDoneCount(item.doneCount)}</Text>
-                      {overdue ? <Text style={{ fontSize: font.small, color: attention ? colors.danger : colors.muted, fontWeight: attention ? '600' : '400' }}>{t.projectOverdueCount(overdue)}</Text> : null}
-                      {item.reviewer ? <Text style={{ fontSize: font.small, color: colors.muted }}>{t.reviewerProject}</Text> : null}
-                    </View>
-                  </View>
-                  <Icon name="chevronRight" size={18} color={colors.faint} />
-                </Pressable>;
-              }}
-            />
-          )}
-        </>
+                ) : null}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(3) }}>
+                  <Text style={{ fontSize: font.small, color: colors.muted }}>{t.projectOpenCount(item.openCount)}</Text>
+                  <Text style={{ fontSize: font.small, color: colors.muted }}>{t.projectDoneCount(item.doneCount)}</Text>
+                  {overdue ? <Text style={{ fontSize: font.small, color: attention ? colors.danger : colors.muted, fontWeight: attention ? '600' : '400' }}>{t.projectOverdueCount(overdue)}</Text> : null}
+                  {item.reviewer ? <Pill label={t.reviewerProject} /> : null}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
+/** Web `AssignedTasks.vue`: status filter + the first rows, "Tümünü göster" for the rest. */
 function AssignedTaskList({ accountId, version, onOpenTask }: { accountId: AccountId; version: number; onOpenTask: (id: number) => void }) {
   const { backend } = useServices();
   const [status, setStatus] = useState<AssignmentStatus>('open');
+  const [all, setAll] = useState(false);
   const s = useAsync(async () => ({ status, list: await backend.assignedTasks(accountId, status) }), [accountId, status, version]);
   const list = s.data?.status === status ? s.data.list : undefined;
   const boards = new Map(list?.boards.map((p) => [p.id, p]));
+  const tasks = list?.tasks ?? [];
   return (
-    <>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: space(2), gap: space(2) }}>
+    <View style={{ marginHorizontal: space(4), marginTop: space(4), gap: space(2) }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(2) }}>
+        <Text accessibilityRole="header" style={{ fontSize: font.title, fontWeight: '800', color: colors.textStrong }}>{t.page.assignedTasks}</Text>
+        {list ? <Pill label={String(tasks.length)} /> : null}
+        <Text style={{ fontSize: font.small, color: colors.muted }}>{t.page.assignedTasksSub}</Text>
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
         {ASSIGNMENT_STATUSES.map((key) => <Chip key={key} label={t.assignmentStatus[key]} selected={key === status} onPress={() => setStatus(key)} />)}
       </View>
       <ErrorBanner error={s.error} onRetry={s.reload} />
       {s.loading && !list ? <Loading /> : (
-        <FlatList
-          data={list?.tasks ?? []}
-          keyExtractor={(task) => String(task.id)}
-          refreshing={s.loading}
-          onRefresh={s.reload}
-          ListEmptyComponent={s.error ? undefined : <Empty text={t.noAssignedTasks} />}
-          ListHeaderComponent={list?.truncated ? <Text style={{ padding: space(2), color: colors.muted }}>{t.assignmentsTruncated}</Text> : undefined}
-          renderItem={({ item }) => {
+        <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: 'hidden' }}>
+          {list?.truncated ? <Text style={{ padding: space(2), color: colors.muted }}>{t.assignmentsTruncated}</Text> : null}
+          {!tasks.length && !s.error ? <Text style={{ padding: space(3), color: colors.muted }}>{t.noAssignedTasks}</Text> : null}
+          {(all ? tasks : tasks.slice(0, 8)).map((item) => {
             const project = boards.get(item.boardId);
             return (
-              <Pressable accessibilityRole="button" onPress={() => onOpenTask(item.id)} style={({ pressed }) => ({ gap: space(1), padding: space(3), backgroundColor: pressed ? colors.hover : colors.bg, borderBottomWidth: 1, borderColor: colors.border })}>
-                <Text style={{ color: colors.textStrong, fontWeight: '600' }}>{item.title}</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(2) }}>
-                  {project ? <Text style={{ color: colors.muted }}>{project.title}</Text> : null}
-                  {item.done ? <Icon name="checkCircle" size={16} color={colors.ok} /> : null}
-                  <PriorityBadge priority={item.priority} />
-                  <DueBadge due={item.dueDate} done={item.done} />
-                </View>
+              <Pressable key={item.id} accessibilityRole="button" onPress={() => onOpenTask(item.id)} style={({ pressed }) => ({ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(2), paddingHorizontal: space(3), paddingVertical: space(2), minHeight: 48, backgroundColor: pressed ? colors.hover : colors.bg, borderBottomWidth: 1, borderColor: colors.border })}>
+                {item.done ? <Icon name="checkCircle" size={16} color={colors.ok} /> : null}
+                <Text style={{ fontSize: font.small, color: colors.faint, fontVariant: ['tabular-nums'] }}>#{item.id}</Text>
+                <Text numberOfLines={1} style={{ flexGrow: 1, flexShrink: 1, minWidth: 140, color: colors.textStrong, fontWeight: '600' }}>{item.title}</Text>
+                {project ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: hexColor(project.color) }} />
+                    <Text numberOfLines={1} style={{ color: colors.muted, fontSize: font.small, maxWidth: 220 }}>{project.title}</Text>
+                  </View>
+                ) : null}
+                <PriorityBadge priority={item.priority} />
+                <DueBadge due={item.dueDate} done={item.done} />
               </Pressable>
             );
-          }}
-        />
+          })}
+        </View>
       )}
-    </>
+      {!all && tasks.length > 8 ? (
+        <Pressable accessibilityRole="button" onPress={() => setAll(true)} style={{ alignSelf: 'flex-start', paddingVertical: space(1) }}>
+          <Text style={{ color: colors.text, fontSize: font.small }}>{t.page.showAll(tasks.length)}</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 

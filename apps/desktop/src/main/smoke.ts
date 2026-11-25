@@ -76,6 +76,10 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     throw new Error(`label not found: ${label}`);
   };
   /** Kanban quick add: header "Görev ekle" opens the first column's input. */
+  /** A fresh project's default columns: "To Do" (older Workhub) or the localized "Yapılacak". */
+  const waitColumns = async (timeoutMs = 20_000) => {
+    for (const end = Date.now() + timeoutMs; !(await js<boolean>(`/To Do|Yapılacak/.test(document.body.innerText)`)); await sleep(300)) if (Date.now() > end) throw new Error('text not found: To Do / Yapılacak');
+  };
   const addTask = async (title: string) => {
     if (!(await click('Görev ekle'))) throw new Error('add task button');
     await sleep(300);
@@ -365,7 +369,9 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('İşler');
       await waitText('açık', 20_000);
       await shot('04-projects');
-      firstBoardTitle = await js<string>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => /: \\d+ açık, /.test(e.getAttribute('aria-label') || '')); return el ? el.getAttribute('aria-label').replace(/: \\d+ açık, .*$/, '') : ''; })()`);
+      // Project rows/cards are labelled "<title>[, inceleyici], <n> açık, …".
+      firstBoardTitle = await js<string>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => /, \\d+ açık/.test(e.getAttribute('aria-label') || '')); return el ? el.getAttribute('aria-label').replace(/(, [^,]*)?, \\d+ açık.*$/, '') : ''; })()`);
+      if (!firstBoardTitle) throw new Error('project title not captured');
       openBefore = await firstProjectOpenCount();
       if (!(await openProject())) throw new Error('project row');
       await waitText('To Do', 20_000);
@@ -380,7 +386,13 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await shot('05b-kanban-added');
       if (!(await click(taskTitle, false))) throw new Error('task row');
       await waitText('Yorumlar', 15_000);
-      await type('textarea', 'Masaüstünden yorum');
+      // The drawer holds other text areas (workflow hand-off, goals…): target the comment box. It
+      // appears once the project's permissions load, which lags "Yorumlar" on a large board.
+      const endC = Date.now() + 20_000;
+      while (!(await type('textarea[aria-label="Yorum ekle"]', 'Masaüstünden yorum'))) {
+        if (Date.now() > endC) throw new Error('comment box');
+        await sleep(300);
+      }
       if (!(await click('Yorum ekle'))) throw new Error('comment');
       await waitText('Masaüstünden yorum', 15_000);
       await shot('06-task');
@@ -390,11 +402,11 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Görevi düzenle', 10_000);
       if (!(await type('input[aria-label="Başlık"]', editedTitle))) throw new Error('title input');
       if (!(await type('input[aria-label="Bitiş (YYYY-AA-GG)"]', '2026-12-31'))) throw new Error('due input');
-      if (!(await type('input[aria-label="Tahmini süre (saat)"]', '1,5'))) throw new Error('estimate input');
+      if (!(await type('input[aria-label="Tahmini süre"]', '1,5'))) throw new Error('estimate input');
       if (!(await click('Yüksek'))) throw new Error('priority chip');
       if (!(await click('Kaydet'))) throw new Error('save');
       await waitText(editedTitle, 15_000);
-      await waitText('1.5 sa', 15_000);
+      await waitText('1 sa 30 dk', 15_000);
       if (!(await type('input[aria-label="Yeni alt iş"]', subtask))) throw new Error('subtask input');
       if (!(await click('Alt iş ekle'))) throw new Error('add subtask');
       await waitText(subtask, 15_000);
@@ -421,7 +433,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Zaman çizelgesi', 20_000);
       await reveal(editedTitle);
       const row = await js<string | null>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').startsWith(${JSON.stringify(editedTitle)})); return el ? el.getAttribute('aria-label') : null; })()`);
-      if (!row || !row.includes('Kilometre taşı')) throw new Error(`gantt row label: ${row}`);
+      // Due 2026-12-31; since GENE-245 the editor keeps the task's start day, so it is a bar (or a milestone without one).
+      if (!row || !/Kilometre taşı 31 Ara|– 31 Ara/.test(row)) throw new Error(`gantt row label: ${row}`);
       await shot('19-gantt');
       if (!(await click('Etkinlik'))) throw new Error('activity tab');
       await waitText('başlığı değiştirdi', 20_000);
@@ -470,14 +483,16 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await click('İşler');
       await sleep(500);
       if (!(await click('Dashboard'))) throw new Error('dashboard tab');
-      await waitText('Yeni dashboard', 20_000);
+      // The create form sits behind "Yeni gösterge paneli" (web: dialog); retry if the list remounts.
+      await until(async () => (await js<boolean>(`document.body.innerText.includes('Yeni dashboard')`)) || ((await click('Yeni gösterge paneli')) && (await sleep(800), false)), 'new dashboard form', 30_000);
       if (!(await type('input[aria-label="Dashboard başlığı"]', dashTitle))) throw new Error('title input');
       if (!(await click('Dashboard oluştur'))) throw new Error('create');
-      await waitText('Distribution by column', 20_000);
+      // Widget titles come localized from the server (Workhub ≥ 0.6: Turkish catalogue).
+      await waitText('Sütun dağılımı', 20_000);
       await until(() => js<boolean>(`document.querySelectorAll('[role=table]').length >= 2`), 'widget results (tables)', 30_000);
       const t = await js<{ tables: number; headers: string[]; kpi: string | null }>(`(() => {
         const tables = [...document.querySelectorAll('[role=table]')];
-        const kpi = [...document.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')).find(l => /^Total work: \\d/.test(l || ''));
+        const kpi = [...document.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')).find(l => /^Toplam iş: \\d/.test(l || ''));
         return { tables: tables.length, headers: tables[0] ? [...tables[0].querySelectorAll('[role=columnheader]')].map(e => e.innerText.trim()).filter(Boolean) : [], kpi: kpi || null }; })()`);
       if (t.tables < 2 || t.headers.join('|') !== 'Grup|Değer|Pay' || !t.kpi) throw new Error(`dashboard tables ${JSON.stringify(t)}`);
       await shot('22-dashboard');
@@ -489,7 +504,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('kart gösteriliyor', 20_000);
       if (!(await click('‹ Dashboard'))) throw new Error('back from group');
       // KPI drill-down → card list → task detail.
-      await until(() => click('Total work: kartları aç'), 'kpi drill-down');
+      await until(() => click('Toplam iş: kartları aç'), 'kpi drill-down');
       await waitText('kart gösteriliyor', 20_000);
       const shown = await js<string>(`document.body.innerText.match(/(\\d+) kart gösteriliyor/)?.[1] ?? '0'`);
       const task = await js<string | null>(`(() => { const b = [...document.querySelectorAll('[role=table] [role=button]')].find(e => (e.getAttribute('aria-label') || '').endsWith('. Görevi aç')); return b ? b.getAttribute('aria-label') : null; })()`);
@@ -499,15 +514,15 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       if (!(await click('‹ Dashboard'))) throw new Error('back from drill-down');
       // Widget CRUD + CSV.
       await until(() => click('Widget ekle'), 'add widget');
-      await until(() => click('Card list (Kart listesi)'), 'card list type');
-      await until(() => type('input[aria-label="Başlık (boş = Card list)"]', 'Smoke listesi'), 'widget title');
-      if (!(await click('Completed'))) throw new Error('preset chip');
+      await until(() => click('Kart listesi (Liste)'), 'card list type');
+      await until(() => type('input[aria-label="Başlık (boş = Kart listesi)"]', 'Smoke listesi'), 'widget title');
+      if (!(await click('Tamamlanan'))) throw new Error('preset chip');
       if (!(await click('Ekle'))) throw new Error('add');
       await waitText('Widget eklendi.', 15_000);
       await until(() => click('Smoke listesi: CSV indir'), 'widget csv');
       await waitText('Kaydedildi: workhub-dashboard-', 15_000);
       if (!(await click("Smoke listesi: widget'ı düzenle"))) throw new Error('edit widget');
-      await until(() => type('input[aria-label="Başlık (boş = Card list)"]', 'Smoke listesi 2'), 'edit title');
+      await until(() => type('input[aria-label="Başlık (boş = Kart listesi)"]', 'Smoke listesi 2'), 'edit title');
       if (!(await click('Kaydet'))) throw new Error('save widget');
       await waitText('Widget kaydedildi.', 15_000);
       await until(() => click("Smoke listesi 2: widget'ı kaldır"), 'remove widget');
@@ -515,7 +530,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Widget kaldırıldı.', 15_000);
       if (!(await click('Sil'))) throw new Error('delete dashboard');
       if (!(await click('Evet, sil'))) throw new Error('confirm delete');
-      await waitText('Yeni dashboard', 15_000);
+      await waitText('Yeni gösterge paneli', 15_000);
       await sleep(1000);
       if (await js<boolean>(`document.body.innerText.includes(${JSON.stringify(dashTitle)})`)) throw new Error('dashboard still listed');
       // GENE-56: the web-fallback tab ("Diğer") is gone; only admins get "Yönetim" (web, password confirmation).
@@ -547,7 +562,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await waitText('Sizi bekleyenler', 20_000);
       await shot('24-workflows-pending');
       if (!(await click('Şablonlar'))) throw new Error('templates tab');
-      await waitText('Yeni iş akışı', 20_000);
+      await until(async () => !!(await js<boolean>(`!!document.querySelector('input[aria-label="İş akışı başlığı"]')`)) || ((await click('+ Yeni iş akışı')) && (await sleep(800), false)), 'new workflow form', 30_000);
       if (!(await type('input[aria-label="İş akışı başlığı"]', wfTitle))) throw new Error('title input');
       // Third sample = "prepare and review" (2 steps: fixed → hand-off → chosen).
       await until(async () => !!(await nth('Örnek: ', 2)), 'sample chip', 20_000);
@@ -573,7 +588,8 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       const cardBtn = await nth('Kart: ');
       if (!cardBtn) throw new Error('card button in run');
       await waitText('Yorumlar', 20_000);
-      if (!(await click('Tamamlandı olarak işaretle'))) throw new Error('mark done');
+      // Edit actions appear once the project's permissions load (lags the drawer on a large board).
+      await until(() => click('Tamamlandı olarak işaretle'), 'mark done', 20_000);
       await waitText('İş akışı: sizi bekleyen devirler', 20_000);
       const handoff = await js<string | null>(`(() => { const el = [...document.querySelectorAll('[role=button]')].find(e => (e.getAttribute('aria-label') || '').endsWith(': devret')); if (!el) return null; el.click(); return el.getAttribute('aria-label'); })()`);
       if (!handoff) throw new Error('handoff button on task screen');
@@ -624,17 +640,17 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     await step('time entries: add → edit → submit (locked) → withdraw → delete', async () => {
       const label = `Masaüstü kayıt ${new Date().toISOString().slice(11, 19)}`;
       if (!(await click('Kayıt ekle'))) throw new Error('add entry');
-      await waitText('Yeni kayıt', 10_000);
+      await waitText('Zaman kaydı ekle', 10_000);
       if (!(await type('input[aria-label="Başlangıç (SS:DD)"]', '06:00'))) throw new Error('start input');
       await type('input[aria-label="Bitiş (SS:DD)"]', '06:30');
       if (!(await type('textarea[aria-label="Açıklama"]', label)) && !(await type('input[aria-label="Açıklama"]', label))) throw new Error('description input');
-      if (!(await click('Kaydı ekle'))) throw new Error('save new');
+      if (!(await click('Kaydet'))) throw new Error('save new');
       await waitText(label, 15_000);
       await waitText('06:00–06:30', 15_000);
       if (!(await click(`Kaydı düzenle: ${label}`))) throw new Error('edit button');
-      await waitText('Kaydı düzenle', 10_000);
+      await waitText('Zaman kaydını düzenle', 10_000);
       await type('input[aria-label="Bitiş (SS:DD)"]', '07:00');
-      if (!(await click('Kaydı kaydet'))) throw new Error('save edit');
+      if (!(await click('Kaydet'))) throw new Error('save edit');
       await waitText('06:00–07:00', 15_000);
       if (!(await click('Dönemi onaya gönder'))) throw new Error('submit');
       await waitText('Dönem onaya gönderildi.', 15_000);
@@ -654,12 +670,12 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     await step('time entry linked to a task: add → task picker (project → search → task) → listed under the task → delete', async () => {
       if (!firstBoardTitle) throw new Error('project title not captured');
       if (!(await click('Kayıt ekle'))) throw new Error('add entry');
-      await waitText('Yeni kayıt', 10_000);
+      await waitText('Zaman kaydı ekle', 10_000);
       await type('input[aria-label="Başlangıç (SS:DD)"]', '05:00');
       await type('input[aria-label="Bitiş (SS:DD)"]', '05:30');
       if (!(await click('Görev bağla'))) throw new Error('link task button');
-      await waitText(firstBoardTitle, 10_000);
-      if (!(await click(firstBoardTitle))) throw new Error('project chip');
+      // The sidebar already shows the title; wait for the picker's own project chip.
+      for (const endP = Date.now() + 15_000; !(await click(firstBoardTitle)); await sleep(300)) if (Date.now() > endP) throw new Error('project chip');
       const end = Date.now() + 10_000;
       while (!(await type('input[aria-label="Görev ara"]', editedTitle))) {
         if (Date.now() > end) throw new Error('task search');
@@ -669,7 +685,7 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       if (!(await click(editedTitle))) throw new Error('task chip');
       await waitText('Görevi değiştir', 5_000);
       await shot('12b-time-task-link');
-      if (!(await click('Kaydı ekle'))) throw new Error('save new');
+      if (!(await click('Kaydet'))) throw new Error('save new');
       await waitText('05:00–05:30', 15_000);
       const end2 = Date.now() + 10_000;
       while (!(await click(`Kaydı sil: ${editedTitle}`))) {
@@ -763,10 +779,14 @@ export async function runSmoke(win: BrowserWindow, out: string) {
     await step('project management: create → rename → add/rename column → add member', async () => {
       await click('İşler');
       await sleep(500);
-      if (!(await click('Projeler'))) throw new Error('projects tab');
-      if (!(await type('input[aria-label="Yeni proje"]', projectTitle))) throw new Error('new project input');
+      if (!(await click('Projeler')) && !(await click('Projeler', false))) throw new Error('projects tab');
+      // "Yeni proje" opens the create form from the page header (web: dialog).
+      for (const end = Date.now() + 30_000; !(await type('input[aria-label="Yeni proje"]', projectTitle)); await sleep(800)) {
+        if (Date.now() > end) throw new Error('new project input');
+        await click('+ Yeni proje');
+      }
       if (!(await click('Oluştur'))) throw new Error('create project');
-      await waitText('To Do', 20_000);
+      await waitColumns();
       if (!(await click('Proje ayarları'))) throw new Error('manage button');
       await waitText('Sütunlar', 10_000);
       if (!(await type('input[aria-label="Proje adı"]', `${projectTitle} (yeni ad)`))) throw new Error('project name input');
@@ -854,11 +874,11 @@ export async function runSmoke(win: BrowserWindow, out: string) {
       await step('goals ↔ task: open task → link to goal → listed with progress → unlink', async () => {
         await click('İşler');
         await sleep(500);
-        if (!(await click('Projeler'))) throw new Error('projects tab');
+        if (!(await click('Projeler')) && !(await click('Projeler', false))) throw new Error('projects tab');
         // The project list is virtualised and grows with every smoke run: scroll it into view first.
         await reveal(`${projectTitle} (yeni ad)`);
         await until(() => click(`${projectTitle} (yeni ad)`, false), 'project row');
-        await waitText('To Do', 20_000);
+        await waitColumns();
         const linkTask = `Hedef görevi ${stamp}`;
         await addTask(linkTask);
         await waitText(linkTask, 15_000);
@@ -945,13 +965,13 @@ export async function runSmoke(win: BrowserWindow, out: string) {
         await waitText('Sütun', 15_000);
         const checked = () => js<string[]>(`[...document.querySelectorAll('[role=checkbox]')].filter(e => e.getAttribute('aria-checked') === 'true').map(e => e.innerText.trim())`);
         try {
-          await until(async () => (await checked()).includes('To Do'), 'default column', 10_000);
+          await until(async () => (await checked()).some((c) => c === 'To Do' || c === 'Yapılacak'), 'default column', 10_000);
         } catch {
           throw new Error(`default column; checked=${JSON.stringify(await checked())}`);
         }
         if (!(await click(`Göreve dönüştür: ${reqConvert}`))) throw new Error('convert button');
         await waitText('Görev oluşturuldu.', 20_000);
-        await waitText(`Görev: ${reqConvert} · ${projectTitle} (yeni ad) / To Do`, 15_000);
+        await waitText(`Görev: ${reqConvert} · ${projectTitle} (yeni ad) / `, 15_000);
         await waitText('Göreve dönüştürüldü', 15_000);
         await shot('17-request-converted');
         if (!(await click('Kapat'))) throw new Error('close');

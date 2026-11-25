@@ -5,10 +5,10 @@ import {
   type AccountId, type CsvScope, type ReviewAction, type ReviewItem, type TimeEntry, type TimeEntryForm, type TimeFormError, type TimeWeek, type TaskDetail,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
-import { Button, Field, Loading, card, styles as ui } from './ui';
+import { Button, Field, Loading, Pill, card, styles as ui } from './ui';
 import { TaskPicker, type PickedTask } from './taskPicker';
 import { Chip } from './taskEdit';
-import { colors, font, space } from './theme';
+import { colors, font, radius, space } from './theme';
 import { describeError, formatDate, formatDuration, formatTaskDate, t } from './i18n';
 
 /** Hex UUID v4 (Idempotency-Key must pass the IPC key check even without crypto.randomUUID). */
@@ -199,27 +199,47 @@ function WeekView({ accountId, projectsEnabled }: { accountId: AccountId; projec
   return (
     <>
       <TimeError error={week.error} onRetry={week.reload} />
+      {w && actions ? (
+        <>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space(2), marginBottom: space(2) }}>
+            <Text accessibilityRole="header" style={{ fontWeight: '700', color: colors.textStrong }}>
+              {formatDate(w.period.localStartDate)} – {formatDate(w.period.localEndDate)}
+            </Text>
+            <Text style={{ color: colors.muted }}>· {zone} ·</Text>
+            <View accessibilityLabel={`Dönem durumu: ${PERIOD_STATE[w.period.state] ?? w.period.state}`}>
+              <Pill label={`${PERIOD_STATE[w.period.state] ?? w.period.state}${w.period.open ? '' : ' · kayıtlar salt okunur 🔒'}`} tone={w.period.state === 'approved' ? 'ok' : w.period.state === 'changes_requested' ? 'danger' : w.period.state === 'submitted' ? 'warning' : 'neutral'} />
+            </View>
+            <View style={{ flex: 1 }} />
+            <Button title="‹ Önceki" accessibilityLabel="Önceki hafta" kind="secondary" onPress={() => setDate(w.navigation.prevDate)} />
+            <Button title="Bugün" kind={date && date !== w.navigation.today ? 'primary' : 'secondary'} onPress={() => setDate(undefined)} />
+            <Button title="Sonraki ›" accessibilityLabel="Sonraki hafta" kind="secondary" onPress={() => setDate(w.navigation.nextDate)} />
+          </View>
+          <View style={[card, { flexDirection: 'row', flexWrap: 'wrap', gap: space(6), borderLeftWidth: 4, borderLeftColor: colors.primary, backgroundColor: colors.surface }]}>
+            {([['Bu hafta kaydedilen süre', hm(w.totals.totalSec)], ['Faturalanabilir', hm(w.totals.billableSec)], ['Kayıtlar', String(w.entries.length)]] as const).map(([label, value]) => (
+              <View key={label} style={{ minWidth: 140, gap: 4 }}>
+                <Text style={{ color: colors.muted, fontSize: font.small }}>{label}</Text>
+                <Text style={{ color: colors.textStrong, fontSize: font.h1, fontWeight: '800', fontVariant: ['tabular-nums'] }}>{value}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      ) : null}
       <TimerCard accountId={accountId} week={w} onChanged={week.reload} />
       {w && actions ? (
         <View style={card}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2), flexWrap: 'wrap' }}>
-            <Button title="‹" accessibilityLabel="Önceki hafta" kind="secondary" onPress={() => setDate(w.navigation.prevDate)} />
-            <Text accessibilityRole="header" style={{ fontWeight: '700', color: colors.text, flex: 1 }}>
-              {formatDate(w.period.localStartDate)} – {formatDate(w.period.localEndDate)}
-            </Text>
-            {date && date !== w.navigation.today ? <Button title="Bugün" kind="secondary" onPress={() => setDate(undefined)} /> : null}
-            <Button title="›" accessibilityLabel="Sonraki hafta" kind="secondary" onPress={() => setDate(w.navigation.nextDate)} />
-          </View>
-          <Text accessibilityLabel={`Dönem durumu: ${PERIOD_STATE[w.period.state] ?? w.period.state}`} style={{ color: w.period.open ? colors.muted : colors.danger, marginTop: space(1) }}>
-            {PERIOD_STATE[w.period.state] ?? w.period.state}
-            {w.period.open ? '' : ' · kayıtlar salt okunur 🔒'} · Toplam {hm(w.totals.totalSec)} · Faturalı {hm(w.totals.billableSec)}
-          </Text>
+          <Text accessibilityRole="header" style={{ fontWeight: '700', color: colors.textStrong, fontSize: font.title }}>Günlük toplamlar</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2), marginTop: space(2) }}>
-            {w.days.map((d) => (
-              <Text key={d.date} style={{ color: d.totalSec ? colors.text : colors.muted, fontSize: font.small }}>
-                {new Date(`${d.date}T12:00:00Z`).toLocaleDateString('tr-TR', { weekday: 'short', day: '2-digit' })}: {hm(d.totalSec)}
-              </Text>
-            ))}
+            {w.days.map((d) => {
+              const today = d.date === w.navigation.today;
+              const day = new Date(`${d.date}T12:00:00Z`);
+              return (
+                <View key={d.date} accessibilityLabel={`${day.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })}: ${hm(d.totalSec)}`} style={{ flexGrow: 1, flexBasis: 96, alignItems: 'center', gap: 2, paddingVertical: space(2), borderRadius: radius.sm, borderWidth: today ? 2 : 1, borderColor: today ? colors.primary : colors.border, backgroundColor: colors.bg }}>
+                  <Text style={{ fontWeight: '700', color: colors.textStrong }}>{day.toLocaleDateString('tr-TR', { weekday: 'short', timeZone: 'UTC' })}</Text>
+                  <Text style={{ color: colors.muted, fontSize: font.small }}>{day.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', timeZone: 'UTC' })}</Text>
+                  <Text style={{ color: d.totalSec ? colors.textStrong : colors.muted, fontSize: font.title, fontVariant: ['tabular-nums'] }}>{hm(d.totalSec)}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
       ) : null}

@@ -4,7 +4,7 @@ import { type AccountId, type ProjectSummary, type ServerBase, type WorkhubBadge
 import { useAsync, useServices } from './services';
 import { Icon, type IconName } from './icons';
 import { ProjectsScreen } from './workhub';
-import { Row } from './ui';
+import { PageHeader, Row } from './ui';
 import { colors, font, hexColor, radius, space } from './theme';
 import { TimeScreen } from './time';
 import { RequestsScreen } from './requests';
@@ -73,7 +73,32 @@ function AttentionBadge({ count }: { count: number }) {
   return <Text style={{ minWidth: 22, textAlign: 'center', borderRadius: radius.md, paddingHorizontal: 4, backgroundColor: colors.surface, color: colors.danger, fontSize: font.small, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{count}</Text>;
 }
 
-export function SectionContent({ section, accountId, serverBase, workhub, selectedProject, onOpenProject, onOpenTask, onOpenRequest, onOpenApprovals, version, badges, onRefreshBadges, startInApprovals = false }: ModuleProps & { section: Section; badges?: WorkhubBadges | undefined; onRefreshBadges?: () => void; onOpenApprovals?: (kind: 'requests' | 'time') => void; startInApprovals?: boolean }) {
+/** Web page headings per module (eyebrow, title, description) — `ProjectsScreen` renders its own with actions. */
+const SECTION_HEADERS: Record<Exclude<Section, 'projects'>, { title: string; eyebrow?: string; subtitle?: string }> = {
+  workload: { title: t.page.workload, subtitle: t.page.workloadSub },
+  workflows: { title: t.page.workflows, subtitle: t.page.workflowsSub },
+  dashboards: { title: t.page.dashboards },
+  time: { title: t.page.time, eyebrow: t.page.requestsEyebrowTime, subtitle: t.page.timeSub },
+  requests: { title: t.page.requests, eyebrow: t.page.requestsEyebrow },
+  goals: { title: t.page.goals },
+  ai: { title: t.page.ai },
+  more: { title: t.page.admin },
+};
+
+type SectionProps = ModuleProps & { section: Section; badges?: WorkhubBadges | undefined; onRefreshBadges?: () => void; onOpenApprovals?: (kind: 'requests' | 'time') => void; startInApprovals?: boolean };
+
+export function SectionContent(props: SectionProps) {
+  if (props.section === 'projects') return <SectionScreen {...props} />;
+  const h = SECTION_HEADERS[props.section];
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PageHeader title={h.title} {...(h.eyebrow ? { eyebrow: h.eyebrow } : {})} {...(h.subtitle ? { subtitle: h.subtitle } : {})} />
+      <SectionScreen {...props} />
+    </View>
+  );
+}
+
+function SectionScreen({ section, accountId, serverBase, workhub, selectedProject, onOpenProject, onOpenTask, onOpenRequest, onOpenApprovals, version, badges, onRefreshBadges, startInApprovals = false }: SectionProps) {
   switch (section) {
     case 'projects':
       return <ProjectsScreen key={accountId} accountId={accountId} {...(selectedProject ? { selected: selectedProject } : {})} {...(version !== undefined ? { version } : {})} {...(onOpenTask ? { onOpenTask } : {})} {...(onOpenRequest ? { onOpenRequest } : {})} {...(onOpenApprovals ? { onOpenApprovals } : {})} requestsEnabled={workhub.modules.requests} timeReviewEnabled={workhub.modules.time && workhub.permissions.canViewTeamReport} {...(onRefreshBadges ? { onRefreshBadges } : {})} badges={badges} onOpen={onOpenProject} />;

@@ -6,7 +6,7 @@ import {
   type RequestListState, type RequestPage, type RequestReportFilters, type RequestScope, type WorkRequest,
 } from '@workhub-devices/core';
 import { useAsync, useServices, type AsyncState } from './services';
-import { Button, Field, Loading, card, styles as ui } from './ui';
+import { Button, Field, Loading, card, styles as ui, Pill, PressCard } from './ui';
 import { Chip } from './taskEdit';
 import { ReviewQueue, SubmissionDetail, Tabs, hm } from './time';
 import { PrincipalPicker } from './projectAdmin';
@@ -140,11 +140,10 @@ function RequestInboxView({ accountId, onOpen }: { accountId: AccountId; onOpen:
   const { items, total } = inbox.data;
   return <>
     {!items.length ? <Text style={{ color: colors.muted }}>{rt.noInbox}</Text> : null}
-    {items.map((row) => <View key={row.id} style={card}>
+    {items.map((row) => <PressCard key={row.id} accessibilityLabel={`${rt.details}: ${row.title}`} onPress={() => onOpen(row.id)}>
       <Text style={{ fontWeight: '700', color: colors.text }}>{row.title}</Text>
       <Text style={{ color: colors.muted }}>{row.subtitle} · {dateTime(row.at)}</Text>
-      <Button title={rt.details} accessibilityLabel={`${rt.details}: ${row.title}`} kind="secondary" onPress={() => onOpen(row.id)} />
-    </View>)}
+    </PressCard>)}
     {total > items.length ? <Text style={{ color: colors.muted }}>{rt.inboxMore(items.length, total)}</Text> : null}
   </>;
 }
@@ -180,12 +179,11 @@ function RequestFeed<Cursor>({ load, empty, onOpen }: {
   if (!feed.data) return <Loading />;
   return <>
     {!feed.data.items.length && cursor === null ? <Text style={{ color: colors.muted }}>{empty}</Text> : null}
-    {feed.data.items.map((row) => <View key={row.id} style={card}>
+    {feed.data.items.map((row) => <PressCard key={row.id} accessibilityLabel={`${rt.details}: ${row.title}`} onPress={() => onOpen(row.id)}>
       <Text style={{ fontWeight: '700', color: colors.text }}>{row.title}</Text>
       <Text style={{ color: colors.muted }}>{row.requesterName} → {row.recipientName} · {formatDate(row.createdAt)}</Text>
-      <Text style={{ color: row.awaitingYou === true ? colors.primary : colors.muted }}>{row.awaitingYou === true ? rt.awaiting : requestStatus(row)}</Text>
-      <Button title={rt.details} accessibilityLabel={`${rt.details}: ${row.title}`} kind="secondary" onPress={() => onOpen(row.id)} />
-    </View>)}
+      <Pill label={row.awaitingYou === true ? rt.awaiting : requestStatus(row)} tone={row.awaitingYou === true ? 'warning' : row.state === 'rejected' || row.state === 'cancelled' ? 'danger' : row.state === 'resolved' || row.taskState === 'closed' ? 'ok' : 'neutral'} />
+    </PressCard>)}
     {error ? <Alert text={requestError(error)} /> : null}
     {cursor !== null ? <Button title={rt.more} kind="secondary" busy={busy} onPress={() => void more()} /> : null}
   </>;

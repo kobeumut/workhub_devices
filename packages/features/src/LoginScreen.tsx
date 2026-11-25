@@ -53,8 +53,8 @@ export function LoginScreen({ onDone, onCancel }: { onDone: (a: AccountSummary) 
         {flow ? (
           <View>
             <Text style={{ color: colors.text, marginBottom: space(4) }}>{t.loginWaiting}</Text>
-            <Button title={t.openBrowserAgain} kind="secondary" onPress={() => void platform.openExternal(flow.loginUrl)} />
-            <Button title={t.cancel} kind="secondary" onPress={() => void cancel()} />
+            <Button block title={t.openBrowserAgain} kind="secondary" onPress={() => void platform.openExternal(flow.loginUrl)} />
+            <Button block title={t.cancel} kind="secondary" onPress={() => void cancel()} />
           </View>
         ) : (
           <View>
@@ -70,8 +70,8 @@ export function LoginScreen({ onDone, onCancel }: { onDone: (a: AccountSummary) 
               returnKeyType="go"
               onSubmitEditing={() => void start()}
             />
-            <Button title={t.connect} onPress={() => void start()} busy={busy} disabled={!url.trim()} />
-            {onCancel ? <Button title={t.cancel} kind="secondary" onPress={onCancel} /> : null}
+            <Button block title={t.connect} onPress={() => void start()} busy={busy} disabled={!url.trim()} />
+            {onCancel ? <Button block title={t.cancel} kind="secondary" onPress={onCancel} /> : null}
           </View>
         )}
         <ErrorBanner error={error} />
