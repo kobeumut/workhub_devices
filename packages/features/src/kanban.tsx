@@ -10,12 +10,13 @@
 import { useEffect, useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import {
-  activeFilterCount, adjacentColumn, deviceDay, dropOrder, dueState, emptyFilters, initials, isNoopMove, moveToColumn, moveWithinColumn,
-  type BoardPayload, type KanbanColumn, type Priority, type PriorityFilter, type Task, type TaskAssignee, type TaskFilters,
+  activeFilterCount, adjacentColumn, buildTaskSchedule, deviceDay, dropOrder, dueState, emptyFilters, initials, isNoopMove, moveToColumn, moveWithinColumn,
+  type BoardPayload, type KanbanColumn, type Priority, type PriorityFilter, type Task, type TaskAssignee, type TaskFilters, type TaskRunningTimer, type TaskSchedule, taskScheduleOf,
 } from '@workhub-devices/core';
 import { Icon, type IconName } from './icons';
 import { colors, hexColor, priorityColors, radius, shadow, space } from './theme';
-import { t } from './i18n';
+import { formatDuration, formatTaskDate, t } from './i18n';
+import { TASK_FORM_ERROR, TaskScheduleFields } from './taskEdit';
 
 export const PRIORITY_LABEL: Record<Priority, string> = { urgent: 'Acil', high: 'Yüksek', normal: 'Normal', low: 'Düşük' };
 /** Distinct, colour-independent cue per priority (web uses ▲▲ / ▲ / ■ / ▼). */
@@ -71,17 +72,36 @@ export function AvatarStack({ people, max = 3, size = 24 }: { people: Pick<TaskA
   );
 }
 
-const shortDate = (iso: string) => new Date(iso).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+export function RunningTimers({ timers }: { timers?: TaskRunningTimer[] | undefined }) {
+  const [now, setNow] = useState(Date.now);
+  const active = !!timers?.length;
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const ticker = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(ticker);
+  }, [active]);
+  if (!timers?.length) return null;
+  const labels = timers.map((timer) => `${timer.displayName} · ${formatDuration(Math.max(timer.elapsedSec, Math.floor((now - Date.parse(timer.startedAt)) / 1000) || 0))}`);
+  return (
+    <View accessible accessibilityLabel={`${t.runningTimers}: ${labels.join('; ')}`} style={{ flexDirection: 'row', alignItems: 'center', gap: space(1) }}>
+      <Icon name="timer" size={14} color={colors.ok} />
+      <Text style={{ flexShrink: 1, fontSize: 12, color: colors.ok }}>{labels.join(', ')}</Text>
+    </View>
+  );
+}
 
 export function DueBadge({ due, done }: { due: string | null; done: string | null }) {
   if (!due) return null;
-  const state = dueState(due, done, Date.now(), deviceDay(new Date().toISOString()), deviceDay);
+  const label = formatTaskDate(due, 'due');
+  const deadline = due.length === 10 ? `${due}T23:59:00` : due;
+  const state = dueState(deadline, done, Date.now(), deviceDay(new Date().toISOString()), deviceDay);
   const tone = state === 'overdue' ? { fg: colors.danger, bg: colors.dangerSoft } : state === 'today' ? { fg: colors.warning, bg: colors.warningSoft } : state === 'done' ? { fg: colors.ok, bg: 'transparent' } : { fg: colors.muted, bg: 'transparent' };
   const word = state === 'overdue' ? ' · gecikmiş' : state === 'today' ? ' · bugün' : '';
   return (
-    <View accessible accessibilityLabel={`${t.due}: ${shortDate(due)}${word}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: tone.bg === 'transparent' ? 0 : 6, height: 20, borderRadius: radius.sm, backgroundColor: tone.bg }}>
+    <View accessible accessibilityLabel={`${t.due}: ${label}${word}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: tone.bg === 'transparent' ? 0 : 6, height: 20, borderRadius: radius.sm, backgroundColor: tone.bg }}>
       <Icon name="calendar" size={13} color={tone.fg} />
-      <Text style={{ color: tone.fg, fontSize: 12, fontWeight: state === 'overdue' || state === 'today' ? '600' : '400' }}>{shortDate(due)}</Text>
+      <Text style={{ color: tone.fg, fontSize: 12, fontWeight: state === 'overdue' || state === 'today' ? '600' : '400' }}>{label}</Text>
     </View>
   );
 }
@@ -142,6 +162,7 @@ export function TaskCard({ task, labels, canEdit, onOpen, onToggleDone, onMenu, 
           {task.title}
         </Text>
         <LabelChips ids={task.labels} labels={labels} />
+        <RunningTimers timers={task.runningTimers} />
         {task.subtasks.total ? (
           <View style={{ gap: 6 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -298,7 +319,7 @@ export interface KanbanActions {
   open: (task: Task) => void;
   toggleDone: (task: Task) => void;
   move: (task: Task, target: { stackId: number; order: number }) => void;
-  create: (stackId: number, title: string) => Promise<void>;
+  create: (stackId: number, title: string, schedule: TaskSchedule) => Promise<void>;
 }
 
 function DraggableCard({ task, children, enabled, onStart, onEnd }: { task: Task; children: ReactNode; enabled: boolean; onStart: (id: number) => void; onEnd: () => void }) {
@@ -357,7 +378,11 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
   const ref = useRef<ComponentRef<typeof View>>(null);
   const [dropBefore, setDropBefore] = useState<number | null | 'none'>('none');
   const [title, setTitle] = useState('');
+  const [scheduled, setScheduled] = useState(false);
+  const [schedule, setSchedule] = useState(() => taskScheduleOf());
+  const [formError, setFormError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const reset = () => { setTitle(''); setScheduled(false); setSchedule(taskScheduleOf()); setFormError(undefined); };
   const color = stackColor(index, col.stack.isDone);
   const onOver = useMemo(() => (before: number | null) => setDropBefore(before), []);
   const onDrop = useMemo(
@@ -365,13 +390,13 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
       setDropBefore('none');
       const id = dragId;
       setDragId(null);
-      if (id === null) return;
+      if (!canEdit || id === null) return;
       const task = board.tasks.find((x) => x.id === id);
       if (!task) return;
       const order = dropOrder(col.fullIds, id, before, col.tasks.map((x) => x.id));
       if (!isNoopMove(col.fullIds, id, task.stackId, col.stack.id, order)) actions.move(task, { stackId: col.stack.id, order });
     },
-    [dragId, setDragId, board.tasks, col, actions],
+    [canEdit, dragId, setDragId, board.tasks, col, actions],
   );
   useDropZone(ref, canEdit && Platform.OS === 'web', onOver, onDrop);
   // Stable so the card's DOM drag listeners are not re-attached while a drag is in progress.
@@ -380,11 +405,17 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
     if (dragId === null) setDropBefore('none');
   }, [dragId]);
   const submit = async () => {
-    if (!title.trim()) return;
+    if (!canEdit || busy || !title.trim()) return;
+    const result = buildTaskSchedule(scheduled ? schedule : taskScheduleOf());
+    if ('error' in result) return setFormError(TASK_FORM_ERROR[result.error]);
+    setFormError(undefined);
     setBusy(true);
     try {
-      await actions.create(col.stack.id, title.trim());
-      setTitle('');
+      await actions.create(col.stack.id, title.trim(), result.patch);
+      reset();
+      setAddOpen(false);
+    } catch {
+      // Board banner carries the server error; the draft stays open.
     } finally {
       setBusy(false);
     }
@@ -420,7 +451,7 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
                 {...(canEdit ? { onMenu: () => setMenuFor(menuFor === task.id ? null : task.id), menuOpen: menuFor === task.id } : {})}
               />
             </DraggableCard>
-            {menuFor === task.id ? (
+            {canEdit && menuFor === task.id ? (
               <CardMenu task={task} columns={columns} onMove={(target) => actions.move(task, target)} onToggleDone={() => actions.toggleDone(task)} onOpen={() => actions.open(task)} onClose={() => setMenuFor(null)} />
             ) : null}
           </View>
@@ -441,14 +472,18 @@ function Column({ col, index, board, canEdit, actions, width, menuFor, setMenuFo
             placeholderTextColor={colors.muted}
             value={title}
             onChangeText={setTitle}
-            onSubmitEditing={() => void submit()}
+            maxLength={255}
+            onSubmitEditing={scheduled ? undefined : () => void submit()}
             style={{ minHeight: 40, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.bg, paddingHorizontal: space(3), fontSize: 14, color: colors.text }}
           />
+          <Chip label={t.taskSchedule} selected={scheduled} onPress={() => setScheduled((shown) => !shown)} />
+          {scheduled ? <TaskScheduleFields form={schedule} onChange={(patch) => setSchedule((current) => ({ ...current, ...patch }))} /> : null}
+          {formError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{formError}</Text> : null}
           <View style={{ flexDirection: 'row', gap: space(2) }}>
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy || !title.trim() }} onPress={() => void submit()} style={{ flex: 1, height: 34, borderRadius: radius.sm, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !title.trim() ? 0.6 : 1 }}>
               <Text style={{ color: colors.primaryText, fontWeight: '600' }}>{busy ? '…' : 'Ekle'}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => { setTitle(''); setAddOpen(false); }} style={{ paddingHorizontal: space(3), height: 34, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' }}>
+            <Pressable accessibilityRole="button" onPress={() => { reset(); setAddOpen(false); }} style={{ paddingHorizontal: space(3), height: 34, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: colors.muted }}>{t.cancel}</Text>
             </Pressable>
           </View>

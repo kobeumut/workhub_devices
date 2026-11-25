@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
-  OcsError, buildTimeEntry, entryEditable, periodActions, timeEntryFormOf, utcToZoned,
-  type AccountId, type CsvScope, type ReviewAction, type ReviewItem, type TimeEntry, type TimeEntryForm, type TimeFormError, type TimeWeek,
+  OcsError, buildTimeEntry, editableCardEntry, entryEditable, periodActions, timeEntryFormOf, utcToZoned,
+  type AccountId, type CsvScope, type ReviewAction, type ReviewItem, type TimeEntry, type TimeEntryForm, type TimeFormError, type TimeWeek, type TaskDetail,
 } from '@workhub-devices/core';
 import { useAsync, useServices } from './services';
 import { Button, Field, Loading, card, styles as ui } from './ui';
 import { TaskPicker, type PickedTask } from './taskPicker';
 import { Chip } from './taskEdit';
 import { colors, font, space } from './theme';
-import { describeError, formatDate } from './i18n';
+import { describeError, formatDate, formatDuration, formatTaskDate, t } from './i18n';
 
 /** Hex UUID v4 (Idempotency-Key must pass the IPC key check even without crypto.randomUUID). */
 const uuid = () => {
@@ -17,11 +17,7 @@ const uuid = () => {
   const h = () => Math.floor(Math.random() * 16).toString(16);
   return 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, h);
 };
-export const hm = (sec: number) => {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return `${h} sa ${String(m).padStart(2, '0')} dk`;
-};
+export const hm = formatDuration;
 /** Compact `s:dd` for table cells; the spoken label stays the long form. */
 const hmShort = (sec: number) => `${Math.floor(sec / 3600)}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}`;
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
@@ -110,17 +106,17 @@ type Tab = 'week' | 'review' | 'team';
 
 /**
  * Native Time module: timer, week with entry CRUD, period submit/withdraw, and — only for users
- * whose Workhub bootstrap grants `canViewTeamReport` (direct manager) — the review queue and the
+ * whose Workhub bootstrap grants `canViewTeamReport` (direct managers and reviewers) — the review queue and the
  * team report. CSV export is offered only when the shell can save/share files.
  */
-export function TimeScreen({ accountId, canReview, projectsEnabled = false }: { accountId: AccountId; canReview: boolean; projectsEnabled?: boolean }) {
-  const [tab, setTab] = useState<Tab>('week');
+export function TimeScreen({ accountId, canReview, projectsEnabled = false, startInReview = false, onChanged }: { accountId: AccountId; canReview: boolean; projectsEnabled?: boolean; startInReview?: boolean; onChanged?: () => void }) {
+  const [tab, setTab] = useState<Tab>(canReview && startInReview ? 'review' : 'week');
   const tabs: Array<[Tab, string]> = [['week', 'Haftam'], ...(canReview ? ([['review', 'İnceleme'], ['team', 'Takım raporu']] as Array<[Tab, string]>) : [])];
   return (
     <ScrollView contentContainerStyle={{ padding: space(3) }} keyboardShouldPersistTaps="handled">
       {tabs.length > 1 ? <Tabs value={tab} items={tabs} onChange={setTab} /> : null}
       {tab === 'week' ? <WeekView accountId={accountId} projectsEnabled={projectsEnabled} /> : null}
-      {tab === 'review' && canReview ? <ReviewQueue accountId={accountId} /> : null}
+      {tab === 'review' && canReview ? <ReviewQueue accountId={accountId} {...(onChanged ? { onChanged } : {})} /> : null}
       {tab === 'team' && canReview ? <TeamReportView accountId={accountId} /> : null}
     </ScrollView>
   );
@@ -306,9 +302,9 @@ function EntryRow({ entry: e, zone, editable, busy, onEdit, onDelete }: { entry:
   );
 }
 
-function EntryForm({ accountId, projectsEnabled, week, entry, onDone }: { accountId: AccountId; projectsEnabled: boolean; week: TimeWeek; entry: TimeEntry | null; onDone: () => void }) {
+function EntryForm({ accountId, projectsEnabled, week, entry, fixedTask, onDone, onSavedWarning }: { accountId: AccountId; projectsEnabled: boolean; week: TimeWeek; entry: TimeEntry | null; fixedTask?: Pick<TaskDetail, 'id' | 'title'>; onDone: () => void; onSavedWarning?: (warning: string) => void }) {
   const { backend } = useServices();
-  const zone = week.period.zone;
+  const zone = entry?.zone ?? week.period.zone;
   const today = week.navigation.today >= week.period.localStartDate && week.navigation.today <= week.period.localEndDate ? week.navigation.today : week.period.localStartDate;
   const [form, setForm] = useState<TimeEntryForm>(() => timeEntryFormOf(entry, zone, today));
   const [busy, setBusy] = useState(false);
@@ -321,7 +317,8 @@ function EntryForm({ accountId, projectsEnabled, week, entry, onDone }: { accoun
   const [picking, setPicking] = useState(false);
   const shownTask = task ?? initialTask;
   const save = async () => {
-    const cardId = task === undefined ? undefined : (task[0]?.id ?? null);
+    if (busy || warn) return;
+    const cardId = fixedTask?.id ?? (task === undefined ? undefined : (task[0]?.id ?? null));
     const r = buildTimeEntry(form, zone, { maxEntrySeconds: week.policy.maxEntrySeconds, allowTaskless: week.policy.allowTaskless, ...(cardId !== undefined ? { cardId } : {}) }, entry ?? undefined);
     if ('error' in r) return setErr(FORM_ERROR[r.error]);
     setErr(undefined);
@@ -331,8 +328,13 @@ function EntryForm({ accountId, projectsEnabled, week, entry, onDone }: { accoun
       const res = 'create' in r ? await backend.timeEntryCreate(accountId, r.create, uuid()) : await backend.timeEntryUpdate(accountId, entry!.id, r.patch);
       const overlap = res?.warnings.find((x) => x.code === 'TIME_OVERLAP');
       if (overlap) {
-        setWarn('Kaydedildi; ancak başka bir kayıtla çakışıyor.');
-        setTimeout(onDone, 1500);
+        if (onSavedWarning) {
+          onSavedWarning(t.timeOverlapSaved);
+          onDone();
+        } else {
+          setWarn(t.timeOverlapSaved);
+          setTimeout(onDone, 1500);
+        }
       } else onDone();
     } catch (e) {
       setErr(timeError(e));
@@ -341,31 +343,31 @@ function EntryForm({ accountId, projectsEnabled, week, entry, onDone }: { accoun
     }
   };
   return (
-    <View accessibilityLabel={entry ? 'Kaydı düzenle' : 'Yeni kayıt'} style={{ paddingVertical: space(2), borderTopWidth: 1, borderColor: colors.border }}>
+    <View accessibilityLabel={entry ? t.editTimeEntry : t.addTimeEntry} style={{ paddingVertical: space(2), borderTopWidth: 1, borderColor: colors.border }}>
       <Text accessibilityRole="header" style={{ fontWeight: '700', marginBottom: space(2) }}>
-        {entry ? 'Kaydı düzenle' : 'Yeni kayıt'}
+        {entry ? t.editTimeEntry : t.addTimeEntry}
       </Text>
       {!entry ? (
         <View style={{ flexDirection: 'row', gap: space(2), marginBottom: space(2) }}>
-          <Chip label="Saat aralığı" selected={form.kind === 'range'} onPress={() => set({ kind: 'range' })} />
-          <Chip label="Süre" selected={form.kind === 'duration'} onPress={() => set({ kind: 'duration' })} />
+          <Chip label={t.timeEntryKindRange} selected={form.kind === 'range'} onPress={() => set({ kind: 'range' })} />
+          <Chip label={t.timeEntryKindDuration} selected={form.kind === 'duration'} onPress={() => set({ kind: 'duration' })} />
         </View>
       ) : null}
-      <Field label="Tarih (YYYY-AA-GG)" value={form.date} onChangeText={(v) => set({ date: v.trim() })} autoCapitalize="none" />
+      <Field label={t.timeEntryDate} value={form.date} onChangeText={(v) => set({ date: v.trim() })} autoCapitalize="none" />
       {form.kind === 'range' ? (
         <View style={{ flexDirection: 'row', gap: space(2) }}>
           <View style={{ flex: 1 }}>
-            <Field label="Başlangıç (SS:DD)" value={form.start} onChangeText={(v) => set({ start: v.trim() })} />
+            <Field label={t.timeEntryStart} value={form.start} onChangeText={(v) => set({ start: v.trim() })} />
           </View>
           <View style={{ flex: 1 }}>
-            <Field label="Bitiş (SS:DD)" value={form.end} onChangeText={(v) => set({ end: v.trim() })} />
+            <Field label={t.timeEntryEnd} value={form.end} onChangeText={(v) => set({ end: v.trim() })} />
           </View>
         </View>
       ) : (
-        <Field label="Süre (saat)" value={form.hours} onChangeText={(v) => set({ hours: v })} placeholder="ör. 1,5 veya 1:30" />
+        <Field label={t.timeEntryHours} value={form.hours} onChangeText={(v) => set({ hours: v })} placeholder={t.timeEntryHoursHint} />
       )}
-      <Field label="Açıklama" value={form.description} onChangeText={(v) => set({ description: v })} multiline />
-      <View accessibilityLabel="Bağlı görev" style={{ marginBottom: space(2) }}>
+      <Field label={t.timeEntryDescription} value={form.description} onChangeText={(v) => set({ description: v })} multiline />
+      {fixedTask ? <Text style={{ color: colors.muted }}>{fixedTask.title}</Text> : <View accessibilityLabel="Bağlı görev" style={{ marginBottom: space(2) }}>
         <Text style={ui.label}>Görev</Text>
         <Text>{shownTask[0] ? (entry?.card?.restricted && task === undefined ? 'Erişiminiz olmayan bir görev' : shownTask[0].title) : 'Görev bağlı değil'}</Text>
         {projectsEnabled ? (
@@ -375,45 +377,107 @@ function EntryForm({ accountId, projectsEnabled, week, entry, onDone }: { accoun
           </View>
         ) : null}
         {picking ? <TaskPicker accountId={accountId} selected={shownTask} onChange={(t) => { setTask(t); if (t.length) setPicking(false); }} /> : null}
-      </View>
+      </View>}
       <View style={{ flexDirection: 'row', marginBottom: space(2) }}>
-        <Chip label="Faturalanabilir" selected={form.billable} onPress={() => set({ billable: !form.billable })} />
+        <Chip label={t.timeEntryBillable} selected={form.billable} onPress={() => set({ billable: !form.billable })} />
       </View>
-      <Text style={{ color: colors.muted, fontSize: font.small }}>Saat dilimi: {zone}</Text>
+      <Text style={{ color: colors.muted, fontSize: font.small }}>{t.timeEntryZone}: {zone}</Text>
       {err ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{err}</Text> : null}
       {warn ? <Text accessibilityRole="alert" style={{ color: colors.text }}>{warn}</Text> : null}
       <View style={{ flexDirection: 'row', gap: space(2) }}>
-        <Button title="Kaydet" accessibilityLabel={entry ? 'Kaydı kaydet' : 'Kaydı ekle'} busy={busy} onPress={() => void save()} />
-        <Button title="İptal" kind="secondary" onPress={onDone} />
+        <Button title={t.save} busy={busy} disabled={!!warn} onPress={() => void save()} />
+        <Button title={t.cancel} kind="secondary" disabled={busy} onPress={onDone} />
       </View>
     </View>
   );
 }
 
-function ReviewQueue({ accountId }: { accountId: AccountId }) {
+export function TaskTimeEntries({ accountId, task, week, canTrack, onChanged }: { accountId: AccountId; task: TaskDetail; week: TimeWeek | undefined; canTrack: boolean; onChanged: () => void }) {
   const { backend } = useServices();
+  const list = useAsync(() => backend.timeCardEntries(accountId, task.id), [accountId, task.id, task.mySec]);
+  const [editing, setEditing] = useState<TimeEntry | 'new' | null>(null);
+  const [checking, setChecking] = useState<number>();
+  const [err, setErr] = useState<unknown>();
+  const [note, setNote] = useState<string>();
+  const edit = async (entry: TimeEntry) => {
+    if (!canTrack || checking !== undefined) return;
+    setChecking(entry.id);
+    setErr(undefined);
+    setNote(undefined);
+    try {
+      const period = await backend.timePeriod(accountId, entry.periodId);
+      const fresh = editableCardEntry(period, entry.id, task.id);
+      if (fresh) setEditing(fresh);
+      else setNote(t.timeEntryReadOnly);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setChecking(undefined);
+    }
+  };
+  return (
+    <View style={card}>
+      <Text accessibilityRole="header" style={{ color: colors.textStrong, fontWeight: '700' }}>{t.taskTimeEntries}</Text>
+      <TimeError error={list.error ?? err} onRetry={list.error ? list.reload : undefined} />
+      {list.loading && !list.data ? <Loading /> : null}
+      {list.data?.length === 0 ? <Text style={{ color: colors.muted }}>{t.noTaskTimeEntries}</Text> : null}
+      {(list.data ?? []).map((entry) => (
+        <View key={entry.id} style={{ paddingVertical: space(2), borderBottomWidth: 1, borderColor: colors.border }}>
+          <Text style={{ color: colors.text }}>{formatTaskDate(entry.localDate, 'start')} · {hm(entry.durationSec)}</Text>
+          {entry.description ? <Text selectable style={{ color: colors.muted }}>{entry.description}</Text> : null}
+          {canTrack && !editing ? <Button title={t.editTimeEntry} kind="secondary" disabled={checking !== undefined && checking !== entry.id} busy={checking === entry.id} onPress={() => void edit(entry)} /> : null}
+        </View>
+      ))}
+      {note ? <Text accessibilityRole="alert" style={{ color: colors.muted }}>{note}</Text> : null}
+      {canTrack && week && !editing ? <Button title={t.addTimeEntry} kind="secondary" disabled={checking !== undefined} onPress={() => { setNote(undefined); setErr(undefined); setEditing('new'); }} /> : null}
+      {canTrack && week && editing ? (
+        <EntryForm accountId={accountId} projectsEnabled={false} week={week} entry={editing === 'new' ? null : editing} fixedTask={task} onSavedWarning={setNote} onDone={() => { setEditing(null); list.reload(); onChanged(); }} />
+      ) : null}
+    </View>
+  );
+}
+
+export function ReviewQueue({ accountId, onChanged }: { accountId: AccountId; onChanged?: () => void }) {
   const [status, setStatus] = useState<'pending' | 'approved'>('pending');
-  const list = useAsync(() => backend.timeReviews(accountId, status), [accountId, status]);
+  return <>
+    <Tabs value={status} items={[['pending', 'Bekleyenler'], ['approved', 'Onaylananlar']]} onChange={setStatus} />
+    <ReviewList key={`${accountId}:${status}`} accountId={accountId} status={status} {...(onChanged ? { onChanged } : {})} />
+  </>;
+}
+
+function ReviewList({ accountId, status, onChanged }: { accountId: AccountId; status: 'pending' | 'approved'; onChanged?: () => void }) {
+  const { backend } = useServices();
+  const list = useAsync(() => backend.timeReviews(accountId, status), [backend, accountId, status]);
   return (
     <>
-      <Tabs value={status} items={[['pending', 'Bekleyenler'], ['approved', 'Onaylananlar']]} onChange={setStatus} />
       <TimeError error={list.error} onRetry={list.reload} />
       {list.loading && !list.data ? <Loading /> : null}
       {(list.data ?? []).length === 0 && !list.loading && !list.error ? <Text style={{ color: colors.muted }}>{status === 'pending' ? 'İncelemenizi bekleyen dönem yok.' : 'Onaylanmış dönem yok.'}</Text> : null}
-      {(list.data ?? []).map((item) => (
-        <ReviewCard key={item.submission.id} accountId={accountId} item={item} onChanged={list.reload} />
-      ))}
+      {!list.error ? (list.data ?? []).map((item) => (
+        <ReviewCard key={item.submission.id} accountId={accountId} item={item} loading={list.loading} onChanged={() => { list.reload(); onChanged?.(); }} />
+      )) : null}
     </>
   );
 }
 
-function ReviewCard({ accountId, item, onChanged }: { accountId: AccountId; item: ReviewItem; onChanged: () => void }) {
+export function SubmissionDetail({ accountId, id, onChanged }: { accountId: AccountId; id: number; onChanged: () => void }) {
+  const { backend } = useServices();
+  const detail = useAsync(() => backend.timeSubmission(accountId, id), [backend, accountId, id]);
+  if (detail.error) return <TimeError error={detail.error} onRetry={detail.reload} />;
+  if (!detail.data) return <Loading />;
+  return <ReviewCard accountId={accountId} item={detail.data} loading={detail.loading} onChanged={() => { detail.reload(); onChanged(); }} />;
+}
+
+function ReviewCard({ accountId, item, loading, onChanged }: { accountId: AccountId; item: ReviewItem; loading: boolean; onChanged: () => void }) {
   const { backend } = useServices();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState<ReviewAction | null>(null);
   const [err, setErr] = useState<string>();
   const who = item.user.displayName;
+  const pending = item.submission.status === 'pending';
+  const canReview = item.canReview === true && (pending || item.submission.status === 'approved');
   const decide = async (action: ReviewAction) => {
+    if (!canReview || loading || busy || (pending === (action === 'reopen'))) return;
     if (action !== 'approve' && !reason.trim()) return setErr('Gerekçe yazın.');
     setBusy(action);
     setErr(undefined);
@@ -427,7 +491,6 @@ function ReviewCard({ accountId, item, onChanged }: { accountId: AccountId; item
       setBusy(null);
     }
   };
-  const pending = item.submission.status === 'pending';
   return (
     <View style={card} accessibilityLabel={`${who}, ${formatDate(item.period.localStartDate)} – ${formatDate(item.period.localEndDate)}, ${hm(item.submission.totalSec)}`}>
       <Text style={{ fontWeight: '700', color: colors.text }}>{who}</Text>
@@ -442,14 +505,14 @@ function ReviewCard({ accountId, item, onChanged }: { accountId: AccountId; item
           {formatDate(e.localDate)} · {hm(e.durationSec)} · {e.card?.title ?? (e.description || '—')}
         </Text>
       ))}
-      {item.canReview ? (
+      {canReview ? (
         <>
           <TextInput accessibilityLabel={`Gerekçe: ${who}`} placeholder={pending ? 'Değişiklik isteği gerekçesi' : 'Yeniden açma gerekçesi'} placeholderTextColor={colors.muted} value={reason} onChangeText={setReason} multiline style={[ui.input, { marginTop: space(2), minHeight: 60, paddingTop: 10 }]} />
           {err ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{err}</Text> : null}
           <View style={{ flexDirection: 'row', gap: space(2), flexWrap: 'wrap' }}>
-            {pending ? <Button title="Onayla" accessibilityLabel={`Onayla: ${who}`} busy={busy === 'approve'} disabled={!!busy} onPress={() => void decide('approve')} /> : null}
-            {pending ? <Button title="Değişiklik iste" accessibilityLabel={`Değişiklik iste: ${who}`} kind="secondary" busy={busy === 'request_changes'} disabled={!!busy} onPress={() => void decide('request_changes')} /> : null}
-            {!pending ? <Button title="Yeniden aç" accessibilityLabel={`Yeniden aç: ${who}`} kind="danger" busy={busy === 'reopen'} disabled={!!busy} onPress={() => void decide('reopen')} /> : null}
+            {pending ? <Button title="Onayla" accessibilityLabel={`Onayla: ${who}`} busy={busy === 'approve'} disabled={!!busy || loading} onPress={() => void decide('approve')} /> : null}
+            {pending ? <Button title="Değişiklik iste" accessibilityLabel={`Değişiklik iste: ${who}`} kind="secondary" busy={busy === 'request_changes'} disabled={!!busy || loading} onPress={() => void decide('request_changes')} /> : null}
+            {!pending ? <Button title="Yeniden aç" accessibilityLabel={`Yeniden aç: ${who}`} kind="danger" busy={busy === 'reopen'} disabled={!!busy || loading} onPress={() => void decide('reopen')} /> : null}
           </View>
         </>
       ) : null}

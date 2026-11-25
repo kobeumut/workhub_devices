@@ -1,5 +1,16 @@
 # Workhub Devices uygulama planı — GENE-47
 
+## GENE-245 — Workhub 12–25 Kasım farkı
+
+Başlangıç: Devices `574aa76` (12 Kasım 2026, 11:48 +03); Workhub `30acb2e..a234a61` (`main`, 13 birleşim). Var olan Orbit/Kanban ve hikâye puanı yeniden uygulanmaz. Workhub sunucusu ve dağıtım hattı değiştirilmez.
+
+- [x] Onaylar/talepler: sunucunun güncel görünürlük ve eylem bayrakları, Talk hatırlatmaları, kişi/onay filtreleri, zaman çizelgesi detayı ve hesap kapsamlı talep bağlantıları.
+- [x] Projeler: atanmış görevler, bekleyen onaylar, rozetler, reviewer okuma/yorum ayrımı, arşiv ve saatli planlama, bağlı zaman kayıtları ve ekip kronometreleri.
+- [x] Yerel kontroller: `npm run check` (175 test), mobil typecheck ve Jest (5 test), Electron üretim build'i, Swift kaynak sözdizimi.
+- [ ] Canlı kabul: güncel/eski Workhub, native/Deck, alıcı/yönetici/reviewer erişim ve eylemleri, fiziksel iOS/Android bildirimi ve masaüstü oturum içi doğrulama.
+
+Nextcloud Dashboard widget kaydı (yazdırma dahil), Talk bot/cron, reviewer/Deck yönetimi, Üretim ve yayın altyapısı Workhub'da kalır. Devices, yetkili API verisini ortak arayüzde gösterir ve doğrudan Deck'e bağlanmaz.
+
 ## GENE-89 — unread ve presence (6 Kasım 2026)
 
 - [x] Hesap kapsamlı sunucu unread uzlaştırması (ön planda 5 sn), oda + sekme toplamı, başarılı/görünür okuma sonrası yenileme; tekrar olaylarda yerel artırma yok.

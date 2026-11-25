@@ -68,18 +68,18 @@ test('task form → minimal PATCH; labels keep the priority label; validation', 
   const task = {
     id: 5, boardId: 1, stackId: 1, order: 0, title: 'Eski', labels: [1, 2], priority: 'urgent' as const,
     assignees: [{ type: 'user' as const, id: 'bob', displayName: 'Bob' }, { type: 'group' as const, id: 'staff', displayName: 'Staff' }],
-    startDate: null, dueDate: '2026-11-10T00:00:00Z', done: null, archived: false, lastModified: '', url: '', subtasks: { done: 0, total: 0 },
+    startDate: '2026-11-01', dueDate: '2026-11-10', done: null, archived: false, lastModified: '', url: '', subtasks: { done: 0, total: 0 },
     description: 'açıklama', estimateSec: 5400, subtaskItems: [], predecessors: [], successors: [],
   };
   const form = taskFormOf(task, labels);
-  assert.deepEqual(form, { title: 'Eski', description: 'açıklama', priority: 'urgent', startDate: '', dueDate: '2026-11-10', estimateHours: '1.5', storyPoints: '', labels: [2], assignees: ['bob'] });
+  assert.deepEqual(form, { title: 'Eski', description: 'açıklama', priority: 'urgent', startDate: '2026-11-01', startTime: '', dueDate: '2026-11-10', dueTime: '', estimateHours: '1.5', storyPoints: '', labels: [2], assignees: ['bob'] });
   assert.deepEqual(buildTaskPatch(task, labels, form), { patch: {} });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, title: ' Yeni ', labels: [3], assignees: ['alice'], dueDate: '', estimateHours: '2,25', priority: null }), {
     patch: { title: 'Yeni', priority: null, dueDate: null, estimateSec: 8100, labels: [3, 1], assignees: ['alice'] },
   });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, title: '  ' }), { error: 'title_empty' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, startDate: '2026-02-30' }), { error: 'date_invalid' });
-  assert.deepEqual(buildTaskPatch(task, labels, { ...form, startDate: '2026-12-01' }), { error: 'date_range' });
+  assert.deepEqual(buildTaskPatch(task, labels, { ...form, startDate: '2026-12-01', dueDate: '2026-11-30' }), { error: 'date_range' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, estimateHours: '-1' }), { error: 'estimate_invalid' });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, estimateHours: '' }), { patch: { estimateSec: null } });
   // story points: set, clear, 0 is a value, invalid input rejected
@@ -87,6 +87,18 @@ test('task form → minimal PATCH; labels keep the priority label; validation', 
   assert.deepEqual(buildTaskPatch({ ...task, storyPoints: 8 }, labels, { ...form, storyPoints: '' }), { patch: { storyPoints: null } });
   assert.deepEqual(buildTaskPatch(task, labels, { ...form, storyPoints: '0' }), { patch: { storyPoints: 0 } });
   for (const bad of ['-1', '1.5', 'abc', '1001']) assert.deepEqual(buildTaskPatch(task, labels, { ...form, storyPoints: bad }), { error: 'points_invalid' });
+});
+
+test('timed schedules keep untouched timestamps and estimates skip weekends', async () => {
+  const { taskScheduleOf, buildTaskSchedule } = await import('../src/workhub');
+  const local = (day: string, time: string) => new Date(`${day}T${time}`).toISOString();
+  const task = { startDate: local('2026-11-20', '09:15:04'), dueDate: local('2026-11-20', '18:30:59'), estimateSec: 3600 };
+  const form = taskScheduleOf(task);
+  assert.equal(form.startTime, '09:15');
+  assert.equal(form.dueTime, '18:30');
+  assert.deepEqual(buildTaskSchedule(form, task), { patch: {} });
+  assert.deepEqual(buildTaskSchedule({ ...form, estimateHours: '9' }, task), { patch: { dueDate: local('2026-11-23', '18:30:00'), estimateSec: 32400 } });
+  assert.deepEqual(buildTaskSchedule({ ...form, dueTime: '08:00' }, task), { error: 'date_range' });
 });
 
 test('project management: bodies, idempotency and client-side guards', async () => {

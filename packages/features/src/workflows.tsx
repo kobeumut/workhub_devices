@@ -1033,7 +1033,7 @@ function RunDetail({ accountId, runId, onChanged, onOpenTask }: { accountId: Acc
  * Task screen section: hand-offs that stem from THIS card (the web shows them right after the
  * card is completed). Hidden when there are none or the Projects module is off.
  */
-export function TaskWorkflowSection({ accountId, cardId }: { accountId: AccountId; cardId: number }) {
+export function TaskWorkflowSection({ accountId, cardId, readOnly = false }: { accountId: AccountId; cardId: number; readOnly?: boolean }) {
   const { backend } = useServices();
   const items = useAsync(() => backend.cardWorkflowHandoffs(accountId, cardId), [accountId, cardId]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string }>();
@@ -1045,7 +1045,7 @@ export function TaskWorkflowSection({ accountId, cardId }: { accountId: AccountI
       {(items.data ?? []).map((h) => (
         <View key={h.step.id} style={{ marginBottom: space(2) }}>
           <Text style={{ color: colors.text, fontWeight: '600' }}>{`${h.step.label} · ${h.run.workflowTitle}`}</Text>
-          <StepActions
+          {!readOnly ? <StepActions
             accountId={accountId}
             runId={h.run.id}
             runState="running"
@@ -1054,7 +1054,7 @@ export function TaskWorkflowSection({ accountId, cardId }: { accountId: AccountI
               setMsg({ ok, text });
               items.reload();
             }}
-          />
+          /> : null}
         </View>
       ))}
     </View>

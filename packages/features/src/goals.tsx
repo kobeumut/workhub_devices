@@ -533,7 +533,7 @@ function TargetEditForm({ target: t, onSubmit, onCancel }: { target: GoalTarget;
  * Task screen section: goals this card is linked to (only those the viewer may see), unlink, and
  * link to another goal the viewer can edit. Hidden entirely when the Goals module is off.
  */
-export function TaskGoalsSection({ accountId, cardId }: { accountId: AccountId; cardId: number }) {
+export function TaskGoalsSection({ accountId, cardId, readOnly = false }: { accountId: AccountId; cardId: number; readOnly?: boolean }) {
   const { backend } = useServices();
   const linked = useAsync(() => backend.cardGoals(accountId, cardId), [accountId, cardId]);
   const [picking, setPicking] = useState(false);
@@ -561,7 +561,7 @@ export function TaskGoalsSection({ accountId, cardId }: { accountId: AccountId; 
       {linked.loading && !linked.data ? <Loading /> : null}
       {linked.data && items.length === 0 ? <Text style={{ color: colors.muted }}>Bu görev bir hedefe bağlı değil.</Text> : null}
       {items.map((g) => {
-        const can = goalActions(g).linkCards;
+        const can = !readOnly && goalActions(g).linkCards;
         return (
           <View key={g.id} style={{ marginBottom: space(2) }}>
             <Text style={{ color: colors.text, fontWeight: '600' }}>{g.title}</Text>
@@ -576,7 +576,7 @@ export function TaskGoalsSection({ accountId, cardId }: { accountId: AccountId; 
         );
       })}
       <Alert text={msg?.text} ok={msg?.ok} />
-      {picking ? (
+      {readOnly ? null : picking ? (
         <GoalPicker accountId={accountId} exclude={items.map((g) => g.id)} busy={busy !== null} onCancel={() => setPicking(false)} onPick={(g) => void run(-g.id, () => backend.cardLinkGoal(accountId, cardId, g.id), `Görev “${g.title}” hedefine bağlandı.`)} />
       ) : (
         <Button title="Hedefe bağla" kind="secondary" onPress={() => setPicking(true)} />

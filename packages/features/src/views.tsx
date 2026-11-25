@@ -7,7 +7,8 @@ import {
 import { useAsync, useServices } from './services';
 import { Button, Empty, ErrorBanner, Loading, card, styles as ui } from './ui';
 import { colors, font, space } from './theme';
-import { formatDate } from './i18n';
+import { formatDate, formatTaskDate, t } from './i18n';
+import { Icon } from './icons';
 
 // ---- shared bits ---------------------------------------------------------------------------
 
@@ -160,7 +161,7 @@ export function activityText(e: ActivityEvent): string {
     case 'card_comment_create': return d.comment ? `yorum yaptı: “${clip(str(d.comment))}”` : 'yorum yaptı';
     case 'card_update_title': return `başlığı değiştirdi: “${clip(str(d.before), 60)}” → “${clip(str(d.after), 60)}”`;
     case 'card_update_description': return 'açıklamayı düzenledi';
-    case 'card_update_duedate': return `bitiş tarihini değiştirdi: ${dateOf(d.before)} → ${dateOf(d.after)}`;
+    case 'card_update_duedate': return t.activityDueChanged(taskDueOf(d.before), taskDueOf(d.after));
     case 'card_user_assign': return `${name(d.assignee)} kişisini atadı`;
     case 'card_user_unassign': return `${name(d.assignee)} atamasını kaldırdı`;
     case 'label_assign': return `etiket ekledi: ${str((d.label as { title?: string } | null)?.title)}`;
@@ -191,7 +192,55 @@ const eventTime = (iso: string) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 };
 
-/** Project activity stream: type filter, search, cursor paging ("Daha eski"). */
+function taskDueOf(value: unknown): string {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return formatTaskDate(value, 'due', true);
+  return dateOf(value);
+}
+
+export function TaskActivity({ accountId, cardId }: { accountId: AccountId; cardId: number }) {
+  const { backend } = useServices();
+  const first = useAsync(() => backend.taskActivity(accountId, cardId, null), [accountId, cardId]);
+  const [older, setOlder] = useState<ActivityEvent[]>([]);
+  const [next, setNext] = useState<string | null>();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>();
+  const cursor = next === undefined ? first.data?.nextCursor : next;
+  const events = mergeActivity(first.data?.events ?? [], older);
+  const more = async () => {
+    if (busy || !cursor) return;
+    setErr(undefined);
+    setBusy(true);
+    try {
+      const page = await backend.taskActivity(accountId, cardId, cursor);
+      setOlder((previous) => mergeActivity(previous, page.events));
+      setNext(page.nextCursor);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View>
+      <ErrorBanner error={first.error ?? err} onRetry={first.error ? first.reload : () => void more()} />
+      {first.loading && !first.data ? <Loading /> : null}
+      {first.data && !first.data.sources.deck ? <Text style={{ color: colors.muted }}>{t.activityUnavailable}</Text> : null}
+      {first.data && !events.length ? <Text style={{ color: colors.muted }}>{t.emptyActivity}</Text> : null}
+      {events.map((e) => (
+        <View key={e.id} style={{ flexDirection: 'row', gap: space(2), paddingVertical: space(2), borderBottomWidth: 1, borderColor: colors.border }}>
+          <Icon name="activity" size={16} color={colors.muted} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text }}><Text style={{ fontWeight: '700' }}>{e.actor?.displayName ?? t.systemActor}</Text> {activityText(e)}</Text>
+            <Text style={{ color: colors.muted, fontSize: font.small }}>{eventTime(e.occurredAt)}</Text>
+          </View>
+        </View>
+      ))}
+      {cursor ? <Button title={t.olderActivity} kind="secondary" busy={busy} onPress={() => void more()} /> : null}
+    </View>
+  );
+}
+
+/** Project activity stream: type filter, search, cursor paging. */
 export function ActivityView({ accountId, boardId, onOpenTask }: { accountId: AccountId; boardId: number; onOpenTask: (cardId: number) => void }) {
   const { backend } = useServices();
   const [type, setType] = useState<ActivityType>('all');
@@ -233,9 +282,10 @@ export function ActivityView({ accountId, boardId, onOpenTask }: { accountId: Ac
           <Chip key={k} label={TYPE_LABEL[k]} a11y={`Filtre: ${TYPE_LABEL[k]}`} selected={type === k} onPress={() => setType(k)} />
         ))}
       </View>
-      <View style={{ flexDirection: 'row', gap: space(2), paddingHorizontal: space(3), paddingBottom: space(2) }}>
-        <TextInput accessibilityLabel="Etkinlikte ara" placeholder="Görev, kişi veya metin ara" placeholderTextColor={colors.muted} value={query} onChangeText={setQuery} onSubmitEditing={() => setQ(query.trim())} style={[ui.input, { flex: 1 }]} />
-        <Button title="Ara" kind="secondary" onPress={() => setQ(query.trim())} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space(2), paddingHorizontal: space(3), paddingBottom: space(2), borderBottomWidth: 1, borderColor: colors.border }}>
+        <Icon name="search" size={18} color={colors.muted} />
+        <TextInput accessibilityLabel={t.searchActivity} placeholder={t.searchActivityHint} placeholderTextColor={colors.muted} value={query} maxLength={200} onChangeText={setQuery} onSubmitEditing={() => setQ(query.trim())} style={[ui.input, { flex: 1 }]} />
+        <Button title={t.searchActivity} kind="secondary" onPress={() => setQ(query.trim())} />
       </View>
       {q ? <Text style={{ paddingHorizontal: space(3), color: colors.muted, fontSize: font.small }}>Arama yüklenen sayfalara uygulanır; daha eskisi için “Daha eski”.</Text> : null}
       {sources && !sources.deck ? <Text style={{ paddingHorizontal: space(3), color: colors.muted, fontSize: font.small }}>Sunucuda Activity uygulaması kapalı: kart geçmişi gösterilemiyor.</Text> : null}
@@ -247,7 +297,7 @@ export function ActivityView({ accountId, boardId, onOpenTask }: { accountId: Ac
       ) : (
         <View accessibilityRole="list">
           {events.map((e) => {
-            const who = e.actor?.displayName ?? 'Sistem';
+            const who = e.actor?.displayName ?? t.systemActor;
             const text = activityText(e);
             const target = e.card ? `${e.card.title || `#${e.card.id}`}${e.card.exists ? '' : ' (silinmiş)'}` : '';
             const label = `${who} ${text}${target ? `, görev: ${target}` : ''}, ${eventTime(e.occurredAt)}`;
@@ -297,14 +347,18 @@ export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId:
   const boards = boardIds?.join(',') ?? '';
   const s = useAsync(() => backend.workload(accountId, { from, to, ...(boardIds?.length ? { boardIds } : {}) }), [accountId, from, to, boards]);
   const [cell, setCell] = useState<{ uid: string; date: string } | null>(null);
-  const m: WorkloadMatrix | undefined = s.data;
+  const [memberQuery, setMemberQuery] = useState('');
+  const [overOnly, setOverOnly] = useState(false);
+  const m: WorkloadMatrix | undefined = s.error ? undefined : s.data;
+  const needle = memberQuery.trim().toLocaleLowerCase('tr');
+  const members = m?.members.filter((member) => member.displayName.toLocaleLowerCase('tr').includes(needle) && (!overOnly || member.days.some((day) => workloadLoad(day) === 'over'))) ?? [];
   const weekStart = m?.weekStart ?? 1;
 
   const shift = (n: number) => {
     setCell(null);
     setFrom((f) => addDays(f, n * span));
   };
-  const selMember = cell && m ? m.members.find((x) => x.uid === cell.uid) : undefined;
+  const selMember = cell ? members.find((x) => x.uid === cell.uid) : undefined;
   const selDay = selMember?.days.find((d) => d.date === cell!.date);
   const cellW = 76;
   const headW = 132;
@@ -320,6 +374,8 @@ export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId:
         <Button title="Bu hafta" kind="secondary" onPress={() => { setCell(null); setFrom(workloadWeek(today(), weekStart).from); }} />
         <Chip label="1 hafta" selected={span === 7} onPress={() => setSpan(7)} />
         <Chip label="2 hafta" selected={span === 14} onPress={() => setSpan(14)} />
+        <TextInput accessibilityLabel={t.filterWorkloadMembers} placeholder={t.filterWorkloadMembers} placeholderTextColor={colors.muted} value={memberQuery} maxLength={200} onChangeText={(value) => { setCell(null); setMemberQuery(value); }} style={ui.input} />
+        <Chip label={t.overloadedOnly} selected={overOnly} onPress={() => { setCell(null); setOverOnly((value) => !value); }} />
       </View>
       <ErrorBanner error={s.error} onRetry={s.reload} />
       {s.loading && !m ? <Loading /> : null}
@@ -335,8 +391,8 @@ export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId:
             Hücre: planlanan / kapasite (saat). Planlanan yük, atanmış açık görevlerin tahmini sürelerinin başlangıç–bitiş arasındaki iş günlerine dağıtımıdır. Gerçekleşen yalnız görme yetkiniz olan kişilerde gösterilir. Saat dilimi: {m.zone}.
           </Text>
           {m.truncated ? <Text style={{ paddingHorizontal: space(3), color: colors.danger }}>Sonuç sunucu sınırında kesildi; dönemi daraltın.</Text> : null}
-          {m.members.length === 0 ? (
-            <Empty text="Okuyabildiğiniz projelerde üye yok." />
+          {members.length === 0 ? (
+            <Empty text={t.noWorkloadMembers} />
           ) : (
             <ScrollView horizontal>
               <View role="table" aria-label={`İş yükü ${shortDay(m.from)} – ${shortDay(m.to)}`} style={{ backgroundColor: colors.bg, borderTopWidth: 1, borderColor: colors.border }}>
@@ -351,7 +407,7 @@ export function WorkloadScreen({ accountId, onOpenTask, boardIds }: { accountId:
                   ))}
                   <Text role="columnheader" style={{ width: cellW + 24, padding: space(2), fontWeight: '700', textAlign: 'right', color: colors.text }}>Toplam</Text>
                 </View>
-                {m.members.map((mem) => (
+                {members.map((mem) => (
                   <View key={mem.uid} role="row" style={{ flexDirection: 'row', borderBottomWidth: 1, borderColor: colors.border }}>
                     <View role="rowheader" style={{ width: headW, padding: space(2) }}>
                       <Text numberOfLines={1} style={{ fontWeight: '600', color: colors.text }}>{mem.displayName}</Text>

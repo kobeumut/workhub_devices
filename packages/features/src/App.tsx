@@ -9,6 +9,7 @@ import { BoardScreen, TaskScreen } from './workhub';
 import { WorkhubHome, WorkhubWide } from './modules';
 import { Icon, type IconName } from './icons';
 import { InboxScreen } from './inbox';
+import { RequestDetail } from './requests';
 import { Button, Empty, ErrorBanner, Header, Loading, card } from './ui';
 import { colors, font, space } from './theme';
 import { describeError, t } from './i18n';
@@ -18,6 +19,7 @@ type Detail =
   | { kind: 'room'; token: string; displayName: string }
   | { kind: 'project'; id: number; title: string }
   | { kind: 'task'; cardId: number; from?: { id: number; title: string } }
+  | { kind: 'request'; id: number }
   | null;
 
 const WIDE = 900;
@@ -114,7 +116,10 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
     } else if (r.name === 'task') {
       setTab('tasks');
       setDetail({ kind: 'task', cardId: r.cardId });
-    } else setTab('inbox');
+    } else {
+      setTab('inbox');
+      setDetail(r.name === 'request' ? { kind: 'request', id: r.requestId } : null);
+    }
   }, []);
 
   // Android hardware back: detail → its list (task → board → list) instead of leaving the app.
@@ -172,6 +177,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             {...(detail?.kind === 'project' ? { selectedProject: detail.id } : {})}
             onOpenProject={(p) => setDetail({ kind: 'project', id: p.id, title: p.title })}
             onOpenTask={(cardId) => setDetail({ kind: 'task', cardId })}
+            onOpenRequest={(id) => setDetail({ kind: 'request', id })}
           />
         );
       case 'inbox':
@@ -190,6 +196,8 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         room={{ token: detail.token, displayName: detail.displayName || 'Sohbet' }}
         selfId={selfId}
         features={talkFeatures}
+        serverBase={account.serverBase}
+        onOpenRequest={(requestId) => go({ name: 'request', requestId })}
         onRoomChanged={bumpRooms}
         onRead={bumpRooms}
         onRoomGone={() => {
@@ -198,8 +206,12 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
         }}
         {...(back ? { onBack: back } : {})}
       />
+    ) : detail?.kind === 'request' ? (
+      <ScrollView contentContainerStyle={{ padding: space(3) }}>
+        <RequestDetail key={detail.id} accountId={account.id} id={detail.id} onChanged={bumpTasks} onClose={() => setDetail(null)} onOpenTask={(cardId) => go({ name: 'task', cardId })} />
+      </ScrollView>
     ) : detail?.kind === 'project' ? (
-      <BoardScreen key={detail.id} accountId={account.id} project={detail} me={selfId} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
+      <BoardScreen key={detail.id} accountId={account.id} project={detail} me={selfId} version={tasksVersion} onChanged={bumpTasks} onOpenTask={(cardId) => setDetail({ kind: 'task', cardId, from: { id: detail.id, title: detail.title } })} {...(back ? { onBack: back } : {})} />
     ) : detail?.kind === 'task' ? (
       <TaskScreen key={detail.cardId} accountId={account.id} cardId={detail.cardId} timeEnabled={!!s.workhub?.modules.time} goalsEnabled={!!s.workhub?.modules.goals} onChanged={bumpTasks} {...(back || detail.from ? { onBack: () => setDetail(detail.from ? { kind: 'project', ...detail.from } : null) } : {})} />
     ) : null;
@@ -253,6 +265,7 @@ function AccountShell({ account, accounts, onSwitch, onAdd, onLoggedOut, pending
             project={openProject?.id ?? null}
             onOpenProject={(p) => setDetail(p ? { kind: 'project', id: p.id, title: p.title } : null)}
             onOpenTask={(cardId) => setDetail({ kind: 'task', cardId })}
+            onOpenRequest={(id) => { setTab('inbox'); setDetail({ kind: 'request', id }); }}
             drawer={
               taskId !== null ? (
                 <TaskScreen

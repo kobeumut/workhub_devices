@@ -63,6 +63,9 @@ object WorkhubNotifications {
       }
     }
     if (app == "workhub" && type == "card" && INT.matches(id)) return JSONObject().put("name", "task").put("cardId", id.toLong())
+    if (app == "workhub" && type == "request" && INT.matches(id) && id.toLong() <= 9_007_199_254_740_991L) {
+      return JSONObject().put("name", "request").put("requestId", id.toLong())
+    }
     return JSONObject().put("name", "inbox")
   }
 
