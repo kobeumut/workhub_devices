@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
-  OcsError, barData, buildDashboardFilter, buildDashboardPatch, buildWidgetConfig, buildWidgetPatch, canDrilldown, canExportCsv, configToForm, dashboardRoleAtLeast, filterToForm,
+  OcsError, barData, buildDashboardFilter, buildDashboardPatch, buildWidgetConfig, buildWidgetPatch, canDrilldown, canExportCsv, configFieldVisible, configToForm, dashboardRoleAtLeast, filterToForm,
   formatWidgetValue, mergeCards, sortWidgets, widgetState, widgetTitle, DASHBOARD_FILTER_FIELDS,
   type AccountId, type ConfigFieldSchema, type ConfigForm, type Dashboard, type DashboardCard, type DashboardFilterForm, type DashboardSummary,
   type DashboardTemplate, type DashboardWidget, type WidgetResult, type WidgetTypeDef,
@@ -22,7 +22,7 @@ const uuid = () => {
 };
 const dateTime = (iso: string) => `${formatDate(iso)} ${new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
 const ROLE: Record<string, string> = { view: 'görüntüleme', edit: 'düzenleme', manage: 'yönetme' };
-const KIND: Record<string, string> = { kpi: 'Sayı', distribution: 'Dağılım', trend: 'Eğilim', progress: 'İlerleme', list: 'Kart listesi', text: 'Metin' };
+const KIND: Record<string, string> = { kpi: 'Sayı', distribution: 'Dağılım', trend: 'Eğilim', progress: 'İlerleme', list: 'Liste', text: 'Metin' };
 const FILTER_NAME: Record<string, string> = {
   boardIds: 'proje', stackIds: 'sütun', assigneeUids: 'atanan', labelIds: 'etiket', doneState: 'durum', dueFrom: 'bitiş başlangıcı', dueTo: 'bitiş sonu',
   createdFrom: 'oluşturma başlangıcı', createdTo: 'oluşturma sonu', includeArchived: 'arşiv',
@@ -446,6 +446,27 @@ function TrendTable({ title, r }: { title: string; r: WidgetResult }) {
   );
 }
 
+/** Non-Deck list widgets (e.g. requests): the server's columns, ISO dates shown as days. */
+function RowTable({ title, columns, rows }: { title: string; columns: Array<{ key: string; label: string }>; rows: Array<Record<string, unknown>> }) {
+  const cell = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) ? formatDate(v) : String(v));
+  return (
+    <View role="table" aria-label={title} style={{ marginTop: space(1) }}>
+      <View role="row" style={{ flexDirection: 'row', borderBottomWidth: 1, borderColor: colors.border, paddingVertical: space(1) }}>
+        {columns.map((c, i) => <Text key={c.key} role="columnheader" style={{ flex: i === 0 ? 3 : 2, fontWeight: '700', color: colors.text, paddingHorizontal: space(1) }}>{c.label}</Text>)}
+      </View>
+      {rows.map((row, n) => (
+        <View key={String(row.id ?? n)} role="row" style={{ flexDirection: 'row', alignItems: 'center', minHeight: 40, borderBottomWidth: 1, borderColor: colors.border }}>
+          {columns.map((c, i) => (
+            <Text key={c.key} role={i === 0 ? 'rowheader' : 'cell'} numberOfLines={2} style={{ flex: i === 0 ? 3 : 2, color: i === 0 ? colors.text : colors.muted, fontWeight: i === 0 ? '600' : '400', fontSize: i === 0 ? undefined : font.small, paddingHorizontal: space(1) }}>
+              {cell(row[c.key])}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function CardTable({ title, cards, onOpen }: { title: string; cards: DashboardCard[]; onOpen?: ((id: number) => void) | undefined }) {
   return (
     <View role="table" aria-label={title} style={{ marginTop: space(1) }}>
@@ -519,6 +540,9 @@ function WidgetBody({ w, r, onDrill, onOpenTask }: { w: DashboardWidget; r: Widg
         </View>
       );
     case 'list':
+      if (w.module !== 'dashboard') {
+        return state === 'empty' ? <Muted>Filtreye uyan kayıt yok.</Muted> : <RowTable title={title} columns={r.columns ?? []} rows={(r.rows ?? []) as unknown as Array<Record<string, unknown>>} />;
+      }
       return state === 'empty' ? <Muted>Filtreye uyan kart yok.</Muted> : (
         <>
           <CardTable title={title} cards={r.rows ?? []} onOpen={onOpenTask} />
@@ -772,8 +796,11 @@ function DashboardEditor({ accountId, d, projectsEnabled, onDone, onError }: { a
   );
 }
 
-function ConfigFields({ schema, value, onChange }: { schema: Record<string, ConfigFieldSchema>; value: ConfigForm; onChange: (v: ConfigForm) => void }) {
-  const entries = Object.entries(schema);
+function ConfigFields({ accountId, schema, value, onChange }: { accountId: AccountId; schema: Record<string, ConfigFieldSchema>; value: ConfigForm; onChange: (v: ConfigForm) => void }) {
+  const { backend } = useServices();
+  const needsPeople = Object.values(schema).some((f) => f.type === 'person' && f.source === 'requestPeople');
+  const people = useAsync(async () => (needsPeople ? backend.requestPeople(accountId) : []), [accountId, needsPeople]);
+  const entries = Object.entries(schema).filter(([, f]) => configFieldVisible(f, value));
   if (!entries.length) return null;
   return (
     <View style={{ marginBottom: space(2) }}>
@@ -789,6 +816,24 @@ function ConfigFields({ schema, value, onChange }: { schema: Record<string, Conf
           );
         }
         if (f.type === 'bool') return <Chip key={k} label={f.label} selected={value[k] === true} onPress={() => onChange({ ...value, [k]: value[k] !== true })} />;
+        if (f.type === 'date') return <Field key={k} label={`${f.label} (YYYY-AA-GG)`} value={String(value[k] ?? '')} onChangeText={(v) => onChange({ ...value, [k]: v })} placeholder="2026-01-31" maxLength={10} />;
+        if (f.type === 'person') {
+          const list = people.data ?? [];
+          const current = String(value[k] ?? '');
+          return (
+            <View key={k} style={{ marginBottom: space(2) }}>
+              <Text style={ui.label}>{f.label}</Text>
+              {people.loading && !people.data ? <Loading /> : null}
+              {!people.loading && list.length === 0 && !current ? <Muted>Personel seçimi yalnız yöneticiler içindir.</Muted> : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space(2) }}>
+                  <Chip label="Herkes" selected={current === ''} onPress={() => onChange({ ...value, [k]: '' })} />
+                  {current && !list.some((p) => p.uid === current) ? <Chip label={current} selected onPress={() => onChange({ ...value, [k]: '' })} /> : null}
+                  {list.map((p) => <Chip key={p.uid} label={p.displayName} selected={current === p.uid} onPress={() => onChange({ ...value, [k]: p.uid })} />)}
+                </View>
+              )}
+            </View>
+          );
+        }
         if (f.type === 'int') return <Field key={k} label={`${f.label} (${f.min}–${f.max})`} value={String(value[k] ?? '')} onChangeText={(v) => onChange({ ...value, [k]: v })} keyboardType="number-pad" maxLength={10} />;
         return <Field key={k} label={`${f.label} (kimlikler, virgülle; en çok ${f.max})`} value={String(value[k] ?? '')} onChangeText={(v) => onChange({ ...value, [k]: v })} maxLength={1000} />;
       })}
@@ -796,7 +841,7 @@ function ConfigFields({ schema, value, onChange }: { schema: Record<string, Conf
   );
 }
 
-const CONFIG_ERR = { int_range: 'aralık dışında ya da tam sayı değil', enum: 'geçersiz seçim', id_list: 'yalnız pozitif kimlikler, virgülle', too_many: 'çok fazla kimlik' } as const;
+const CONFIG_ERR = { int_range: 'aralık dışında ya da tam sayı değil', enum: 'geçersiz seçim', id_list: 'yalnız pozitif kimlikler, virgülle', too_many: 'çok fazla kimlik', date: 'tarih YYYY-AA-GG biçiminde olmalı', person: 'geçersiz kişi' } as const;
 
 /** Add (type picker) or edit a widget: title, schema-driven settings, widget filter, size. */
 function WidgetEditor({ accountId, d, widget, onDone, onError }: { accountId: AccountId; d: Dashboard; widget?: DashboardWidget; onDone: (ok: boolean) => void; onError: (e: unknown) => void }) {
@@ -870,7 +915,7 @@ function WidgetEditor({ accountId, d, widget, onDone, onError }: { accountId: Ac
       {def && config ? (
         <>
           <Field label={`Başlık (boş = ${def.label})`} value={title} onChangeText={setTitle} maxLength={200} />
-          <ConfigFields schema={def.config ?? {}} value={config} onChange={setConfig} />
+          <ConfigFields accountId={accountId} schema={def.config ?? {}} value={config} onChange={setConfig} />
           {def.filters.length ? <H>Widget filtresi</H> : null}
           <FilterEditor value={filter} onChange={setFilter} boards={d.sources} allowed={def.filters} />
           <Text style={ui.label}>Genişlik (12 sütunluk ızgarada)</Text>

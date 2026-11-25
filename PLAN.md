@@ -256,3 +256,9 @@ Opus2'nin uygulama görevi şu belgeleri kaynak almalı ve PR/commit linkleriyle
 
 - [x] Görev düzenleme formunda hikaye puanı (Fibonacci çipleri + tam sayı alanı, 0–1000), görev ayrıntısında "Puan" satırı, İş yükü matrisinde kişi başına açık puan / puansız sayısı; PATCH `storyPoints` allowlist'te. Sunucu sözleşmesi Workhub 0.5.1 (ADR-0006); eski sunucuda alan yoktur ve boş sayılır.
 - [x] `npm run check` geçti (typecheck + 154 core testi). Canlı sunucu/cihaz doğrulaması yapılmadı: **unverified**.
+
+## GENE-246: Filtreli talep widget'ları (Dashboard)
+
+- [x] Dashboard widget düzenleyicisi Workhub'ın yeni talep widget'larını (Talep sayısı, Son talepler, Onay durumuna göre, Kişiye göre) aynı `/widget-types` şemasıyla gösterir: yeni `date` ve `person` alan türleri, `showIf` (özel aralık tarihleri yalnız "Özel tarih aralığı" seçiliyken; gizli alan sunucu varsayılanına bırakılır), personel seçici `GET /requests/people` (`Backend.requestPeople`, IPC doğrulamalı; yönetici değilse "yalnız yöneticiler" notu). Deck dışı liste widget'ı sunucunun sütunlarıyla genel tabloda gösterilir; drilldown yalnız Deck widget'larında kalır.
+- [x] Sunucu sözleşmesi `kobeumut/nextcloud_workhub` GENE-246 PR'ındadır; eski sunucuda bu türler listelenmez.
+- [x] `npm run typecheck` ve `npm test` geçti (core 156). Canlı sunucu/cihaz doğrulaması yapılmadı: **unverified**.

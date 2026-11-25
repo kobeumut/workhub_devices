@@ -124,6 +124,9 @@ test('IPC validation: request actions and report filters', async () => {
   assert.deepEqual(await dispatchWire(b, 'requestConvert', ['acc', 5, -1, 1, 3, KEY]), BAD, 'negative version');
   assert.deepEqual(await dispatchWire(b, 'requestHistory', ['acc', 5, 'x']), BAD);
   assert.deepEqual(await dispatchWire(b, 'requestReport', ['acc', { ...filters, to: '2026-09-01' }]), BAD);
+  assert.deepEqual(await dispatchWire(b, 'requestPeople', ['acc', 'extra']), BAD);
+  const people = await dispatchWire(b, 'requestPeople', ['acc']);
+  assert.equal(people.ok === false && people.error.kind, 'unauthorized', 'valid call reaches the account check');
   const ok = await dispatchWire(b, 'requestConvert', ['acc', 5, 2, 1, 3, KEY]);
   assert.equal(ok.ok === false && ok.error.kind, 'unauthorized');
 });
